@@ -2,13 +2,43 @@ import OpenAI from "openai";
 import { computeInsightConfidence } from "./insight-confidence";
 import { AUTO_ROUTER_MODEL, type ModelSlot } from "./models/slots";
 
-// OpenRouter uses the OpenAI-compatible API
-export const openrouter = new OpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY,
-  defaultHeaders: {
-    "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-    "X-Title": "Brain Portal",
+// OpenRouter uses the OpenAI-compatible API.
+//
+// Constructed lazily, for the same reason `src/lib/db/client.ts` is: the SDK
+// throws when `apiKey` is undefined, and building this app collects data for
+// every route, which imports this module. Constructing it eagerly meant
+// `npm run build` failed outright without an OpenRouter key — so CI could not
+// build, and neither could a contributor fixing a layout bug.
+//
+// Nothing here reaches the network until a request is actually made, so the
+// error surfaces at the call that needed a key rather than at import.
+let _openrouter: OpenAI | null = null;
+
+function getOpenRouter(): OpenAI {
+  if (!_openrouter) {
+    if (!process.env.OPENROUTER_API_KEY) {
+      throw new Error(
+        "OPENROUTER_API_KEY is not defined. Set it in .env.local — see .env.example."
+      );
+    }
+    _openrouter = new OpenAI({
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: process.env.OPENROUTER_API_KEY,
+      defaultHeaders: {
+        "HTTP-Referer":
+          process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+        "X-Title": "Brain Portal",
+      },
+    });
+  }
+  return _openrouter;
+}
+
+export const openrouter = new Proxy({} as OpenAI, {
+  get(_, prop) {
+    const client = getOpenRouter();
+    const value = client[prop as keyof OpenAI];
+    return typeof value === "function" ? value.bind(client) : value;
   },
 });
 
