@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A new push to a PR cancels the run still in flight for it. Reviewers care
+# about the latest commit, not about a queue
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # No secrets are needed and none are exposed: the build only has to prove
+      # the code compiles, and `scripts/migrtrue
+      # rather than failing for want of a database.
+      CI: "true"
+      SKIP_MIGRATIONS: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Each step runs even if an earlier onets
+n lint
+
+      - name: Typecheck
+        if: always()
+        run: npm run typecheck
+
+      - name: Test
+        if: always()
+        run: npm test
+
+      - name: Build
+        if: always()
+        run: npm run build
+
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Fails on high or critical only. Mode
+      # tooling should not block a documentation fix.
+      - name: npm audit
+        run: npm audit --audit-level=high
