@@ -65,11 +65,17 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
+  // Retired routes, pointed at whatever replaced them.
+  //
+  // These must name a route that actually exists. "/captures" and "/insights"
+  // used to redirect to "/inbox", which was never built — so both sent the
+  // user from a page that no longer exists to one that never did, and the
+  // 404 blamed the destination.
   const redirects: Record<string, string> = {
     "/graph": "/",
     "/weekly": "/",
-    "/captures": "/inbox",
-    "/insights": "/inbox?tab=insights",
+    "/captures": "/",
+    "/insights": "/",
     "/daily": "/notes",
     "/attachments": "/search",
   };

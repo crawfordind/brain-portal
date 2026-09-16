@@ -80,9 +80,11 @@ function AnimatedSection({
 const NAV_LINKS = [
   { label: "Features", href: "#features" },
   { label: "Compare", href: "#compare" },
-  { label: "How it works", href: "#how" },
+  { label: "Open source", href: "#open-source" },
   { label: "Privacy", href: "#privacy" },
 ];
+
+const GITHUB_URL = "https://github.com/crawfordind/brain-portal";
 
 const STEPS = [
   {
@@ -98,7 +100,7 @@ const STEPS = [
   {
     n: "03",
     title: "Start thinking out loud",
-    body: "Write, speak, or delegate. Your ideas start connecting immediately.",
+    body: "Write it, say it, sketch it, share it in. Everything gets indexed and starts finding its relatives.",
   },
 ];
 
@@ -275,12 +277,25 @@ export default function WaitlistPage() {
             </a>
           ))}
         </div>
-        <a
-          href="#hero-form"
-          className="text-sm font-semibold px-4 py-1.5 rounded-full border border-white/10 hover:border-teal-500/50 hover:bg-teal-600/10 transition-all text-white/70 hover:text-white"
-        >
-          Get early access
-        </a>
+        <div className="flex items-center gap-2">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="View source on GitHub"
+            className="hidden sm:inline-flex items-center justify-center w-8 h-8 rounded-full border border-white/10 text-white/50 hover:text-white hover:border-teal-500/40 transition-all"
+          >
+            <svg viewBox="0 0 16 16" className="w-4 h-4 fill-current" aria-hidden="true">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+            </svg>
+          </a>
+          <a
+            href="#hero-form"
+            className="text-sm font-semibold px-4 py-1.5 rounded-full border border-white/10 hover:border-teal-500/50 hover:bg-teal-600/10 transition-all text-white/70 hover:text-white"
+          >
+            Get early access
+          </a>
+        </div>
       </nav>
 
       {/* ── Hero ─────────────────────────────────────────────── */}
@@ -305,30 +320,31 @@ export default function WaitlistPage() {
         <AnimatedSection animation="fadeIn" className="relative mb-8">
           <div className="inline-flex items-center gap-2 rounded-full border border-teal-500/30 bg-teal-600/10 px-4 py-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
-            <span className="text-teal-300 text-xs font-medium tracking-wide">Early access {"\u00B7"} Limited spots</span>
+            <span className="text-teal-300 text-xs font-medium tracking-wide">Open source {"\u00B7"} Self-hostable {"\u00B7"} Early access</span>
           </div>
         </AnimatedSection>
 
         {/* headline */}
         <AnimatedSection animation="fadeUp" delay={0.1} className="relative">
           <h1 className="max-w-5xl text-5xl sm:text-7xl md:text-8xl lg:text-[112px] font-bold tracking-[-0.05em] leading-[0.95] mb-8">
-            <span className="text-white">Think.</span>
+            <span className="text-white">Think it.</span>
             <br />
-            <span className="text-white">Delegate.</span>
+            <span className="text-white">Keep it.</span>
             <br />
             <span
               className="inline-block"
               style={{ background: "linear-gradient(135deg, #2dd4bf, #5eead4, #99f6e4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}
             >
-              Done.
+              Use it.
             </span>
           </h1>
         </AnimatedSection>
 
         <AnimatedSection animation="fadeUp" delay={0.2} className="relative">
-          <p className="max-w-lg text-base md:text-lg lg:text-xl text-white/40 leading-relaxed mb-12">
-            A workspace where your ideas become tasks, your tasks become agent work,
-            and everything stays connected. No busywork.
+          <p className="max-w-xl text-base md:text-lg lg:text-xl text-white/40 leading-relaxed mb-12">
+            Most note apps store text. Most AI assistants forget everything when the tab
+            closes. Brain Portal is the thing in between — a durable record of what you
+            think, and an AI that has actually read it.
           </p>
         </AnimatedSection>
 
@@ -346,10 +362,10 @@ export default function WaitlistPage() {
         <div className="max-w-6xl mx-auto px-6 py-16 md:py-24 md:px-10">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12">
             {[
-              { number: "17", label: "AI agents at your disposal" },
+              { number: "38", label: "Tools your AI can call" },
               { number: "1", label: "Input for everything" },
               { number: "0", label: "Passwords to remember" },
-              { number: "100%", label: "Your data, your control" },
+              { number: "100%", label: "Open source, self-hostable" },
             ].map((stat, i) => (
               <AnimatedSection key={stat.label} animation="fadeUp" delay={i * 0.1} className="text-center">
                 <div className="text-4xl sm:text-5xl md:text-6xl font-bold font-mono text-white tracking-tight mb-2">
@@ -386,23 +402,39 @@ export default function WaitlistPage() {
       {/* ── Feature: Agents ─────────────────────────────────── */}
       <FeatureBlock
         bg="#07070f"
-        eyebrow="AI agents"
+        eyebrow="Ask about this"
         headline={
           <>
-            <span className="text-white">Delegate the work</span>{" "}
+            <span className="text-white">An AI that has</span>{" "}
             <span style={{ background: "linear-gradient(135deg, #5eead4, #99f6e4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-              you shouldn&apos;t be doing.
+              read your notes.
             </span>
           </>
         }
-        body="17 specialized agents across code, writing, research, marketing, analysis, UX, legal, finance, HR, product, sales, ops, security, data engineering, education, and strategy. Assign any content — notes, tasks, captures — and auto-routing picks the right expert."
-        detail="Every agent sees your notes, your projects, your context. Review, revise up to 5 times, or approve. No copy-pasting into ChatGPT."
+        body="Point at any note, task, capture or idea and ask. The answer streams back immediately, already holding that item, its project, your highlights on it, and the notes semantically nearest to it. The follow-up is just the next message."
+        detail="Not a generic chatbot in a sidebar. It starts from your material, and one tap keeps the answer as a note or a task."
+      />
+
+      {/* ── Feature: Background agents ───────────────────────── */}
+      <FeatureBlock
+        bg="#05050a"
+        eyebrow="Background work"
+        headline={
+          <>
+            <span className="text-white">Work that happens</span>{" "}
+            <span style={{ background: "linear-gradient(135deg, #2dd4bf, #5eead4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              while you don&apos;t.
+            </span>
+          </>
+        }
+        body="Scheduled rules, skills and your own AI tools can hand work to 17 specialist roles — code, research, legal, finance, product, ops and more. It runs out of band, against your actual context."
+        detail="Nothing fires behind your back: output is versioned and waits in a review queue where you approve it, send it back, or bin it. It never writes into your notes on its own."
       />
 
       {/* ── Feature: Connections ─────────────────────────────── */}
       <FeatureBlock
         id="connections"
-        bg="#05050a"
+        bg="#07070f"
         eyebrow="Connections"
         headline={
           <>
@@ -412,13 +444,13 @@ export default function WaitlistPage() {
             </span>
           </>
         }
-        body="Every note is embedded into vector space. Related ideas surface automatically — no tags, no folders, no manual linking. You write, the connections appear. Explore them in a live knowledge graph."
-        detail="Semantic similarity, not keyword matching. Five connection types — related, references, extends, contradicts, supports — with wikilinks and hub/bridge/orphan detection."
+        body="Every note, capture and task is embedded into vector space. Related ideas surface next to what you are writing — no tags, no folders, no manual linking. Ask “what did I decide about pricing” and you get the note where you decided it, not every note containing the word."
+        detail="Underneath, a canonical entity graph: a company mentioned thirteen different ways collapses into one node with thirteen mentions and a timeline. It reasons about the thing, not the string."
       />
 
       {/* ── Feature: Capture ────────────────────────────────── */}
       <FeatureBlock
-        bg="#07070f"
+        bg="#05050a"
         eyebrow="Capture"
         headline={
           <>
@@ -433,7 +465,7 @@ export default function WaitlistPage() {
 
       {/* ── Feature: Editor ─────────────────────────────────── */}
       <FeatureBlock
-        bg="#05050a"
+        bg="#07070f"
         eyebrow="Editor"
         headline={
           <>
@@ -443,12 +475,12 @@ export default function WaitlistPage() {
             </span>
           </>
         }
-        body="Markdown editor with centered cursor. Distraction-free. Related notes appear alongside your writing — not because you tagged them, but because they&apos;re actually related. Wikilinks, frontmatter, and images just work."
+        body="Markdown editor with centered cursor. Distraction-free. Related notes appear alongside your writing — not because you tagged them, but because they’re actually related. Wikilinks, frontmatter, and images just work."
       />
 
       {/* ── Feature: Work ───────────────────────────────────── */}
       <FeatureBlock
-        bg="#07070f"
+        bg="#05050a"
         eyebrow="Tasks"
         headline={
           <>
@@ -459,6 +491,55 @@ export default function WaitlistPage() {
           </>
         }
         body="Tasks are born from notes, AI-recommended from your captures, scheduled in calendar or kanban views, and delegated to agents. Recurring tasks, priorities, due dates, and project hierarchy — all linked back to the thinking that inspired them."
+      />
+
+      {/* ── Feature: Highlights ─────────────────────────────── */}
+      <FeatureBlock
+        bg="#07070f"
+        eyebrow="Highlight to instruct"
+        headline={
+          <>
+            <span className="text-white">Yellow means</span>{" "}
+            <span style={{ background: "linear-gradient(135deg, #facc15, #fb923c)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              rework this.
+            </span>
+          </>
+        }
+        body="Highlighting a passage is an instruction, not decoration. Green keeps it, yellow reworks it, blue says more, purple tightens, red cuts, orange fact-checks, pink means explain it to me."
+        detail="Every model that later reads the note is handed the same meanings — so a review responds to your markup without you writing a single line of prompt."
+      />
+
+      {/* ── Feature: MCP ─────────────────────────────────────── */}
+      <FeatureBlock
+        id="mcp"
+        bg="#05050a"
+        eyebrow="Works with your AI"
+        headline={
+          <>
+            <span className="text-white">Give Claude and Cursor</span>{" "}
+            <span style={{ background: "linear-gradient(135deg, #2dd4bf, #5eead4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              a memory.
+            </span>
+          </>
+        }
+        body="A full MCP server — 38 tools, 8 resources, 4 prompts — over stdio or HTTP. Your coding agent can search what you have written, capture what you just decided, and read your dashboard before it answers anything."
+        detail="Keys are per-user, scoped and rate-limited, so you decide exactly how much reach any one agent gets."
+      />
+
+      {/* ── Feature: CRM ─────────────────────────────────────── */}
+      <FeatureBlock
+        bg="#07070f"
+        eyebrow="People"
+        headline={
+          <>
+            <span className="text-white">A Rolodex you</span>{" "}
+            <span style={{ background: "linear-gradient(135deg, #a78bfa, #c4b5fd)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              never had to fill in.
+            </span>
+          </>
+        }
+        body="Contacts are built out of notes you already wrote. People and companies get pulled out of your writing, resolved against each other, and given a timeline of every mention and every real touch."
+        detail="Run several businesses? Keep them in separate compartments, with one contact holding different roles at each."
       />
 
       {/* ── More features grid ──────────────────────────────── */}
@@ -473,27 +554,31 @@ export default function WaitlistPage() {
               { title: "Daily Notes", body: "Templated journals with mood, energy, and focus tracking" },
               { title: "Weekly Reviews", body: "AI-generated summaries of your progress and patterns" },
               { title: "Journal Entries", body: "Flexible journaling across 10 categories with monthly compilations" },
-              { title: "Voice Input", body: "Speech-to-text capture with voice commands and shortcuts" },
+              { title: "Voice Capture", body: "Speak a thought on your phone; it lands transcribed and classified" },
+              { title: "Ink to Text", body: "Sketch or handwrite, and AI transcribes it — strokes stay editable" },
               { title: "Full-Text Search", body: "FTS5-indexed search across all notes, captures, and tasks" },
               { title: "Semantic Search", body: "Vector similarity finds meaning, not just keywords" },
               { title: "Smart Tags", body: "AI-suggested tags, applied automatically to every capture" },
               { title: "Quick Capture", body: "Cmd+Shift+C for fleeting thoughts, ideas, links, and quotes" },
-              { title: "Knowledge Graph", body: "Visual graph of note connections with hub and bridge detection" },
+              { title: "Share Target", body: "Share a link from any app on your phone straight into your brain" },
               { title: "Project Management", body: "Hierarchies, health scoring, collaboration, and dashboards" },
               { title: "Task Calendar", body: "Day, week, and month views with kanban and backlog sidebar" },
-              { title: "AI Chat", body: "Multi-turn conversations with agents scoped to your context" },
-              { title: "Skills System", body: "8 automated skills — digest, triage, insights, notifications, and more" },
+              { title: "Task Recommendations", body: "AI scans your notes and suggests tasks you haven’t created yet" },
+              { title: "Skills System", body: "9 automated skills — digest, triage, insights, notifications, and more" },
               { title: "Heartbeat Scheduler", body: "Automated checks and actions that run while you sleep" },
+              { title: "Pick Your Models", body: "Choose a model per job from a live catalog; retired ones self-heal" },
+              { title: "Works Offline", body: "Service worker and local queue — edits sync when you’re back" },
               { title: "File Attachments", body: "Images, PDFs, docs, and audio with auto-extraction and thumbnails" },
               { title: "Notifications", body: "In-app and email alerts for due dates, digests, and agent outputs" },
               { title: "Obsidian Import", body: "One-click vault migration with folder-to-project mapping" },
               { title: "Markdown Export", body: "Export your vault as .md files or a ZIP archive anytime" },
               { title: "AI Guardrails", body: "Set your values, style, and boundaries — agents adapt to you" },
               { title: "Collaboration", body: "Invite editors and viewers to projects with role-based access" },
-              { title: "Task Recommendations", body: "AI scans your notes and suggests tasks you haven't created yet" },
               { title: "Wikilinks", body: "[[Double-bracket]] cross-references with automatic backlinking" },
+              { title: "Shareable Notes", body: "Public read-only links for any note, revocable at any time" },
               { title: "Mobile Ready", body: "Full PWA with 56px touch targets and full-screen command palette" },
               { title: "Passwordless Auth", body: "Magic links — no passwords to leak, no credentials to manage" },
+              { title: "It Tells You When It Breaks", body: "Background failures surface in plain language, not silence" },
             ].map((item, i) => (
               <AnimatedSection key={item.title} animation="fadeUp" delay={i * 0.04}>
                 <div className="bg-white/[0.02] border border-white/[0.05] rounded-xl p-4 md:p-5 h-full">
@@ -518,7 +603,8 @@ export default function WaitlistPage() {
               </span>
             </h3>
             <p className="text-white/25 text-sm max-w-lg mx-auto leading-relaxed">
-              Most tools make you choose between AI power and knowledge management depth. We built both.
+              Most tools make you choose between AI power and knowledge-management depth,
+              and nearly all of them want to keep your data. We built both, and you can run it yourself.
             </p>
           </AnimatedSection>
 
@@ -543,30 +629,30 @@ export default function WaitlistPage() {
                 </thead>
                 <tbody>
                   {[
-                    { feature: "AI Agent Delegation", dc: true, notion: "partial", obsidian: false, roam: false, mem: "partial", apple: false },
-                    { feature: "17 Specialist Agents", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: false },
-                    { feature: "Auto-Route to Best Agent", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: false },
-                    { feature: "Semantic Search (Vectors)", dc: true, notion: true, obsidian: "partial", roam: false, mem: true, apple: false },
-                    { feature: "Knowledge Graph", dc: true, notion: false, obsidian: true, roam: true, mem: false, apple: false },
-                    { feature: "AI Insights & Patterns", dc: true, notion: "partial", obsidian: false, roam: false, mem: "partial", apple: false },
-                    { feature: "AI Task Recommendations", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: false },
-                    { feature: "Voice Capture & Commands", dc: true, notion: false, obsidian: false, roam: false, mem: true, apple: true },
-                    { feature: "Daily Notes & Journaling", dc: true, notion: "partial", obsidian: true, roam: true, mem: false, apple: false },
-                    { feature: "Weekly AI Reviews", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: false },
-                    { feature: "Task Management", dc: true, notion: true, obsidian: "partial", roam: true, mem: false, apple: false },
-                    { feature: "Calendar & Kanban Views", dc: true, notion: true, obsidian: "partial", roam: false, mem: false, apple: false },
-                    { feature: "Project Hierarchies", dc: true, notion: true, obsidian: true, roam: false, mem: false, apple: "partial" },
-                    { feature: "Markdown Editor", dc: true, notion: "partial", obsidian: true, roam: "partial", mem: true, apple: false },
-                    { feature: "Wikilinks & Backlinks", dc: true, notion: "partial", obsidian: true, roam: true, mem: true, apple: false },
-                    { feature: "Automated Workflows", dc: true, notion: "partial", obsidian: false, roam: false, mem: false, apple: false },
-                    { feature: "Skills & Heartbeat System", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: false },
-                    { feature: "File Attachments", dc: true, notion: true, obsidian: true, roam: true, mem: true, apple: true },
-                    { feature: "Collaboration", dc: true, notion: true, obsidian: false, roam: true, mem: false, apple: true },
+                    { feature: "Open source (AGPL)", dc: true, notion: false, obsidian: "partial", roam: false, mem: false, apple: false },
+                    { feature: "Self-host on your own DB", dc: true, notion: false, obsidian: true, roam: false, mem: false, apple: false },
+                    { feature: "MCP server for your AI tools", dc: true, notion: "partial", obsidian: "partial", roam: false, mem: false, apple: false },
+                    { feature: "Bring your own AI key", dc: true, notion: false, obsidian: "partial", roam: false, mem: false, apple: false },
+                    { feature: "Pick the model per job", dc: true, notion: false, obsidian: "partial", roam: false, mem: false, apple: false },
+                    { feature: "AI chat scoped to one item", dc: true, notion: "partial", obsidian: "partial", roam: false, mem: "partial", apple: false },
+                    { feature: "Background agents with review", dc: true, notion: "partial", obsidian: false, roam: false, mem: false, apple: false },
+                    { feature: "Highlight-to-instruct", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: false },
+                    { feature: "Semantic search (vectors)", dc: true, notion: true, obsidian: "partial", roam: false, mem: true, apple: false },
+                    { feature: "Entity graph under your notes", dc: true, notion: false, obsidian: "partial", roam: "partial", mem: false, apple: false },
+                    { feature: "Built-in CRM", dc: true, notion: "partial", obsidian: false, roam: false, mem: false, apple: false },
+                    { feature: "AI task recommendations", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: false },
+                    { feature: "Handwriting / ink to text", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: true },
+                    { feature: "Voice capture", dc: true, notion: false, obsidian: false, roam: false, mem: true, apple: true },
+                    { feature: "Daily notes & journaling", dc: true, notion: "partial", obsidian: true, roam: true, mem: false, apple: false },
+                    { feature: "Weekly AI reviews", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: false },
+                    { feature: "Tasks, kanban & calendar", dc: true, notion: true, obsidian: "partial", roam: "partial", mem: false, apple: false },
+                    { feature: "Project hierarchies", dc: true, notion: true, obsidian: true, roam: false, mem: false, apple: "partial" },
+                    { feature: "Markdown editor", dc: true, notion: "partial", obsidian: true, roam: "partial", mem: true, apple: false },
+                    { feature: "Wikilinks & backlinks", dc: true, notion: "partial", obsidian: true, roam: true, mem: true, apple: false },
+                    { feature: "Works offline", dc: true, notion: "partial", obsidian: true, roam: false, mem: false, apple: true },
                     { feature: "Export to Markdown", dc: true, notion: "partial", obsidian: true, roam: true, mem: true, apple: false },
-                    { feature: "Passwordless Auth", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: "partial" },
-                    { feature: "AI Guardrails / Personalization", dc: true, notion: false, obsidian: false, roam: false, mem: "partial", apple: false },
-                    { feature: "No AI Training on Data", dc: true, notion: false, obsidian: true, roam: true, mem: false, apple: true },
-                    { feature: "Obsidian Vault Import", dc: true, notion: false, obsidian: true, roam: false, mem: false, apple: false },
+                    { feature: "Passwordless auth", dc: true, notion: false, obsidian: false, roam: false, mem: false, apple: "partial" },
+                    { feature: "Obsidian vault import", dc: true, notion: false, obsidian: true, roam: false, mem: false, apple: false },
                   ].map((row, i) => (
                     <tr key={row.feature} className={cn("border-b border-white/[0.04]", i % 2 === 0 ? "bg-white/[0.01]" : "")}>
                       <td className="py-3 pr-4 pl-2 text-white/60 font-medium">{row.feature}</td>
@@ -602,6 +688,10 @@ export default function WaitlistPage() {
                 Not available
               </span>
             </div>
+            <p className="text-center text-[11px] text-white/15 mt-4 max-w-xl mx-auto leading-relaxed">
+              Comparison reflects each product&apos;s default offering as of {new Date().getFullYear()}.
+              Plugins and third-party extensions can close some of these gaps.
+            </p>
           </AnimatedSection>
         </div>
       </section>
@@ -616,17 +706,17 @@ export default function WaitlistPage() {
                 stays yours.
               </span>
             </h2>
-            <p className="text-white/30 text-base md:text-lg max-w-md mx-auto leading-relaxed">
-              Privacy isn&apos;t a feature. It&apos;s the architecture.
+            <p className="text-white/30 text-base md:text-lg max-w-lg mx-auto leading-relaxed">
+              Privacy isn&apos;t a feature, it&apos;s who holds the keys. Here, that can be you.
             </p>
           </AnimatedSection>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 md:gap-8 max-w-3xl w-full">
             {[
               { title: "Passwordless auth", body: "Magic links. No passwords to leak, no credentials to manage." },
-              { title: "Secure sessions", body: "HTTP-only cookies. Can\u2019t be accessed by scripts." },
-              { title: "Isolated data", body: "Your notes are stored separately from every other user." },
-              { title: "No training", body: "Your notes never train any AI model. Ever." },
+              { title: "Secure sessions", body: "HTTP-only cookies, random tokens, hashed at rest and never logged." },
+              { title: "Or don\u2019t trust us at all", body: "Run the whole thing yourself, on your database and your own AI key." },
+              { title: "Read the code", body: "Every line is public \u2014 including the parts we got wrong and fixed." },
             ].map((item, i) => (
               <AnimatedSection key={item.title} animation="fadeUp" delay={i * 0.1}>
                 <div className="bg-white/[0.02] border border-white/[0.06] rounded-2xl p-6 md:p-8">
@@ -636,6 +726,51 @@ export default function WaitlistPage() {
               </AnimatedSection>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ── Open source ──────────────────────────────────────── */}
+      <section id="open-source" style={{ background: "#05050a" }} className="border-y border-white/[0.04]">
+        <div className="max-w-4xl mx-auto px-6 py-20 md:px-10 md:py-32 text-center">
+          <AnimatedSection animation="fadeUp">
+            <p className="text-teal-400 text-xs font-mono uppercase tracking-[0.2em] mb-6">Open source</p>
+          </AnimatedSection>
+          <AnimatedSection animation="fadeUp" delay={0.08}>
+            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-[-0.04em] leading-[1.05] mb-8">
+              Don&apos;t take our<br />
+              <span style={{ background: "linear-gradient(135deg, #2dd4bf, #5eead4, #99f6e4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+                word for it.
+              </span>
+            </h2>
+          </AnimatedSection>
+          <AnimatedSection animation="fadeUp" delay={0.16}>
+            <p className="text-white/40 text-base md:text-lg leading-relaxed max-w-xl mx-auto mb-10">
+              The whole thing is AGPL-licensed and on GitHub. Read how your data is handled
+              instead of trusting a privacy page about it. Run it on your own Turso database
+              and your own OpenRouter key, and we never see a word of it.
+            </p>
+          </AnimatedSection>
+          <AnimatedSection animation="fadeUp" delay={0.24}>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <a
+                href={GITHUB_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-6 h-12 text-sm font-semibold text-white/80 hover:text-white hover:border-teal-500/40 hover:bg-teal-600/10 transition-all"
+              >
+                <svg viewBox="0 0 16 16" className="w-4 h-4 fill-current" aria-hidden="true">
+                  <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+                </svg>
+                Read the source
+              </a>
+              <a
+                href="#hero-form"
+                className="inline-flex items-center rounded-xl bg-teal-600 px-6 h-12 text-sm font-semibold text-white hover:bg-teal-500 transition-all"
+              >
+                Or let us host it
+              </a>
+            </div>
+          </AnimatedSection>
         </div>
       </section>
 
@@ -694,9 +829,14 @@ export default function WaitlistPage() {
           <div className="w-5 h-5 rounded-md bg-gradient-to-br from-teal-600 to-teal-400" />
           <span className="text-white/40 text-sm">Brain</span>
         </div>
-        <p className="text-white/20 text-xs text-center">
-          Think. Delegate. Done.
-        </p>
+        <a
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-white/20 hover:text-white/50 text-xs text-center transition-colors"
+        >
+          Open source on GitHub {"·"} AGPL-3.0
+        </a>
         <p className="text-white/20 text-xs">&copy; {new Date().getFullYear()} Brain Portal</p>
       </footer>
     </div>
