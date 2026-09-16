@@ -1,0 +1,24 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/process-queue",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/process-agent-queue",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/heartbeat",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/generate-project-health",
+      "schedule": "0 9 * * 1"
+    },
+    {
+      "path": "/api/cron/process-notifications",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}

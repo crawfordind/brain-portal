@@ -1,0 +1,13 @@
+[
+  {
+    "name": "Example Holdings",
+    "products": [{ "name": "Example Product", "sku": "EX-001" }]
+  },
+  {
+    "name": "Example Studio",
+    "compartments": ["consulting"],
+    "complianceRules": [
+      "No pricing commitments in outbound without a signed scope."
+    ]
+  }
+]

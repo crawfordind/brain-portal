@@ -1,0 +1,850 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "../styles/safe-area.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Collapse animations */
+  @keyframes collapse-down {
+    from {
+      height: 0;
+      opacity: 0;
+    }
+    to {
+      height: var(--radix-collapsible-content-height);
+      opacity: 1;
+    }
+  }
+
+  @keyframes collapse-up {
+    from {
+      height: var(--radix-collapsible-content-height);
+      opacity: 1;
+    }
+    to {
+      height: 0;
+      opacity: 0;
+    }
+  }
+
+  --animate-collapse-down: collapse-down 0.2s ease-out;
+  --animate-collapse-up: collapse-up 0.2s ease-out;
+
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    15% { transform: rotate(14deg); }
+    30% { transform: rotate(-12deg); }
+    45% { transform: rotate(8deg); }
+    60% { transform: rotate(-6deg); }
+    75% { transform: rotate(3deg); }
+  }
+}
+
+:root {
+  --radius: 0.625rem;
+
+  /* ── Canvas (Light Theme) ────────────────────────────────── */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.14 0.01 280);
+  --card: oklch(0.97 0 0);
+  --card-foreground: oklch(0.14 0.01 280);
+  --popover: oklch(0.99 0 0);
+  --popover-foreground: oklch(0.14 0.01 280);
+  --primary: oklch(0.45 0.14 160);
+  --primary-foreground: oklch(0.98 0 160);
+  --secondary: oklch(0.94 0.01 160);
+  --secondary-foreground: oklch(0.30 0.05 160);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.50 0.01 280);
+  --accent: oklch(0.91 0.04 160);
+  --accent-foreground: oklch(0.25 0.05 160);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.90 0 0);
+  --input: oklch(0.90 0 0);
+  --ring: oklch(0.55 0.14 160);
+  --chart-1: oklch(0.55 0.15 160);
+  --chart-2: oklch(0.65 0.12 195);
+  --chart-3: oklch(0.60 0.10 240);
+  --chart-4: oklch(0.70 0.12 130);
+  --chart-5: oklch(0.60 0.18 25);
+  --sidebar: oklch(0.96 0 0);
+  --sidebar-foreground: oklch(0.14 0.01 280);
+  --sidebar-primary: oklch(0.45 0.14 160);
+  --sidebar-primary-foreground: oklch(0.98 0 160);
+  --sidebar-accent: oklch(0.91 0.04 160);
+  --sidebar-accent-foreground: oklch(0.25 0.05 160);
+  --sidebar-border: oklch(0.90 0 0);
+  --sidebar-ring: oklch(0.55 0.14 160);
+}
+
+.dark {
+  /* ── Slate (Dark Theme) ──────────────────────────────────── */
+  --background: oklch(0.13 0 0);
+  --foreground: oklch(0.95 0.005 280);
+  --card: oklch(0.18 0 0);
+  --card-foreground: oklch(0.95 0.005 280);
+  --popover: oklch(0.16 0 0);
+  --popover-foreground: oklch(0.95 0.005 280);
+  --primary: oklch(0.68 0.14 175);
+  --primary-foreground: oklch(0.10 0.02 175);
+  --secondary: oklch(0.20 0.01 175);
+  --secondary-foreground: oklch(0.85 0.05 175);
+  --muted: oklch(0.20 0 0);
+  --muted-foreground: oklch(0.58 0.01 280);
+  --accent: oklch(0.23 0.02 175);
+  --accent-foreground: oklch(0.88 0.05 175);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(0.25 0.01 280);
+  --input: oklch(0.25 0.01 280);
+  --ring: oklch(0.68 0.14 175);
+  --chart-1: oklch(0.68 0.14 175);
+  --chart-2: oklch(0.72 0.12 200);
+  --chart-3: oklch(0.65 0.15 150);
+  --chart-4: oklch(0.60 0.12 220);
+  --chart-5: oklch(0.75 0.10 130);
+  --sidebar: oklch(0.11 0 0);
+  --sidebar-foreground: oklch(0.85 0.005 280);
+  --sidebar-primary: oklch(0.68 0.14 175);
+  --sidebar-primary-foreground: oklch(0.10 0.02 175);
+  --sidebar-accent: oklch(0.20 0.02 175);
+  --sidebar-accent-foreground: oklch(0.85 0.05 175);
+  --sidebar-border: oklch(0.22 0.01 280);
+  --sidebar-ring: oklch(0.68 0.14 175);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition: none !important;
+    }
+  }
+
+  /* TipTap TaskList: Make checkbox and text inline */
+  ul[data-type="taskList"] {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  li[data-type="taskItem"] {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  li[data-type="taskItem"] > label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    flex: 1;
+    cursor: pointer;
+  }
+
+  li[data-type="taskItem"] > label > input[type="checkbox"] {
+    margin-top: 0.375rem;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  li[data-type="taskItem"] > label > div {
+    flex: 1;
+  }
+
+  li[data-type="taskItem"] > label > div > p {
+    margin: 0;
+  }
+
+  /* TipTap Editor Prose Styles */
+  .prose {
+    color: var(--foreground);
+    max-width: 65ch;
+  }
+
+  .prose :where(h1):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.2;
+    margin-top: 1rem;
+    margin-bottom: 0.75rem;
+    letter-spacing: -0.025em;
+  }
+
+  .prose :where(h2):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1.3;
+    margin-top: 1rem;
+    margin-bottom: 0.75rem;
+    letter-spacing: -0.025em;
+  }
+
+  .prose :where(h3):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-size: 1.125rem;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-top: 1rem;
+    margin-bottom: 0.75rem;
+    letter-spacing: -0.025em;
+  }
+
+  .prose :where(p):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    line-height: 1.75;
+  }
+
+  .prose :where(ul):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    list-style-type: disc;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    padding-left: 1.625rem;
+  }
+
+  .prose :where(ol):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    list-style-type: decimal;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    padding-left: 1.625rem;
+  }
+
+  .prose :where(li):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+
+  .prose :where(blockquote):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-style: normal;
+    font-weight: 400;
+    border-left: 4px solid var(--primary);
+    padding-left: 1rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--muted-foreground);
+  }
+
+  .prose :where(code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    background-color: var(--muted);
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    font-family: var(--font-mono);
+  }
+
+  .prose :where(pre):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    background-color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    padding: 1rem;
+    overflow-x: auto;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .prose :where(pre code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    background-color: transparent;
+    padding: 0;
+    border-radius: 0;
+    font-size: inherit;
+  }
+
+  .prose :where(strong):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-weight: 600;
+  }
+
+  .prose :where(em):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-style: italic;
+  }
+
+  .prose :where(a):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    color: var(--primary);
+    text-decoration: underline;
+  }
+
+  .prose :where(hr):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    border-top: 1px solid var(--border);
+    margin-top: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  /* Force LTR text direction - fixes RTL input issues */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  input[type="url"],
+  textarea {
+    direction: ltr !important;
+    text-align: left !important;
+    unicode-bidi: normal !important;
+  }
+
+  /* Custom scrollbar for modal content */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: var(--border);
+    opacity: 0.7;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide,
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar,
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* TipTap Table Styles */
+.tableWrapper {
+  overflow-x: auto;
+  margin: 1.25rem 0;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  /* Subtle shadow for depth */
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+}
+
+.table-node {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.table-node td,
+.table-node th {
+  padding: 0.625rem 0.875rem;
+  min-width: 80px;
+  vertical-align: top;
+  position: relative;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+/* Remove right border on last column */
+.table-node td:last-child,
+.table-node th:last-child {
+  border-right: none;
+}
+
+/* Remove bottom border on last row */
+.table-node tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Header row */
+.table-node th {
+  background: var(--muted);
+  font-weight: 600;
+  text-align: left;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+/* Zebra striping */
+.table-node tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--muted) 40%, transparent);
+}
+
+/* Row hover */
+.table-node tbody tr:hover {
+  background: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+
+/* Selected cells */
+.table-node td.selectedCell,
+.table-node th.selectedCell {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+/* Column resize handle */
+.table-node .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--primary);
+  cursor: col-resize;
+  pointer-events: auto;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.table-node td:hover > .column-resize-handle,
+.table-node th:hover > .column-resize-handle,
+.table-node .column-resize-handle:hover {
+  opacity: 1;
+}
+
+/* When actively resizing, always show the handle */
+.tableWrapper.resize-cursor .column-resize-handle {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   Semantic highlight annotations
+
+   A highlight colour is an instruction to whichever AI reviews the note, so the
+   hues are chosen to be guessable (green = keep, red = cut) and to stay
+   distinguishable from one another in both themes. The selectors are attribute-
+   and class-based so highlights survive sanitizers that drop data attributes,
+   and they apply outside `.prose` too — shared and exported views included.
+   --------------------------------------------------------------------------- */
+
+mark.bp-annotation,
+mark[data-intent] {
+  background-color: transparent;
+  color: inherit;
+  border-radius: 0.25rem;
+  padding: 0.1em 0.15em;
+  margin: 0 -0.05em;
+  /* Keep the rounded ends when a highlight wraps across lines */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* A highlight the user attached a note to gets a subtle underline so the extra
+   context is visible without hovering. */
+mark.bp-annotation[data-note],
+mark[data-intent][data-note] {
+  text-decoration: underline dotted currentColor;
+  text-underline-offset: 0.2em;
+}
+
+.bp-annotation-approve { background-color: rgb(34 197 94 / 0.28); }
+.bp-annotation-edit { background-color: rgb(234 179 8 / 0.32); }
+.bp-annotation-expand { background-color: rgb(59 130 246 / 0.26); }
+.bp-annotation-condense { background-color: rgb(168 85 247 / 0.26); }
+.bp-annotation-cut { background-color: rgb(239 68 68 / 0.26); }
+.bp-annotation-verify { background-color: rgb(249 115 22 / 0.28); }
+.bp-annotation-question { background-color: rgb(236 72 153 / 0.26); }
+
+/* Dark mode: lower the fill and lift the text, otherwise saturated highlights
+   swallow the glyphs. */
+.dark .bp-annotation-approve { background-color: rgb(34 197 94 / 0.32); color: rgb(220 252 231); }
+.dark .bp-annotation-edit { background-color: rgb(234 179 8 / 0.32); color: rgb(254 249 195); }
+.dark .bp-annotation-expand { background-color: rgb(59 130 246 / 0.36); color: rgb(219 234 254); }
+.dark .bp-annotation-condense { background-color: rgb(168 85 247 / 0.34); color: rgb(243 232 255); }
+.dark .bp-annotation-cut { background-color: rgb(239 68 68 / 0.32); color: rgb(254 226 226); }
+.dark .bp-annotation-verify { background-color: rgb(249 115 22 / 0.32); color: rgb(255 237 213); }
+.dark .bp-annotation-question { background-color: rgb(236 72 153 / 0.32); color: rgb(252 231 243); }
+
+/* ---------------------------------------------------------------------------
+   Notebook editor (desktop only)
+
+   The editor surface is dressed as a page of ruled paper: cream stock with a
+   faint fibre grain, a red margin rule down the left gutter, blue feint lines
+   under every line of text, and a warm serif for the "ink".
+
+   The ruling is painted per block rather than as one gradient over the whole
+   page. A single page-wide gradient is fixed to the container, so the moment a
+   code block, image or table changes the vertical rhythm every line below it
+   floats off its rule. Painting the repeating gradient on each block instead
+   anchors it to that block's own box, so every block's text sits exactly on its
+   own rules no matter what came before it — and blocks that shouldn't be ruled
+   (code, tables, images, rules) simply opt out.
+
+   Everything below is inside a desktop media query: phones keep the plain
+   editor, where a 32px writing rhythm would waste most of the screen.
+   --------------------------------------------------------------------------- */
+
+@media (min-width: 1024px) {
+  .bp-notebook {
+    /* The writing rhythm. Every ruled line — and the gap between blocks — is
+       exactly one of these tall, which is what keeps text on the lines. */
+    --bp-line: 2rem;
+    /* Left gutter, wide enough to clear the red margin rule. */
+    --bp-gutter: 4.25rem;
+    --bp-margin-x: 3.25rem;
+    --bp-edge-r: 2.75rem;
+
+    --bp-paper: oklch(0.982 0.012 92);
+    --bp-paper-shade: oklch(0.958 0.014 92);
+    --bp-paper-edge: oklch(0.90 0.016 92);
+    --bp-rule-color: oklch(0.70 0.045 245 / 0.34);
+    --bp-margin-rule: oklch(0.60 0.15 25 / 0.30);
+    --bp-ink: oklch(0.26 0.028 265);
+    --bp-ink-soft: oklch(0.46 0.03 265);
+    --bp-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='0.05'/%3E%3C/svg%3E");
+
+    /* The feint itself, kept in a variable so blocks that layer something else
+       on top (blockquote's bar) can re-declare background-image without
+       restating it. */
+    --bp-ruling: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--bp-line) - 1px),
+      var(--bp-rule-color) calc(var(--bp-line) - 1px),
+      var(--bp-rule-color) var(--bp-line)
+    );
+
+    background-color: var(--bp-paper);
+    border-color: var(--bp-paper-edge);
+    /* Paper has a crisp edge, not an app-chrome radius. */
+    border-radius: 3px;
+    box-shadow:
+      0 1px 1px oklch(0 0 0 / 0.05),
+      0 10px 26px -14px oklch(0 0 0 / 0.22);
+  }
+
+  .dark .bp-notebook {
+    --bp-paper: oklch(0.175 0.008 90);
+    --bp-paper-shade: oklch(0.205 0.008 90);
+    --bp-paper-edge: oklch(0.27 0.01 90);
+    --bp-rule-color: oklch(0.66 0.04 245 / 0.17);
+    --bp-margin-rule: oklch(0.58 0.13 25 / 0.32);
+    --bp-ink: oklch(0.91 0.012 90);
+    --bp-ink-soft: oklch(0.68 0.012 90);
+    --bp-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='0.03'/%3E%3C/svg%3E");
+
+    box-shadow:
+      0 1px 1px oklch(0 0 0 / 0.3),
+      0 10px 26px -14px oklch(0 0 0 / 0.55);
+  }
+
+  /* The toolbar reads as the board at the top of the pad rather than as app
+     chrome sitting on the paper. */
+  .bp-notebook .bp-notebook-toolbar {
+    background-color: color-mix(in oklab, var(--bp-paper-shade) 92%, transparent);
+    border-bottom-color: var(--bp-paper-edge);
+    backdrop-filter: none;
+  }
+
+  /* ── The page ─────────────────────────────────────────────────────────── */
+
+  .bp-notebook-page {
+    color: var(--bp-ink);
+    font-family: var(--font-notebook), Georgia, "Times New Roman", serif;
+    font-size: 1.0625rem;
+    min-height: 30rem;
+    padding: var(--bp-line) var(--bp-edge-r) calc(var(--bp-line) * 2) var(--bp-gutter);
+
+    /* Layer 1: the red margin rule. Layer 2: paper fibre. */
+    background-image:
+      linear-gradient(
+        to right,
+        transparent var(--bp-margin-x),
+        var(--bp-margin-rule) var(--bp-margin-x),
+        var(--bp-margin-rule) calc(var(--bp-margin-x) + 1px),
+        transparent calc(var(--bp-margin-x) + 1px)
+      ),
+      var(--bp-grain);
+    background-repeat: no-repeat, repeat;
+    background-size: 100% 100%, 140px 140px;
+  }
+
+  /* Every block paints its own feint, and bleeds out through the page padding
+     so the lines run the full width of the sheet and cross the margin rule —
+     the padding is given back as the block's own, so the text does not move. */
+  .bp-notebook-page > * {
+    background-image: var(--bp-ruling);
+    margin-inline: calc(var(--bp-gutter) * -1) calc(var(--bp-edge-r) * -1);
+    padding-inline: var(--bp-gutter) var(--bp-edge-r);
+  }
+
+  /* Blocks that can't sit on the ruling get none of it, stay inside the text
+     column, and space themselves in whole lines so the blocks around them keep
+     their rhythm. */
+  .bp-notebook-page > pre,
+  .bp-notebook-page > hr,
+  .bp-notebook-page > figure,
+  .bp-notebook-page > img,
+  .bp-notebook-page > .tableWrapper {
+    background-image: none;
+    margin: var(--bp-line) 0;
+    padding-inline: 0;
+  }
+
+  /* ── Text on the lines ────────────────────────────────────────────────── */
+
+  .bp-notebook-page :where(p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote) {
+    margin-block: 0;
+    line-height: var(--bp-line);
+  }
+
+  /* Spacing is padding, never margin: padding is inside the box, so the block's
+     own ruling keeps painting through the gap and the page stays continuously
+     ruled. A margin would leave a blank band. */
+  .bp-notebook-page > :where(p, ul, ol, blockquote) {
+    padding-bottom: var(--bp-line);
+  }
+
+  .bp-notebook-page > :where(h1, h2, h3, h4, h5, h6) {
+    padding-top: var(--bp-line);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .bp-notebook-page > :where(h1, h2, h3, h4, h5, h6):first-child {
+    padding-top: 0;
+  }
+
+  .bp-notebook-page > h1 { font-size: 1.5rem; }
+  .bp-notebook-page > h2 { font-size: 1.25rem; }
+  .bp-notebook-page > :where(h3, h4, h5, h6) { font-size: 1.0625rem; }
+
+  /* List markers indent from the text column, not from the bled-out edge. */
+  .bp-notebook-page > :where(ul, ol) {
+    padding-left: calc(var(--bp-gutter) + 1.5rem);
+  }
+
+  /* Task lists carry their checkbox where a marker would go, so they only need
+     the gutter back — not the extra marker indent. */
+  .bp-notebook-page > ul[data-type="taskList"] {
+    padding-left: var(--bp-gutter);
+  }
+
+  .bp-notebook-page :where(li) :where(ul, ol) {
+    padding-left: 1.5rem;
+  }
+
+  /* Nested lists ride the parent's ruling — they must not add their own. */
+  .bp-notebook-page :where(li) > :where(ul, ol) {
+    padding-bottom: 0;
+    background-image: none;
+  }
+
+  /* The quote bar is a background layer rather than a border, so it stops at
+     the last line of the quote instead of running down through the blank line
+     that separates the quote from what follows. */
+  .bp-notebook-page > blockquote {
+    border-left: none;
+    padding-left: calc(var(--bp-gutter) + 1rem);
+    color: var(--bp-ink-soft);
+    font-style: italic;
+    background-image:
+      linear-gradient(var(--bp-margin-rule), var(--bp-margin-rule)),
+      var(--bp-ruling);
+    background-repeat: no-repeat, repeat;
+    background-size: 2px calc(100% - var(--bp-line)), auto;
+    background-position: var(--bp-gutter) top, left top;
+  }
+
+  .bp-notebook-page a {
+    color: inherit;
+    text-decoration-color: var(--bp-margin-rule);
+    text-underline-offset: 0.15em;
+  }
+
+  /* Inline code must not stretch the line box, or the text steps off the rule. */
+  .bp-notebook-page :where(p, li, h1, h2, h3) code {
+    background-color: color-mix(in oklab, var(--bp-paper-shade) 70%, var(--bp-ink) 6%);
+    padding: 0.05em 0.3em;
+    line-height: 1;
+    font-size: 0.9em;
+  }
+
+  .bp-notebook-page pre {
+    background-color: var(--bp-paper-shade);
+    border: 1px solid var(--bp-paper-edge);
+    border-radius: 3px;
+    line-height: 1.5rem;
+  }
+
+  .bp-notebook-page hr {
+    border-top: 1px solid var(--bp-paper-edge);
+  }
+
+  /* Checkboxes centre themselves in the taller writing line. */
+  .bp-notebook-page li[data-type="taskItem"] > label > input[type="checkbox"] {
+    margin-top: 0.5rem;
+  }
+
+  /* Images read as something pasted onto the page. */
+  .bp-notebook-page :where(figure, p) img {
+    border: 1px solid var(--bp-paper-edge);
+    border-radius: 2px;
+    box-shadow: 0 2px 8px -4px oklch(0 0 0 / 0.35);
+  }
+
+  .bp-notebook-page figure figcaption {
+    color: var(--bp-ink-soft);
+    font-style: italic;
+  }
+
+  .bp-notebook-page ::selection {
+    background-color: color-mix(in oklab, var(--bp-rule-color) 55%, transparent);
+  }
+
+  .bp-notebook-page p.is-editor-empty:first-child::before {
+    color: var(--bp-ink-soft);
+    opacity: 0.6;
+    font-style: italic;
+  }
+
+  /* ── Journal on the same paper ────────────────────────────────────────── */
+
+  /* The journal writes onto the same sheet as the note editor. Entries are
+     ruled lines, not cards: a day's log should read as a page you wrote, which
+     is the whole point of it looking like a notebook rather than a feed.
+     Every rule below exists to keep text sitting exactly on the feint — the
+     ruling is painted per block by `.bp-notebook-page > *`, so anything that
+     changes a block's height by a fraction of a line visibly drifts. */
+
+  /* A journal page is ruled all the way down, including below the last entry.
+     Block-level ruling alone leaves the rest of the sheet blank, which reads as
+     an unfinished screen rather than a page with room left on it. The page's
+     top padding is exactly one line, so this base ruling lands on the same
+     rhythm as the per-block ruling painted over it — the two coincide rather
+     than double up. Opt-in, so the note editor keeps the look it has. */
+  .bp-notebook-page.bp-notebook-page-full-rule {
+    background-image:
+      linear-gradient(
+        to right,
+        transparent var(--bp-margin-x),
+        var(--bp-margin-rule) var(--bp-margin-x),
+        var(--bp-margin-rule) calc(var(--bp-margin-x) + 1px),
+        transparent calc(var(--bp-margin-x) + 1px)
+      ),
+      var(--bp-ruling),
+      var(--bp-grain);
+    background-repeat: no-repeat, repeat, repeat;
+    background-size: 100% 100%, auto, 140px 140px;
+    background-position: left top, left top, left top;
+  }
+
+  .bp-notebook-page > .bp-entry {
+    line-height: var(--bp-line);
+    margin-block: 0;
+    padding-bottom: var(--bp-line);
+  }
+
+  /* Entry metadata rides the same line as the text it belongs to. Padding and
+     borders are avoided here for the same reason inline code drops its
+     line-height: they grow the line box and step the text off the rule. */
+  .bp-notebook-page .bp-entry-meta {
+    color: var(--bp-ink-soft);
+    font-size: 0.8125rem;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    /* Same reason inline code drops its line-height: a smaller inline font
+       inside a taller line box aligns on the baseline, and its own leading
+       spills a fraction of a pixel past the strut — growing every line it
+       appears on and walking the whole page off the ruling. */
+    line-height: 1;
+  }
+
+  .bp-notebook-page .bp-entry-cat {
+    color: var(--bp-margin-rule);
+    font-variant: small-caps;
+    letter-spacing: 0.04em;
+  }
+
+  /* The composer is the next blank line on the page, not a box floating above
+     it — so it is transparent, unbordered, and shares the writing rhythm. */
+  .bp-notebook-page > .bp-compose {
+    padding-bottom: var(--bp-line);
+  }
+
+  .bp-notebook-page .bp-compose-input {
+    display: block;
+    width: 100%;
+    border: 0;
+    outline: none;
+    resize: none;
+    overflow: hidden;
+    background: transparent;
+    color: var(--bp-ink);
+    font: inherit;
+    line-height: var(--bp-line);
+    /* content-box with no padding keeps the element's height an exact multiple
+       of the writing line. A stray default padding or border here is enough to
+       push every rule below the composer off the rhythm. */
+    box-sizing: content-box;
+    padding: 0;
+    height: var(--bp-line);
+    min-height: var(--bp-line);
+  }
+
+  .bp-notebook-page .bp-compose-input::placeholder {
+    color: var(--bp-ink-soft);
+    opacity: 0.6;
+    font-style: italic;
+  }
+
+  /* A day with nothing written on it still shows as ruled paper, so the empty
+     state reads as "blank page" rather than "broken screen". */
+  .bp-notebook-page > .bp-page-note {
+    line-height: var(--bp-line);
+    padding-bottom: var(--bp-line);
+    color: var(--bp-ink-soft);
+    font-style: italic;
+  }
+}
