@@ -132,7 +132,7 @@ export function ConnectionBrowser({
               placeholder="Search your notes..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-8 py-1.5 text-sm rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              className="bp-field pl-8 pr-8 text-sm"
             />
             {searchQuery && (
               <button

@@ -444,7 +444,8 @@ export default function ProjectDetailPage() {
               <Input
                 value={editForm.name}
                 onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                className="text-lg md:text-xl font-semibold"
+                variant="title"
+            className="md:text-xl"
               />
               <Textarea
                 value={editForm.description}

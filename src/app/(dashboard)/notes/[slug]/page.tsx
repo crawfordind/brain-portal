@@ -379,7 +379,8 @@ export default function NoteDetailPage() {
             value={title}
             onChange={(e) => canEditNote && setTitle(e.target.value)}
             readOnly={!canEditNote}
-            className="text-lg md:text-xl font-semibold border-none shadow-none focus-visible:ring-0 px-0 h-auto min-w-0"
+            variant="title"
+            className="md:text-xl"
             placeholder="Note title..."
           />
         </div>

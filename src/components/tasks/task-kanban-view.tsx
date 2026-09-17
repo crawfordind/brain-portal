@@ -3,7 +3,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DndContext, DragOverlay, useDroppable, useDraggable } from "@dnd-kit/core";
 import { TaskCard } from "@/components/tasks/task-card";
-import { TaskDetailDialog } from "@/components/tasks/task-detail-dialog";
+import { TaskPanel } from "@/components/tasks/task-panel";
+import { useProjects } from "@/hooks/use-projects";
 import { useTaskDrag } from "@/hooks/use-task-drag";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -165,6 +166,7 @@ function KanbanColumn({ id, label, bgColor, tasks, onTaskClick, onTaskLongPress,
 
 export function TaskKanbanView({ projectFilter = "all" }: TaskKanbanViewProps) {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const { data: projects = [] } = useProjects();
   const { askAbout } = useAskAbout();
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [taskToMove, setTaskToMove] = useState<Task | null>(null);
@@ -366,21 +368,20 @@ export function TaskKanbanView({ projectFilter = "all" }: TaskKanbanViewProps) {
           </>
         )}
 
-        {/* Task Detail Dialog */}
+        {/* One panel, editable in place. The Edit button here used to
+            `console.log` the task and do nothing. */}
         {selectedTask && (
-          <TaskDetailDialog
+          <TaskPanel
             task={selectedTask}
             open={!!selectedTask}
             onClose={() => setSelectedTask(null)}
-            onEdit={() => {
-              console.log("Edit task:", selectedTask);
-            }}
-            onAskAbout={() =>
+            projects={projects}
+            onAskAbout={(t) =>
               askAbout({
-                id: selectedTask.id,
+                id: t.id,
                 type: "task",
-                title: selectedTask.title || selectedTask.content,
-                content: selectedTask.description || selectedTask.content,
+                title: t.title || t.content,
+                content: t.description || t.content,
               })
             }
           />

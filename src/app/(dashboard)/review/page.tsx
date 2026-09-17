@@ -7,9 +7,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ReviewView } from "@/components/work/review-view";
 import { WorkViewSwitcher } from "@/components/work/work-view-switcher";
 import { AgentReviewFocusPanel } from "@/components/agents/agent-review-focus-panel";
-import { LazyDialog } from "@/components/ui/lazy-dialog";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useReviewCount } from "@/hooks/use-review-count";
+import { useProjects } from "@/hooks/use-projects";
+import { TaskPanel } from "@/components/tasks/task-panel";
 
 /**
  * Review — agent output waiting on a decision.
@@ -29,6 +30,9 @@ function ReviewPageContent() {
 
   const [reviewTaskId, setReviewTaskId] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  // The create dialog here was passed `projects={[]}`, so a task created from
+  // Review could never be filed into a project.
+  const { data: projects = [] } = useProjects();
 
   useEffect(() => {
     const taskParam = searchParams.get("task") ?? searchParams.get("review");
@@ -59,15 +63,11 @@ function ReviewPageContent() {
         />
       </div>
 
-      <LazyDialog
+      <TaskPanel
+        task={null}
         open={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
-        loader={() =>
-          import("@/components/tasks/task-create-dialog").then((m) => ({
-            default: m.TaskCreateDialog,
-          }))
-        }
-        projects={[]}
+        projects={projects}
       />
 
       {reviewTaskId && (

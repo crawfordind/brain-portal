@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, queryOne } from "@/lib/db/client";
+import { db, queryOne, mutate } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { Task } from "@/lib/db/schema";
 import { getNextOccurrence } from "@/lib/tasks/recurrence";
@@ -127,6 +127,35 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       args.push((body.recurrenceEndDate as string) || null);
     }
 
+    if (body.title !== undefined) {
+      updates.push("title = ?");
+      args.push(typeof body.title === "string" ? body.title.trim() || null : null);
+    }
+
+    if (body.description !== undefined) {
+      updates.push("description = ?");
+      args.push(typeof body.description === "string" ? body.description.trim() || null : null);
+    }
+
+    // Delegation used to be settable only at creation, so deciding later that
+    // an agent should take something over was impossible from any surface.
+    // `newlyDelegated` is computed before the UPDATE so the agent_task is
+    // enqueued once, on the transition, and not again on every later save.
+    const newlyDelegated =
+      body.delegatedTo !== undefined &&
+      body.delegatedTo &&
+      body.delegatedTo !== existing.delegated_to;
+
+    if (body.delegatedTo !== undefined) {
+      updates.push("delegated_to = ?");
+      args.push((body.delegatedTo as string) || null);
+
+      // Taking the work back means the queued agent run no longer owns it.
+      if (!body.delegatedTo) {
+        updates.push("agent_task_id = NULL");
+      }
+    }
+
     if (updates.length === 0) {
       return NextResponse.json({ task: existing });
     }
@@ -169,6 +198,37 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             id,
             existing.tags || '[]',
           ],
+        });
+      }
+    }
+
+    // Handing a task to an agent has to actually queue the work, the same way
+    // creating an already-delegated task does. Setting the column alone would
+    // make the UI claim an agent has it while nothing was ever enqueued.
+    if (newlyDelegated && body.autoExecute) {
+      const agentType = body.delegatedTo as string;
+      const agentTask = await mutate<{ id: string }>(
+        `INSERT INTO agent_tasks (
+           user_id, task_id, title, description,
+           task_type, assigned_agent, status, priority
+         )
+         VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)
+         RETURNING id`,
+        [
+          user.id,
+          id,
+          (existing.title || existing.content || "").split("\n")[0].slice(0, 60),
+          existing.description || existing.content || "",
+          agentType,
+          agentType,
+          (body.priority as string) || existing.priority,
+        ]
+      );
+
+      if (agentTask) {
+        await db.execute({
+          sql: "UPDATE tasks SET agent_task_id = ?, status = 'in_progress' WHERE id = ? AND user_id = ?",
+          args: [agentTask.id, id, user.id],
         });
       }
     }

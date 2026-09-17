@@ -198,7 +198,8 @@ function NewNoteContent() {
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="text-lg md:text-xl font-semibold border-none shadow-none focus-visible:ring-0 px-0 h-auto min-w-0"
+            variant="title"
+            className="md:text-xl"
             placeholder="Note title..."
             autoFocus
           />

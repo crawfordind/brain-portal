@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { parseISO, isToday, isPast, startOfDay } from "date-fns";
-import { Plus, Filter, Bot } from "lucide-react";
+import { Plus, Filter, Bot, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -12,10 +12,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { LazyDialog } from "@/components/ui/lazy-dialog";
 import { BulkActionToolbar } from "@/components/ui/bulk-action-toolbar";
-import { RecommendationsList } from "@/components/recommendations/recommendations-list";
-import { TaskDetailDialog } from "@/components/tasks/task-detail-dialog";
+import {
+  RecommendationsList,
+  useScanForTasks,
+} from "@/components/recommendations/recommendations-list";
+import { TaskPanel } from "@/components/tasks/task-panel";
 import { useAskAbout } from "@/hooks/use-ask-about";
 import { SaveTaskAsNoteDialog } from "@/components/tasks/save-task-as-note-dialog";
 import { TaskCalendarView } from "@/components/tasks/task-calendar-view";
@@ -31,6 +33,7 @@ import { WorkTaskList } from "./work-task-list";
 import { MobileFilterSheet } from "./mobile-filter-sheet";
 
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { cn } from "@/lib/utils";
 import type { Task } from "@/types/task";
 
 interface Project {
@@ -95,6 +98,7 @@ export function WorkPage() {
   });
 
   const aiReviewCount = useReviewCount();
+  const scanForTasks = useScanForTasks();
 
   const tasks = (tasksData?.tasks as Task[]) || [];
   const projects = (projectsData as Project[]) || [];
@@ -224,8 +228,7 @@ export function WorkPage() {
   };
 
   const handleTaskClick = (task: Task) => {
-    state.setViewingTask(task);
-    state.setIsDetailOpen(true);
+    state.openTask(task);
   };
 
   const handleAskAbout = (task: Task) => {
@@ -316,9 +319,23 @@ export function WorkPage() {
             )}
           </Button>
 
+          {/* Find tasks in notes. Lives here so it is reachable even when the
+              suggestions band is hidden for having nothing to show. */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 px-2 text-xs text-muted-foreground"
+            onClick={() => scanForTasks.mutate()}
+            disabled={scanForTasks.isPending}
+            title="Scan recent notes for tasks you haven't written down"
+          >
+            <Sparkles className={cn("h-3.5 w-3.5", scanForTasks.isPending && "animate-pulse")} />
+            <span className="hidden lg:inline">Find tasks</span>
+          </Button>
+
           {/* New Task */}
           <Button
-            onClick={() => state.setIsCreateOpen(true)}
+            onClick={() => state.openTask(null)}
             size="sm"
             className="h-8 text-xs"
           >
@@ -367,10 +384,13 @@ export function WorkPage() {
         taskCount={tasks.length}
       />
 
-      {/* Recommendations — compact, only on desktop list view */}
-      {isDesktop && state.currentView === "list" && state.statusFilter !== "completed" && (
-        <RecommendationsList className="!mt-1" />
-      )}
+      {/*
+        Tasks the AI found in your notes. Shown on every view and every screen
+        size — it was previously desktop-and-list-only, which hid the feature
+        from phones entirely. It renders nothing when there is nothing to
+        suggest, so it costs no space when it has nothing to offer.
+      */}
+      {state.statusFilter !== "completed" && <RecommendationsList className="!mt-1" />}
 
       {/* Main content area — no extra tab chrome, driven by currentView */}
       <Tabs value={state.currentView} onValueChange={(v) => state.setCurrentView(v as WorkView)}>
@@ -385,7 +405,7 @@ export function WorkPage() {
             onAskAbout={handleAskAbout}
             onDelete={handleDelete}
             onReview={handleReview}
-            onCreateTask={() => state.setIsCreateOpen(true)}
+            onCreateTask={() => state.openTask(null)}
             selectionMode={state.selectionMode}
             isSelected={selection.isSelected}
             onToggleSelect={selection.toggleItem}
@@ -418,53 +438,18 @@ export function WorkPage() {
         </TabsContent>
       </Tabs>
 
-      {/* --- Dialogs --- */}
+      {/* --- One panel for create, read and edit --- */}
 
-      <LazyDialog
-        open={state.isCreateOpen}
-        onClose={() => state.setIsCreateOpen(false)}
-        loader={() =>
-          import("@/components/tasks/task-create-dialog").then((m) => ({ default: m.TaskCreateDialog }))
-        }
+      <TaskPanel
+        task={state.panelTask}
+        open={state.isPanelOpen}
+        onClose={state.closeTask}
         projects={projects}
-      />
-
-      {state.viewingTask && (
-        <TaskDetailDialog
-          task={state.viewingTask}
-          open={state.isDetailOpen}
-          onClose={() => {
-            state.setIsDetailOpen(false);
-            state.setViewingTask(null);
-          }}
-          onEdit={() => {
-            state.setEditingTask(state.viewingTask);
-            state.setIsDetailOpen(false);
-            state.setIsEditOpen(true);
-          }}
-          onAskAbout={() => {
-            if (state.viewingTask) handleAskAbout(state.viewingTask);
-            state.setIsDetailOpen(false);
-          }}
-          onReview={(agentTaskId) => {
-            state.setReviewTaskId(agentTaskId);
-            state.setIsDetailOpen(false);
-            state.setViewingTask(null);
-          }}
-        />
-      )}
-
-      <LazyDialog
-        open={state.isEditOpen}
-        onClose={() => {
-          state.setIsEditOpen(false);
-          state.setEditingTask(null);
+        onAskAbout={handleAskAbout}
+        onReview={(agentTaskId) => {
+          state.closeTask();
+          state.setReviewTaskId(agentTaskId);
         }}
-        loader={() =>
-          import("@/components/tasks/task-edit-dialog").then((m) => ({ default: m.TaskEditDialog }))
-        }
-        task={state.editingTask}
-        projects={projects}
       />
 
       {state.savingTask && state.savingTaskOutput && (

@@ -224,40 +224,51 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // Auto-scan for task recommendations in daily notes
-    if (contentChanged && note && note.note_type === "daily" && content) {
+    // Look for tasks hiding in what was just written.
+    //
+    // This used to run on daily notes only, which meant the notes where people
+    // actually write "I should email them back" were never scanned unless the
+    // user went and pressed a button. Both note kinds keep their scan state in
+    // their own `metadata`, so the same throttle applies to each: quiet for a
+    // few minutes, enough new words to be worth a look, not scanned too
+    // recently.
+    if (contentChanged && note && content) {
       try {
-        // Get the daily_note record
-        const dailyNote = await queryOne<{ id: string }>(
-          "SELECT id FROM daily_notes WHERE note_id = ? AND user_id = ?",
-          [id, user.id]
-        );
+        const isDaily = note.note_type === "daily";
 
-        if (dailyNote) {
-          // Check if auto-scan should trigger
-          const scanCheck = await shouldTriggerAutoScan(dailyNote.id, user.id, content);
+        // Daily notes track scan state on their `daily_notes` row, which is a
+        // different id from the note itself.
+        const scanTarget = isDaily
+          ? (
+              await queryOne<{ id: string }>(
+                "SELECT id FROM daily_notes WHERE note_id = ? AND user_id = ?",
+                [id, user.id]
+              )
+            )?.id
+          : id;
 
-          if (scanCheck.shouldScan) {
-            // Queue scan job
+        if (scanTarget) {
+          const table = isDaily ? "daily_notes" : "notes";
+          const check = await shouldTriggerAutoScan(scanTarget, user.id, content, table);
+
+          if (check.shouldScan) {
             await enqueue({
               userId: user.id,
-              entityType: "daily_note",
-              entityId: dailyNote.id,
+              entityType: isDaily ? "daily_note" : "note",
+              entityId: scanTarget,
               operation: "scan_for_tasks",
               tier: "fast_llm",
               priority: 5,
             });
-
-            // Update scan metadata
-            await updateScanMetadata(dailyNote.id, content, true);
-          } else {
-            // Update activity timestamp only
-            await updateScanMetadata(dailyNote.id, content, false);
           }
+
+          // Recorded either way: the activity timestamp is what the
+          // "has this gone quiet yet?" check reads next time.
+          await updateScanMetadata(scanTarget, content, check.shouldScan, table);
         }
       } catch (scanError) {
         console.error("Failed to trigger auto-scan:", scanError);
-        // Don't fail the request if auto-scan fails
+        // A failed scan must never fail the save.
       }
     }
 

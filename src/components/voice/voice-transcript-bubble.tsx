@@ -141,7 +141,7 @@ export function VoiceTranscriptBubble({
               ref={textareaRef}
               value={editedText}
               onChange={(e) => setEditedText(e.target.value)}
-              className="w-full min-h-[60px] p-2 text-sm rounded border bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+              className="bp-field bp-field-multiline min-h-[60px] text-sm"
               placeholder="Edit transcript..."
             />
             <div className="flex gap-2">

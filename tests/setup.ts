@@ -28,3 +28,22 @@ const TEST_ENV: Record<string, string> = {
 for (const [key, value] of Object.entries(TEST_ENV)) {
   process.env[key] ??= value;
 }
+
+/**
+ * jsdom implements no `matchMedia`, so any component calling `useMobile`
+ * throws on mount. Tests that care about the breakpoint override this with
+ * their own controllable stub; this default just keeps everything else
+ * rendering, at the desktop breakpoint.
+ */
+if (typeof window !== 'undefined' && !window.matchMedia) {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}

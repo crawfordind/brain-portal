@@ -343,11 +343,7 @@ function TextAreaField({
   return (
     <div className="space-y-2">
       <textarea
-        className={cn(
-          "w-full min-h-[80px] p-3 text-sm rounded-md border bg-background resize-none transition-colors",
-          "placeholder:text-muted-foreground/50",
-          "focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
-        )}
+        className="bp-field bp-field-multiline min-h-[80px] text-sm"
         placeholder={placeholder}
         value={draft}
         onChange={(e) => setDraft(e.target.value.slice(0, maxLength))}
@@ -422,11 +418,7 @@ function TagInput({
       <div className="flex gap-2">
         <input
           type="text"
-          className={cn(
-            "flex-1 px-3 py-1.5 text-sm rounded-md border bg-background",
-            "placeholder:text-muted-foreground/50",
-            "focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
-          )}
+          className="bp-field flex-1 text-sm"
           placeholder={placeholder}
           value={inputValue}
           onChange={(e) => onInputChange(e.target.value)}

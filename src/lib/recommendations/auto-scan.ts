@@ -13,24 +13,42 @@ export interface ScanTriggerResult {
 }
 
 /**
+ * Which table holds the note whose scan state we are tracking.
+ *
+ * Auto-scan originally only ever ran on daily notes, so the table was
+ * hardcoded. Ordinary notes are where most task-shaped sentences actually get
+ * written, and they were never scanned unless the user pressed a button they
+ * had to find first. Both tables carry a `metadata` JSON column, so the same
+ * bookkeeping works for either.
+ */
+export type ScanSourceTable = "daily_notes" | "notes";
+
+/** Only these two literals are ever interpolated into the SQL below. */
+const SCAN_TABLES: Record<ScanSourceTable, string> = {
+  daily_notes: "daily_notes",
+  notes: "notes",
+};
+
+/**
  * Check if auto-scan should be triggered for a daily note
  */
 export async function shouldTriggerAutoScan(
-  dailyNoteId: string,
+  noteId: string,
   userId: string,
-  content: string
+  content: string,
+  table: ScanSourceTable = "daily_notes"
 ): Promise<ScanTriggerResult> {
 
-  const dailyNote = await queryOne<DailyNote>(
-    'SELECT * FROM daily_notes WHERE id = ?',
-    [dailyNoteId]
+  const row = await queryOne<{ metadata: string | null }>(
+    `SELECT metadata FROM ${SCAN_TABLES[table]} WHERE id = ?`,
+    [noteId]
   );
 
-  if (!dailyNote) {
-    return { shouldScan: false, reason: 'Daily note not found' };
+  if (!row) {
+    return { shouldScan: false, reason: 'Note not found' };
   }
 
-  const metadata = JSON.parse(dailyNote.metadata || '{}');
+  const metadata = JSON.parse(row.metadata || '{}');
   const now = new Date();
 
   // Calculate inactivity
@@ -67,22 +85,23 @@ export async function shouldTriggerAutoScan(
 }
 
 /**
- * Update daily note metadata after scan trigger check
+ * Record that we looked, and what the note looked like when we did.
  */
 export async function updateScanMetadata(
-  dailyNoteId: string,
+  noteId: string,
   content: string,
-  scanTriggered: boolean
+  scanTriggered: boolean,
+  table: ScanSourceTable = "daily_notes"
 ): Promise<void> {
 
-  const dailyNote = await queryOne<DailyNote>(
-    'SELECT * FROM daily_notes WHERE id = ?',
-    [dailyNoteId]
+  const row = await queryOne<{ metadata: string | null }>(
+    `SELECT metadata FROM ${SCAN_TABLES[table]} WHERE id = ?`,
+    [noteId]
   );
 
-  if (!dailyNote) return;
+  if (!row) return;
 
-  const metadata = JSON.parse(dailyNote.metadata || '{}');
+  const metadata = JSON.parse(row.metadata || '{}');
   const now = new Date();
 
   // Always update activity timestamp
@@ -96,7 +115,7 @@ export async function updateScanMetadata(
   }
 
   await db.execute({
-    sql: 'UPDATE daily_notes SET metadata = ?, updated_at = datetime("now") WHERE id = ?',
-    args: [JSON.stringify(metadata), dailyNoteId]
+    sql: `UPDATE ${SCAN_TABLES[table]} SET metadata = ?, updated_at = datetime('now') WHERE id = ?`,
+    args: [JSON.stringify(metadata), noteId]
   });
 }

@@ -24,16 +24,16 @@ export interface WorkState {
   setSummaryFilter: (f: SummaryFilter) => void;
 
   // Dialogs
-  isCreateOpen: boolean;
-  setIsCreateOpen: (v: boolean) => void;
-  isDetailOpen: boolean;
-  setIsDetailOpen: (v: boolean) => void;
-  isEditOpen: boolean;
-  setIsEditOpen: (v: boolean) => void;
-  viewingTask: Task | null;
-  setViewingTask: (t: Task | null) => void;
-  editingTask: Task | null;
-  setEditingTask: (t: Task | null) => void;
+  /** The task panel handles create, read and edit on one surface, so one
+   *  open flag and one slot replace the previous three dialogs' five. */
+  isPanelOpen: boolean;
+  setIsPanelOpen: (v: boolean) => void;
+  /** Task being viewed/edited, or null when creating a new one. */
+  panelTask: Task | null;
+  setPanelTask: (t: Task | null) => void;
+  /** Open the panel on an existing task, or on a blank one to create. */
+  openTask: (t: Task | null) => void;
+  closeTask: () => void;
   saveAsNoteDialogOpen: boolean;
   setSaveAsNoteDialogOpen: (v: boolean) => void;
   savingTask: Task | null;
@@ -90,11 +90,21 @@ export function useWorkState(): WorkState {
   const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>(null);
 
   // Dialogs
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [isEditOpen, setIsEditOpen] = useState(false);
-  const [viewingTask, setViewingTask] = useState<Task | null>(null);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [panelTask, setPanelTask] = useState<Task | null>(null);
+
+  // Opening always sets both, so a stale task can never be shown under a
+  // "New task" heading — which is what happened when the three dialogs kept
+  // their own independent slots.
+  const openTask = useCallback((t: Task | null) => {
+    setPanelTask(t);
+    setIsPanelOpen(true);
+  }, []);
+
+  const closeTask = useCallback(() => {
+    setIsPanelOpen(false);
+    setPanelTask(null);
+  }, []);
   const [saveAsNoteDialogOpen, setSaveAsNoteDialogOpen] = useState(false);
   const [savingTask, setSavingTask] = useState<Task | null>(null);
   const [savingTaskOutput, setSavingTaskOutput] = useState<any | null>(null);
@@ -110,11 +120,10 @@ export function useWorkState(): WorkState {
     projectFilter, setProjectFilter,
     assigneeFilter, setAssigneeFilter,
     summaryFilter, setSummaryFilter,
-    isCreateOpen, setIsCreateOpen,
-    isDetailOpen, setIsDetailOpen,
-    isEditOpen, setIsEditOpen,
-    viewingTask, setViewingTask,
-    editingTask, setEditingTask,
+    isPanelOpen, setIsPanelOpen,
+    panelTask, setPanelTask,
+    openTask,
+    closeTask,
     saveAsNoteDialogOpen, setSaveAsNoteDialogOpen,
     savingTask, setSavingTask,
     savingTaskOutput, setSavingTaskOutput,

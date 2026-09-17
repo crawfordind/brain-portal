@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { WeekStrip } from "./calendar/week-strip";
 import { DayView } from "./calendar/day-view";
 import { BacklogSheet } from "./calendar/backlog-sheet";
-import { TaskDetailDialog } from "./task-detail-dialog";
+import { TaskPanel } from "./task-panel";
+import { useProjects } from "@/hooks/use-projects";
 import { getWeekRange } from "@/lib/tasks/calendar-utils";
 import { toast } from "sonner";
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSensors, PointerSensor, TouchSensor } from "@dnd-kit/core";
@@ -28,6 +29,7 @@ export function TaskCalendarView({
 }: TaskCalendarViewProps) {
   const [focusedDate, setFocusedDate] = useState(() => new Date());
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const { data: projects = [] } = useProjects();
   const { askAbout } = useAskAbout();
   const [backlogOpen, setBacklogOpen] = useState(true);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
@@ -203,20 +205,21 @@ export function TaskCalendarView({
 
   const combinedTasks = [...weekTasks, ...allTasks];
 
+  // Editing from the calendar used to be a `// TODO` behind an Edit button,
+  // so a task opened from here could be read and nothing else. The panel is
+  // editable in place, which removes both the button and the dead end.
   const taskDetailDialog = selectedTask && (
-    <TaskDetailDialog
+    <TaskPanel
       task={selectedTask}
       open={!!selectedTask}
       onClose={() => setSelectedTask(null)}
-      onEdit={() => {
-        // TODO: Implement edit functionality
-      }}
-      onAskAbout={() =>
+      projects={projects}
+      onAskAbout={(t) =>
         askAbout({
-          id: selectedTask.id,
+          id: t.id,
           type: "task",
-          title: selectedTask.title || selectedTask.content,
-          content: selectedTask.description || selectedTask.content,
+          title: t.title || t.content,
+          content: t.description || t.content,
         })
       }
     />
