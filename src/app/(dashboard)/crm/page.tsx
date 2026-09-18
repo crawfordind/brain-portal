@@ -14,6 +14,10 @@
  * can link at the decision itself rather than at the page that contains it.
  * The tab remains local state after mount — switching tabs is a view change,
  * not navigation, and should not stack history entries.
+ *
+ * The list itself is `ContactList`: a dense, alphabetically sectioned row list
+ * rather than the stack of badge-laden cards this page used to render. See that
+ * component for why.
  */
 
 import { Suspense, useState } from "react";
@@ -26,29 +30,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Search, Users, Building2, Mail, Phone, Boxes } from "lucide-react";
+import { Search, Boxes, Check } from "lucide-react";
 import {
-  CompartmentBadges,
-  MergeCandidateBadge,
-  RoleBadge,
-  UnresolvedBadge,
-} from "@/components/crm/crm-badges";
-
-interface ContactRow {
-  entity: {
-    id: string;
-    canonical_name: string;
-    entity_type: string;
-    mention_count: number;
-    last_seen_at: string;
-  };
-  compartments: string[];
-  resolution: "confirmed" | "unresolved";
-  needsReview: boolean;
-  channels: { kind: string; value: string; is_primary: number }[];
-  roles: { ventureId: string; ventureName: string; edgeType: string }[];
-  lastInteractionAt: string | null;
-}
+  ContactList,
+  type ContactListRow,
+} from "@/components/crm/contact-list";
 
 interface VentureRow {
   entity: { id: string; canonical_name: string };
@@ -71,7 +57,7 @@ function CrmPageContent() {
     },
   });
 
-  const { data, isLoading } = useQuery<{ contacts: ContactRow[] }>({
+  const { data, isLoading } = useQuery<{ contacts: ContactListRow[] }>({
     queryKey: ["crm", "contacts", { search, venture, tab }],
     queryFn: async () => {
       const params = new URLSearchParams({ resolution: tab });
@@ -114,25 +100,27 @@ function CrmPageContent() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant={venture === "all" ? "default" : "outline"}
+      {/* One scrolling row rather than a wrapping wall: with seven ventures the
+          wrapped version was three rows of chrome above the list. `aria-pressed`
+          and the tick mark carry the active state, so it does not depend on the
+          filled/outlined colour difference alone. */}
+      <div
+        role="group"
+        aria-label="Filter by venture"
+        className="-mx-1 flex gap-2 overflow-x-auto scrollbar-none px-1 pb-1"
+      >
+        <VentureChip
+          label="All ventures"
+          active={venture === "all"}
           onClick={() => setVenture("all")}
-          className="h-9"
-        >
-          All ventures
-        </Button>
+        />
         {ventures.map((v) => (
-          <Button
+          <VentureChip
             key={v.entity.id}
-            size="sm"
-            variant={venture === v.entity.id ? "default" : "outline"}
+            label={v.entity.canonical_name}
+            active={venture === v.entity.id}
             onClick={() => setVenture(v.entity.id)}
-            className="h-9"
-          >
-            {v.entity.canonical_name}
-          </Button>
+          />
         ))}
       </div>
 
@@ -151,9 +139,11 @@ function CrmPageContent() {
       </Tabs>
 
       {isLoading ? (
-        <div className="space-y-2">
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-20 w-full" />
+        // Placeholders the height of the real rows, so the list does not
+        // collapse by two thirds the moment it loads.
+        <div className="space-y-px">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <Skeleton key={i} className="h-14 w-full" />
           ))}
         </div>
       ) : contacts.length === 0 ? (
@@ -170,63 +160,39 @@ function CrmPageContent() {
           </CardContent>
         </Card>
       ) : (
-        <ul className="space-y-2">
-          {contacts.map((contact) => (
-            <li key={contact.entity.id}>
-              <Link
-                href={`/crm/${contact.entity.id}`}
-                className="flex min-h-14 flex-col gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  {contact.entity.entity_type === "person" ? (
-                    <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="font-medium">
-                    {contact.entity.canonical_name}
-                  </span>
-                  {contact.resolution === "unresolved" && <UnresolvedBadge />}
-                  {contact.needsReview && <MergeCandidateBadge />}
-                  <CompartmentBadges compartments={contact.compartments} />
-                </div>
-
-                {contact.roles.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {contact.roles.map((role) => (
-                      <RoleBadge
-                        key={`${role.ventureId}-${role.edgeType}`}
-                        edgeType={role.edgeType}
-                        ventureName={role.ventureName}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                  {contact.channels.slice(0, 2).map((c) => (
-                    <span key={c.value} className="flex items-center gap-1">
-                      {c.kind === "email" ? (
-                        <Mail className="h-3 w-3" />
-                      ) : c.kind === "phone" ? (
-                        <Phone className="h-3 w-3" />
-                      ) : null}
-                      {c.value}
-                    </span>
-                  ))}
-                  <span>{contact.entity.mention_count} mentions</span>
-                  {contact.lastInteractionAt && (
-                    <span>
-                      Last touch {contact.lastInteractionAt.slice(0, 10)}
-                    </span>
-                  )}
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
+        <ContactList contacts={contacts} />
       )}
     </div>
+  );
+}
+
+/**
+ * A venture filter chip.
+ *
+ * 44px tall, because it is a touch target; `aria-pressed` because it is a
+ * toggle, not a link; and a tick on the active one, because "filled versus
+ * outlined" is a colour difference and colour may not be the only signal.
+ */
+function VentureChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant={active ? "default" : "outline"}
+      aria-pressed={active}
+      onClick={onClick}
+      className="h-11 shrink-0 rounded-full"
+    >
+      {active && <Check className="mr-1.5 h-4 w-4" aria-hidden />}
+      {label}
+    </Button>
   );
 }
 
@@ -237,7 +203,7 @@ export default function CrmPage() {
         <div className="mx-auto w-full max-w-5xl space-y-3 px-4 py-6">
           <Skeleton className="h-8 w-40" />
           <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-14 w-full" />
         </div>
       }
     >
