@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     let query = `
       SELECT
         t.id, t.user_id, t.content, t.title, t.description, t.status, t.priority,
-        t.project_id, t.note_id, t.due_date, t.scheduled_at, t.estimated_minutes,
+        t.project_id, t.note_id, t.due_date, t.scheduled_at,
         t.delegated_to, t.agent_task_id, t.tags, t.linked_note_ids, t.metadata,
         t.recurrence_rule, t.recurrence_end_date, t.parent_task_id,
         t.completed_at, t.created_at, t.updated_at,

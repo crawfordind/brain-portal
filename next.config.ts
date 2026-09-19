@@ -45,6 +45,34 @@ const nextConfig: NextConfig = {
   // Empty turbopack config to silence the warning for non-webpack builds
   turbopack: {},
 
+  /**
+   * Packages that must stay in CommonJS `require` land on the server rather
+   * than being pulled through the bundler.
+   *
+   * `isomorphic-dompurify` reaches for `jsdom` when it runs server-side, and
+   * jsdom's dependency tree now mixes ESM-only packages into CommonJS entry
+   * points. Bundled, that surfaces at runtime as
+   *
+   *   Failed to load external module jsdom-<hash>: ERR_REQUIRE_ESM:
+   *   require() of ES Module .../@exodus/bytes/encoding-lite.js from
+   *   .../html-encoding-sniffer/lib/html-encoding-sniffer.js not supported
+   *
+   * which takes down server rendering of every page that sanitizes HTML —
+   * markdown-renderer, chat-message and the search page. Left external, Node
+   * resolves the package itself and honours its own import conditions.
+   *
+   * `sharp`, `pdf-parse` and `xlsx` are here for the same reason: they are
+   * native or CJS-only and the attachment media jobs that use them cannot run
+   * in a serverless function until they resolve at runtime instead of at build.
+   */
+  serverExternalPackages: [
+    "isomorphic-dompurify",
+    "jsdom",
+    "sharp",
+    "pdf-parse",
+    "xlsx",
+  ],
+
   // Source maps in dev only. Shipping them from production served the full
   // unminified source — harmless for an open-source app, but it also inflates
   // the deploy and hands an attacker a map of the bundle for free.

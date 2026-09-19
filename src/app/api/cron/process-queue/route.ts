@@ -47,16 +47,71 @@ export async function GET(request: NextRequest) {
     console.log("[Cron] Processing queue...");
 
     // ── Recover jobs abandoned by a run that was killed mid-flight ──
+    //
+    // `attempts` is incremented at claim time and never decremented, so a job
+    // whose worker died has already spent one of its retries. Returning it to
+    // 'pending' unconditionally is therefore only correct while it has retries
+    // left: once `attempts >= max_attempts` the claim query below — which
+    // filters on `attempts < max_attempts` — can never select it again, and the
+    // row sits in 'pending' forever. Nothing drains it, and the health check's
+    // backlog probe counts it every time it runs, which is what produced a
+    // permanent, unclearable "background work is not being picked up" alert on
+    // an instance whose cron was in fact running normally.
+    //
+    // So a job that has exhausted its retries is retired to 'failed', where the
+    // health check reports it as work that gave up and says why, instead of
+    // being recycled into a queue that will never look at it.
+    const retired = await db.execute({
+      sql: `UPDATE processing_queue
+            SET status = 'failed',
+                completed_at = datetime('now'),
+                error_message = COALESCE(
+                  error_message,
+                  'Worker stopped before the job finished, and no retries remain. '
+                  || 'The run was most likely terminated at its time limit.'
+                )
+            WHERE status = 'processing'
+            AND started_at < datetime('now', ?)
+            AND attempts >= max_attempts`,
+      args: [`-${STUCK_TIMEOUT_MINUTES} minutes`],
+    });
+    const stuckRetired = retired.rowsAffected;
+    if (stuckRetired > 0) {
+      console.log(`[Cron] Retired ${stuckRetired} stuck job(s) with no retries left`);
+    }
+
     const reset = await db.execute({
       sql: `UPDATE processing_queue
             SET status = 'pending'
             WHERE status = 'processing'
-            AND started_at < datetime('now', ?)`,
+            AND started_at < datetime('now', ?)
+            AND attempts < max_attempts`,
       args: [`-${STUCK_TIMEOUT_MINUTES} minutes`],
     });
     const stuckReset = reset.rowsAffected;
     if (stuckReset > 0) {
       console.log(`[Cron] Reset ${stuckReset} stuck job(s) back to pending`);
+    }
+
+    // Jobs stranded in 'pending' with no retries left by an earlier build of
+    // this route. Without this they stay invisible to the worker and visible to
+    // the health check for the lifetime of the deployment.
+    const strandedRetired = await db.execute({
+      sql: `UPDATE processing_queue
+            SET status = 'failed',
+                completed_at = datetime('now'),
+                error_message = COALESCE(
+                  error_message,
+                  'Job exhausted its retries without completing.'
+                )
+            WHERE status = 'pending'
+            AND attempts >= max_attempts`,
+      args: [],
+    });
+    if (strandedRetired.rowsAffected > 0) {
+      console.log(
+        `[Cron] Retired ${strandedRetired.rowsAffected} stranded job(s) left pending with no retries`
+      );
     }
 
     // ── Link scraping first: it feeds the embeddings below ──
@@ -149,6 +204,7 @@ export async function GET(request: NextRequest) {
       errors,
       skipped,
       stuck_reset: stuckReset,
+      stuck_retired: stuckRetired + strandedRetired.rowsAffected,
       duration_ms: duration,
       message: `Processed ${processed} jobs, ${errors} errors`,
     });
@@ -231,6 +287,11 @@ async function markJobFailed(jobId: string, error: string) {
   await db.execute({
     sql: `UPDATE processing_queue
           SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'pending' END,
+              -- Stamped only on the terminal transition, so the health check's
+              -- 72h lookback dates a failure from when it gave up rather than
+              -- from when the job was first scheduled.
+              completed_at = CASE WHEN attempts >= max_attempts
+                                  THEN datetime('now') ELSE completed_at END,
               error_message = ?
           WHERE id = ?`,
     args: [error, jobId],
