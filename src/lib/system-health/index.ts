@@ -217,11 +217,19 @@ async function checkProcessingQueue(userId: string): Promise<SystemIssue[]> {
     });
   }
 
+  // `attempts < max_attempts` matters as much as the age does. The worker only
+  // claims jobs that still have a retry left, so a 'pending' row that has spent
+  // them all is not waiting on the worker — it is unreachable by it. Counting
+  // those as a backlog reported "nothing is draining the queue" forever, on
+  // instances where the queue was draining fine. The cron now retires such rows
+  // to 'failed', where the probe above reports them with their error; this
+  // clause keeps a pre-existing one from raising the alarm in the meantime.
   const backlog = await probe(() =>
     queryAll<{ n: number; oldest: string }>(
       `SELECT COUNT(*) as n, MIN(scheduled_at) as oldest
          FROM processing_queue
         WHERE user_id = ? AND status = 'pending'
+          AND attempts < max_attempts
           AND scheduled_at < datetime('now', ?)`,
       [userId, `-${STALL_MINUTES} minutes`]
     )
