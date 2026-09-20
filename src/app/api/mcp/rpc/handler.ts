@@ -103,7 +103,13 @@ export async function handleMcpRequest(
     version: "1.0.0",
   });
 
-  const ctx = createToolContext(() => user);
+  // A client that groups its own job passes this; without it the server
+  // infers the grouping from the key's write cadence. Either way, rows
+  // written by one job share a run id and the stream renders them as one row
+  // rather than as N unrelated-looking entries.
+  const runId = request.headers.get("x-brain-run-id");
+
+  const ctx = createToolContext(() => user, { runId });
 
   // All three, and in this order, must match src/mcp/server.ts. The HTTP
   // transport is the one remote agents use; dropping resources or prompts here

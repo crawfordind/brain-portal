@@ -8,6 +8,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { query, queryOne } from "../db";
 import { errorResult, type ToolContext } from "../guard";
+import {
+  stampColumns,
+  stampPlaceholders,
+  stampValues,
+} from "@/lib/provenance";
 
 export function registerCaptureTools(
   server: McpServer,
@@ -98,9 +103,11 @@ export function registerCaptureTools(
       if (!guard.ok) return errorResult(guard);
       const userId = guard.userId;
 
+      const stamp = ctx.provenance();
+
       const result = await queryOne<{ id: string }>(
-        `INSERT INTO captures (user_id, content, capture_type, tags, linked_notes, linked_projects)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO captures (user_id, content, capture_type, tags, linked_notes, linked_projects, ${stampColumns()})
+         VALUES (?, ?, ?, ?, ?, ?, ${stampPlaceholders()})
          RETURNING id`,
         [
           userId,
@@ -109,6 +116,7 @@ export function registerCaptureTools(
           JSON.stringify(params.tags || []),
           JSON.stringify(params.linked_notes || []),
           JSON.stringify(params.linked_projects || []),
+          ...stampValues(stamp),
         ]
       );
 

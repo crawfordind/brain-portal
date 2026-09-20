@@ -24,6 +24,13 @@ import { enqueue } from "@/lib/processing/queue";
 import { safeParseJson, isErrorResponse } from "@/lib/api/validation";
 import { parseSharedPayload } from "@/lib/share/parse";
 import type { Capture, Note, Task } from "@/lib/db/schema";
+import {
+  mcpKeyStamp,
+  stampColumns,
+  stampPlaceholders,
+  stampValues,
+  type ProvenanceStamp,
+} from "@/lib/provenance";
 
 /** Every issued MCP key carries this prefix. */
 const KEY_PREFIX = "bp_mcp_";
@@ -43,6 +50,15 @@ interface Caller {
   userId: string;
   /** Null for a session caller — cookie auth is not scope-limited. */
   scopes: string[] | null;
+  /**
+   * The key that made the call, empty for a session caller. This endpoint has
+   * two quite different writers behind one route — a person sharing a link
+   * from their phone, and a Shortcut or agent holding a key — and only the
+   * credential distinguishes them. `mcpKeyStamp` reads an empty id as the
+   * person.
+   */
+  keyId: string;
+  keyName: string;
 }
 
 /**
@@ -51,7 +67,8 @@ interface Caller {
  */
 async function authenticate(request: NextRequest): Promise<Caller | null> {
   const sessionUser = await getCurrentUser();
-  if (sessionUser) return { userId: sessionUser.id, scopes: null };
+  if (sessionUser)
+    return { userId: sessionUser.id, scopes: null, keyId: "", keyName: "" };
 
   const header = request.headers.get("authorization") || "";
   const bearer = header.toLowerCase().startsWith("bearer ")
@@ -61,7 +78,12 @@ async function authenticate(request: NextRequest): Promise<Caller | null> {
 
   const keyUser = await validateApiKey(bearer);
   if (!keyUser) return null;
-  return { userId: keyUser.userId, scopes: keyUser.scopes };
+  return {
+    userId: keyUser.userId,
+    scopes: keyUser.scopes,
+    keyId: keyUser.keyId,
+    keyName: keyUser.keyName,
+  };
 }
 
 function authorized(caller: Caller, target: ShareTarget): boolean {
@@ -117,14 +139,21 @@ export async function POST(request: NextRequest) {
     ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string")
     : [];
 
+  // Reads as "human" for a session caller, so a person sharing a link is
+  // never mistaken for an agent.
+  const stamp = mcpKeyStamp({
+    keyId: caller.keyId,
+    keyName: caller.keyName,
+  });
+
   try {
     switch (target) {
       case "capture":
-        return await saveCapture(caller.userId, parsed, content, tags);
+        return await saveCapture(caller.userId, parsed, content, tags, stamp);
       case "note":
-        return await saveNote(caller.userId, parsed, content, projectId);
+        return await saveNote(caller.userId, parsed, content, projectId, stamp);
       case "task":
-        return await saveTask(caller.userId, parsed, content, projectId);
+        return await saveTask(caller.userId, parsed, content, projectId, stamp);
     }
   } catch (error) {
     console.error("[API] POST /api/share failed:", error);
@@ -136,11 +165,12 @@ async function saveCapture(
   userId: string,
   parsed: ReturnType<typeof parseSharedPayload>,
   content: string,
-  tags: string[]
+  tags: string[],
+  stamp: ProvenanceStamp
 ) {
   const capture = await mutate<Capture>(
-    `INSERT INTO captures (user_id, content, capture_type, tags, metadata)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO captures (user_id, content, capture_type, tags, metadata, ${stampColumns()})
+     VALUES (?, ?, ?, ?, ?, ${stampPlaceholders()})
      RETURNING *`,
     [
       userId,
@@ -152,6 +182,7 @@ async function saveCapture(
         ...(parsed.url ? { url: parsed.url, scrapeEnabled: true } : {}),
         ...(parsed.title ? { shared_title: parsed.title } : {}),
       }),
+      ...stampValues(stamp),
     ]
   );
 
@@ -188,14 +219,15 @@ async function saveNote(
   userId: string,
   parsed: ReturnType<typeof parseSharedPayload>,
   content: string,
-  projectId: string | null
+  projectId: string | null,
+  stamp: ProvenanceStamp
 ) {
   const title = parsed.title || "Shared note";
   const slug = await uniqueSlug(userId, title);
 
   const note = await mutate<Note>(
-    `INSERT INTO notes (user_id, project_id, title, slug, content, content_plain, note_type, word_count, metadata, processing_status)
-     VALUES (?, ?, ?, ?, ?, ?, 'note', ?, ?, 'pending')
+    `INSERT INTO notes (user_id, project_id, title, slug, content, content_plain, note_type, word_count, metadata, processing_status, ${stampColumns()})
+     VALUES (?, ?, ?, ?, ?, ?, 'note', ?, ?, 'pending', ${stampPlaceholders()})
      RETURNING *`,
     [
       userId,
@@ -209,6 +241,7 @@ async function saveNote(
         source: "share_target",
         ...(parsed.url ? { url: parsed.url } : {}),
       }),
+      ...stampValues(stamp),
     ]
   );
 
@@ -267,15 +300,16 @@ async function saveTask(
   userId: string,
   parsed: ReturnType<typeof parseSharedPayload>,
   content: string,
-  projectId: string | null
+  projectId: string | null,
+  stamp: ProvenanceStamp
 ) {
   // `content` is the legacy NOT NULL column and still what most of the task UI
   // renders; `title`/`description` are the newer pair. Populate all three.
   const title = (parsed.title || content.split("\n")[0]).slice(0, 200);
 
   const task = await mutate<Task>(
-    `INSERT INTO tasks (user_id, project_id, content, title, description, status, priority, metadata)
-     VALUES (?, ?, ?, ?, ?, 'pending', 'medium', ?)
+    `INSERT INTO tasks (user_id, project_id, content, title, description, status, priority, metadata, ${stampColumns()})
+     VALUES (?, ?, ?, ?, ?, 'pending', 'medium', ?, ${stampPlaceholders()})
      RETURNING *`,
     [
       userId,
@@ -287,6 +321,7 @@ async function saveTask(
         source: "share_target",
         ...(parsed.url ? { url: parsed.url } : {}),
       }),
+      ...stampValues(stamp),
     ]
   );
 

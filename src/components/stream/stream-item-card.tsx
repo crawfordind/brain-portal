@@ -142,27 +142,36 @@ const STATUS_BADGE: Record<string, { label: string; variant: "default" | "second
   archived: { label: "Archived", variant: "secondary" },
 };
 
+/**
+ * What this card needs of an item.
+ *
+ * Exported because `StreamRunCard` renders the same rows when a collapsed run
+ * is expanded, and a second hand-written copy of this shape would drift the
+ * first time a field was added.
+ */
+export interface StreamCardItem {
+  id: string;
+  type: StreamItemType;
+  status: string;
+  title: string;
+  content: string;
+  priority: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  projectColor?: string | null;
+  tags: string[];
+  dueDate?: string | null;
+  delegatedTo?: string | null;
+  agentTaskId?: string | null;
+  agentStatus?: string | null;
+  sourceType: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
 interface StreamItemCardProps {
-  item: {
-    id: string;
-    type: StreamItemType;
-    status: string;
-    title: string;
-    content: string;
-    priority: string;
-    projectId?: string | null;
-    projectName?: string | null;
-    projectColor?: string | null;
-    tags: string[];
-    dueDate?: string | null;
-    delegatedTo?: string | null;
-    agentTaskId?: string | null;
-    agentStatus?: string | null;
-    sourceType: string;
-    createdAt: string;
-    updatedAt: string;
-    completedAt?: string | null;
-  };
+  item: StreamCardItem;
   density?: StreamDensity;
   /** Changed since the viewer's last visit — gets a quiet marker, not a badge. */
   isNew?: boolean;

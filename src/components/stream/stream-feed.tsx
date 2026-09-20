@@ -35,11 +35,14 @@ import {
 import { toast } from "sonner";
 import { useStreamStore } from "@/lib/stores/stream-store";
 import { StreamItemCard } from "./stream-item-card";
+import { StreamRunCard } from "./stream-run-card";
 import { useAskAbout } from "@/hooks/use-ask-about";
 import { useStreamDensity } from "@/hooks/use-stream-density";
 import { useLastVisit } from "@/hooks/use-last-visit";
 import { DensityToggle } from "./density-toggle";
 import { groupStream } from "@/lib/stream/grouping";
+import { collapseRuns } from "@/lib/stream/runs";
+import type { SourceActor } from "@/lib/provenance/types";
 import { cn } from "@/lib/utils";
 import {
   Loader2,
@@ -104,6 +107,12 @@ interface StreamItem {
   agentTaskId?: string | null;
   agentStatus?: string | null;
   sourceType: string;
+  // Who wrote it and which job it came out of. Rows sharing a run id collapse
+  // into one feed entry — see src/lib/stream/runs.ts.
+  sourceActor: SourceActor;
+  sourceKeyId?: string | null;
+  sourceLabel?: string | null;
+  sourceRunId?: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt?: string | null;
@@ -273,6 +282,52 @@ export function StreamFeed() {
     onSettled: resync,
   });
 
+  /**
+   * Archive every row a collapsed run stands for.
+   *
+   * Chunked rather than fired all at once: a run can hold hundreds of rows,
+   * and `/api/stream/[id]` resolves each id against five candidate tables, so
+   * an unbounded `Promise.all` would be a self-inflicted thundering herd.
+   */
+  const archiveRunMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const CHUNK = 8;
+      let failures = 0;
+
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const results = await Promise.all(
+          ids.slice(i, i + CHUNK).map((id) =>
+            fetch(`/api/stream/${id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: "archived" }),
+            }).catch(() => null)
+          )
+        );
+        failures += results.filter((res) => !res?.ok).length;
+      }
+
+      if (failures > 0) {
+        throw new Error(`${failures} of ${ids.length} items could not be archived`);
+      }
+    },
+    onMutate: (ids) => {
+      const doomed = new Set(ids);
+      return applyOptimistic((items) =>
+        items.filter((item) => !doomed.has(item.id))
+      );
+    },
+    onError: (error, _ids, context) => {
+      rollback(context);
+      toast.error(
+        error instanceof Error && error.message
+          ? error.message
+          : "Couldn't archive that batch. It's still in your stream."
+      );
+    },
+    onSettled: resync,
+  });
+
   const dismissMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/reminders/${id}`, {
@@ -335,17 +390,25 @@ export function StreamFeed() {
   );
 
   /*
+   * Collapse runs *before* bucketing, so one job takes one slot in its time
+   * bucket rather than filling the bucket with its members. A run's entry sits
+   * where its newest write sits, which leaves the feed's overall ordering
+   * exactly as it was.
+   */
+  const entries = useMemo(() => collapseRuns(activeItems), [activeItems]);
+
+  /*
    * Buckets are computed from a clock captured once per render pass rather than
    * per row, so every row in a batch is bucketed against the same instant — two
    * rows a second apart must not straddle the "Now" boundary because the second
    * one was evaluated a tick later.
    *
-   * `items` is the dependency rather than `Date.now()`: re-bucketing on a timer
-   * would reorder the list under a reader for no benefit they asked for.
+   * `entries` is the dependency rather than `Date.now()`: re-bucketing on a
+   * timer would reorder the list under a reader for no benefit they asked for.
    */
   const grouped = useMemo(
-    () => groupStream(activeItems, { now: new Date(), lastVisitAt }),
-    [activeItems, lastVisitAt]
+    () => groupStream(entries, { now: new Date(), lastVisitAt }),
+    [entries, lastVisitAt]
   );
 
   /*
@@ -463,9 +526,9 @@ export function StreamFeed() {
               </h2>
 
               <div className={isCardDensity ? "space-y-2 py-1" : "divide-y"}>
-                {group.entries.map(({ item, isNew }) => (
-                  <Fragment key={item.id}>
-                    {item.id === dividerBeforeId && (
+                {group.entries.map(({ item: entry, isNew }) => (
+                  <Fragment key={entry.id}>
+                    {entry.id === dividerBeforeId && (
                       <div
                         className="flex items-center gap-2 py-2 text-[11px] font-medium text-primary"
                         role="separator"
@@ -477,16 +540,30 @@ export function StreamFeed() {
                         <span className="h-px flex-1 bg-primary/30" />
                       </div>
                     )}
-                    <StreamItemCard
-                      item={item}
-                      density={density}
-                      isNew={isNew}
-                      onSelect={handleSelect}
-                      onComplete={(id) => completeMutation.mutate(id)}
-                      onAskAbout={handleAskAbout}
-                      onArchive={(id) => archiveMutation.mutate(id)}
-                      onDismiss={(id) => dismissMutation.mutate(id)}
-                    />
+                    {entry.kind === "run" ? (
+                      <StreamRunCard
+                        run={entry.run}
+                        density={density}
+                        isNew={isNew}
+                        onSelect={handleSelect}
+                        onComplete={(id) => completeMutation.mutate(id)}
+                        onAskAbout={handleAskAbout}
+                        onArchive={(id) => archiveMutation.mutate(id)}
+                        onDismiss={(id) => dismissMutation.mutate(id)}
+                        onArchiveRun={(ids) => archiveRunMutation.mutate(ids)}
+                      />
+                    ) : (
+                      <StreamItemCard
+                        item={entry.item}
+                        density={density}
+                        isNew={isNew}
+                        onSelect={handleSelect}
+                        onComplete={(id) => completeMutation.mutate(id)}
+                        onAskAbout={handleAskAbout}
+                        onArchive={(id) => archiveMutation.mutate(id)}
+                        onDismiss={(id) => dismissMutation.mutate(id)}
+                      />
+                    )}
                   </Fragment>
                 ))}
               </div>

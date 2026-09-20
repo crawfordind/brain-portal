@@ -14,6 +14,7 @@
 import type { AuthenticatedUser } from "./auth";
 import { hasScope } from "./auth";
 import { consumeRateLimit } from "./rate-limit";
+import { mcpKeyStamp, type ProvenanceStamp } from "@/lib/provenance";
 
 export interface GuardOk {
   ok: true;
@@ -44,15 +45,43 @@ export interface ToolContext {
   getUserId: () => string;
   /** Run scope + rate-limit checks. Returns a discriminated result. */
   guard: (scope: string) => GuardResult;
+  /**
+   * Provenance for a row this invocation writes: the key that wrote it, and
+   * the run it belongs to.
+   *
+   * Every tool handler already received this — `AuthenticatedUser` carries
+   * `keyId` and `keyName` — and every one of them used `userId` and threw the
+   * rest away, which is why a note written by a key was indistinguishable
+   * from one the user typed. Call this once per write and spread it into the
+   * INSERT; see `src/lib/provenance`.
+   */
+  provenance: () => ProvenanceStamp;
+}
+
+export interface ToolContextOptions {
+  /**
+   * A run id supplied by the client (the `X-Brain-Run-Id` header), grouping
+   * the writes of one job explicitly instead of letting the server infer the
+   * grouping from write cadence.
+   */
+  runId?: string | null;
 }
 
 export function createToolContext(
-  getUser: () => AuthenticatedUser
+  getUser: () => AuthenticatedUser,
+  options: ToolContextOptions = {}
 ): ToolContext {
   return {
     getUser,
     getUserId: () => getUser().userId,
     guard: (scope: string) => runGuard(getUser(), scope),
+    provenance: () => {
+      const user = getUser();
+      return mcpKeyStamp(
+        { keyId: user.keyId, keyName: user.keyName },
+        options.runId
+      );
+    },
   };
 }
 

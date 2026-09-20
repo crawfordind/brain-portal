@@ -12,6 +12,7 @@ npm run typecheck    # TypeScript type checking (tsc --noEmit)
 npm run db:migrate   # Run database migrations (tsx scripts/migrate.ts)
 npm run user:create  # Create an account (signups are closed by default)
 npm run migrate:chat-item-context  # Allow 'item' as a chat context type
+npm run migrate:provenance         # Record who wrote each row, and which run
 
 # MCP Server
 npm run mcp:start    # Start MCP server (requires env vars)
@@ -553,6 +554,111 @@ subsystem quietly not working, and the fix was a code change and a redeploy.
 - **Agent overrides**: a model pinned on an `agent_configs` row still wins, but
   it is now the *head of a chain* rather than the only option, so a config
   pinned to a retired id degrades instead of failing every task.
+
+## Provenance & Run Collapsing
+
+One agent run wrote a few hundred rows, and because the feed orders everything
+by `updated_at`, all of it landed on top of the work the user came back to deal
+with. The rows were not wrong and the user had asked for them. They were
+rendered as two hundred unrelated thoughts instead of as the one job they were.
+
+Two things were missing, and they are different things:
+
+- **Who wrote a row.** Nothing recorded it. `notes`, `captures`, `tasks` and
+  `reminders` had no author column, and the `sourceType` on a stream row was
+  synthesised in SQL at read time — the literal `'manual'` for every capture,
+  note and reminder, whoever wrote it. A note written by an MCP key was
+  byte-identical to one the user typed. The information was always available:
+  `validateApiKey` returns `keyId` and `keyName` on every call, and every tool
+  handler used `userId` and dropped the rest.
+- **Which operation produced it.** This is the one that actually hurt. The
+  problem was never "an agent wrote things"; it was *one job* arriving as N
+  rows. Author alone does not fix that.
+
+### The columns
+
+Four nullable columns on `notes`, `captures`, `tasks`, `reminders`, indexed as
+`(user_id, source_run_id)`:
+
+| Column | Holds |
+|--------|-------|
+| `source_actor` | `human` / `mcp_key` / `agent` / `skill` / `import` |
+| `source_key_id` | `mcp_api_keys.id`, **without** a foreign key |
+| `source_label` | the writer's name *at write time* |
+| `source_run_id` | the one operation this row came out of |
+
+- **NULL means "the user, typing".** Every row predating these columns has NULL
+  in all four, and nearly all of them were typed. Reading NULL as `human`
+  (`normalizeActor`) is both the correct default and what makes the migration
+  backfill-free. Session-cookie API routes deliberately leave the columns unset
+  for the same reason — same meaning, far smaller diff than writing `'human'`
+  into every insert site in the app.
+- **No FK on `source_key_id`, on purpose.** Revoking a key must not cascade
+  away the history of everything it ever wrote, and `source_label` is
+  denormalised so a revoked key's rows still read "Claude Desktop" rather than
+  a dead id.
+- `src/lib/provenance/types.ts` imports **nothing** — it is shared by the MCP
+  tools (which run outside Next.js against their own libsql client), the API
+  routes and the browser, so it must not reach for a DB client. Same reasoning
+  as `chat/item-types.ts`.
+- **Migration**: `npm run migrate:provenance`, or `npm run db:migrate`. No
+  backfill, idempotent.
+
+### Where a run id comes from
+
+One id per *request* is useless over the HTTP MCP transport, which is stateless
+— one request is one tool call, so every row would get its own run. So the
+default is derived server-side: **writes from one key continue the same run
+while the gap between them stays under 30 minutes** (`createRunTracker`). It
+needs no client cooperation and works with every integration that already
+exists, which is the point — the clients that matter most are the ones nobody
+configured.
+
+- **The window slides**, so a job writing steadily for four hours is one run.
+  `DEFAULT_MAX_RUN_MS` (6h) stops that becoming unbounded for a key that writes
+  every few minutes forever.
+- **A client may group its own job** by sending `X-Brain-Run-Id`. The id is
+  *adopted* as the key's current run, so later writes join it even if the
+  client stops sending the header.
+- **State is in-process**, exactly as `src/mcp/rate-limit.ts` keeps its token
+  buckets. A cold start or a second serverless instance splits one job into two
+  runs, which shows two collapsed rows instead of one — it degrades toward
+  today's behaviour, never toward anything wrong.
+- Other subsystems already know their own operation, so the same column means
+  the same thing everywhere: `agentStamp` uses the agent task, `skillStamp` the
+  skill execution, `importStamp` the import job.
+
+### Collapsing in the feed
+
+`collapseRuns` (`src/lib/stream/runs.ts`, pure and unit-tested) folds each run
+into one entry, and runs **before** `groupStream` so a run takes one slot in its
+time bucket rather than filling the bucket with its members. Its entries carry
+`updatedAt`, so that function buckets them unchanged.
+
+> **Claude Desktop** wrote 23 notes and 4 tasks · 2:14pm – 2:41pm
+
+- **The entry sits where the run's *newest* write sits**, so the feed's overall
+  ordering is exactly what it was. Positioning it at the run's start would sort
+  a batch that began this morning below everything written since.
+- **Runs under `MIN_RUN_SIZE` (3) stay expanded.** "Claude Desktop wrote 2
+  notes" costs a click and says less than the two rows it replaced.
+- **A human's writes are never collapsed**, even if something stamped a run id
+  on them. The user does not need their own typing summarised back to them.
+- **Nothing is hidden and nothing moved.** `StreamRunCard` expands to the rows
+  themselves, at the viewer's chosen density and with their usual actions, and
+  one archive clears the batch — chunked 8 at a time, because `/api/stream/[id]`
+  resolves each id against five candidate tables.
+- **Counts are a lower bound while paging.** The feed loads 30 at a time, so a
+  run reaching the oldest loaded row is flagged `mayExtend` and renders "23+"
+  rather than claiming a total it cannot know.
+
+### Deliberately not done
+
+Origin as a **filter** ("Just me" / "Just agents") and **per-key write routing**
+(send this key's output to a project, or to `/review`, instead of the stream)
+were designed alongside this and deliberately left out. Run-collapsing addresses
+the actual complaint; whether a filter is still wanted is worth finding out by
+using this first, rather than by building four knobs nobody reaches for.
 
 ## Content Processing Queue
 
