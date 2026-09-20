@@ -961,6 +961,30 @@ async function migrate() {
     `ALTER TABLE agent_tasks ADD COLUMN routed_by TEXT DEFAULT 'user'`,
     // Queue-worker recovery sweep (abandoned revisions + retryable failures)
     `CREATE INDEX IF NOT EXISTS idx_agent_tasks_recovery ON agent_tasks(status, updated_at)`,
+    // Provenance: who wrote a row, and which operation produced it. All four
+    // are nullable and NULL reads as "the user, typing", so no backfill is
+    // needed and every existing row keeps its meaning. See
+    // src/lib/provenance/types.ts.
+    `ALTER TABLE notes ADD COLUMN source_actor TEXT`,
+    `ALTER TABLE notes ADD COLUMN source_key_id TEXT`,
+    `ALTER TABLE notes ADD COLUMN source_label TEXT`,
+    `ALTER TABLE notes ADD COLUMN source_run_id TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_notes_run ON notes(user_id, source_run_id)`,
+    `ALTER TABLE captures ADD COLUMN source_actor TEXT`,
+    `ALTER TABLE captures ADD COLUMN source_key_id TEXT`,
+    `ALTER TABLE captures ADD COLUMN source_label TEXT`,
+    `ALTER TABLE captures ADD COLUMN source_run_id TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_captures_run ON captures(user_id, source_run_id)`,
+    `ALTER TABLE tasks ADD COLUMN source_actor TEXT`,
+    `ALTER TABLE tasks ADD COLUMN source_key_id TEXT`,
+    `ALTER TABLE tasks ADD COLUMN source_label TEXT`,
+    `ALTER TABLE tasks ADD COLUMN source_run_id TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_tasks_run ON tasks(user_id, source_run_id)`,
+    `ALTER TABLE reminders ADD COLUMN source_actor TEXT`,
+    `ALTER TABLE reminders ADD COLUMN source_key_id TEXT`,
+    `ALTER TABLE reminders ADD COLUMN source_label TEXT`,
+    `ALTER TABLE reminders ADD COLUMN source_run_id TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_reminders_run ON reminders(user_id, source_run_id)`,
   ];
 
   let successCount = 0;

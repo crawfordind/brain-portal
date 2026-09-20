@@ -8,6 +8,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { query, queryOne, db } from "../db";
 import { errorResult, type ToolContext } from "../guard";
+import {
+  stampColumns,
+  stampPlaceholders,
+  stampValues,
+} from "@/lib/provenance";
 
 export function registerTaskTools(server: McpServer, ctx: ToolContext) {
   // ─── List Tasks ────────────────────────────────────────
@@ -119,9 +124,11 @@ export function registerTaskTools(server: McpServer, ctx: ToolContext) {
       if (!guard.ok) return errorResult(guard);
       const userId = guard.userId;
 
+      const stamp = ctx.provenance();
+
       const result = await queryOne<{ id: string }>(
-        `INSERT INTO tasks (user_id, content, title, priority, due_date, project_id, tags)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO tasks (user_id, content, title, priority, due_date, project_id, tags, ${stampColumns()})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ${stampPlaceholders()})
          RETURNING id`,
         [
           userId,
@@ -131,6 +138,7 @@ export function registerTaskTools(server: McpServer, ctx: ToolContext) {
           params.due_date || null,
           params.project_id || null,
           JSON.stringify(params.tags || []),
+          ...stampValues(stamp),
         ]
       );
 

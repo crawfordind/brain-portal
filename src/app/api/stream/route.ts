@@ -11,6 +11,7 @@ import { query, queryOne, mutate } from "@/lib/db/client";
 import { db } from "@/lib/db/client";
 import { v4 as uuid } from "uuid";
 import { classifyIntent } from "@/lib/stream/classifier";
+import { normalizeActor } from "@/lib/provenance";
 import { format } from "date-fns";
 
 // GET /api/stream - Fetch unified stream
@@ -93,6 +94,10 @@ export async function GET(req: NextRequest) {
           at_cap.id as agent_task_id,
           at_cap.status as agent_status,
           'manual' as source_type,
+          COALESCE(c.source_actor, 'human') as source_actor,
+          c.source_key_id,
+          c.source_label,
+          c.source_run_id,
           c.created_at,
           c.created_at as updated_at,
           NULL as completed_at
@@ -124,6 +129,10 @@ export async function GET(req: NextRequest) {
           t.agent_task_id,
           at_sub.status as agent_status,
           CASE WHEN t.delegated_to IS NOT NULL THEN 'ai_generated' ELSE 'manual' END as source_type,
+          COALESCE(t.source_actor, 'human') as source_actor,
+          t.source_key_id,
+          t.source_label,
+          t.source_run_id,
           t.created_at,
           t.updated_at,
           t.completed_at
@@ -157,6 +166,10 @@ export async function GET(req: NextRequest) {
           at_note.id as agent_task_id,
           at_note.status as agent_status,
           'manual' as source_type,
+          COALESCE(n.source_actor, 'human') as source_actor,
+          n.source_key_id,
+          n.source_label,
+          n.source_run_id,
           n.created_at,
           n.updated_at,
           NULL as completed_at
@@ -189,6 +202,10 @@ export async function GET(req: NextRequest) {
           at_rem.id as agent_task_id,
           at_rem.status as agent_status,
           'manual' as source_type,
+          COALESCE(r.source_actor, 'human') as source_actor,
+          r.source_key_id,
+          r.source_label,
+          r.source_run_id,
           r.created_at,
           r.updated_at,
           r.dismissed_at as completed_at
@@ -220,6 +237,10 @@ export async function GET(req: NextRequest) {
           NULL as agent_task_id,
           NULL as agent_status,
           'ai_generated' as source_type,
+          'agent' as source_actor,
+          NULL as source_key_id,
+          'Insights' as source_label,
+          NULL as source_run_id,
           i.generated_at as created_at,
           i.generated_at as updated_at,
           i.actioned_at as completed_at
@@ -253,6 +274,10 @@ export async function GET(req: NextRequest) {
           at2.id as agent_task_id,
           at2.status as agent_status,
           'agent_output' as source_type,
+          'agent' as source_actor,
+          NULL as source_key_id,
+          at2.assigned_agent as source_label,
+          NULL as source_run_id,
           at2.created_at,
           at2.updated_at,
           NULL as completed_at
@@ -311,6 +336,10 @@ export async function GET(req: NextRequest) {
       agent_task_id: string | null;
       agent_status: string | null;
       source_type: string;
+      source_actor: string | null;
+      source_key_id: string | null;
+      source_label: string | null;
+      source_run_id: string | null;
       created_at: string;
       updated_at: string;
       completed_at: string | null;
@@ -340,6 +369,13 @@ export async function GET(req: NextRequest) {
         agentTaskId: item.agent_task_id,
         agentStatus: item.agent_status,
         sourceType: item.source_type,
+        // Who wrote it, and which single operation produced it. The feed
+        // collapses rows sharing a run id into one entry — see
+        // src/lib/stream/runs.ts.
+        sourceActor: normalizeActor(item.source_actor),
+        sourceKeyId: item.source_key_id,
+        sourceLabel: item.source_label,
+        sourceRunId: item.source_run_id,
         createdAt: item.created_at,
         updatedAt: item.updated_at,
         completedAt: item.completed_at,

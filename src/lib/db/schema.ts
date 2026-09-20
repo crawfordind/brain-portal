@@ -78,12 +78,19 @@ CREATE TABLE IF NOT EXISTS notes (
   word_count INTEGER DEFAULT 0,
   frontmatter TEXT DEFAULT '{}',
   metadata TEXT DEFAULT '{}',
+  -- Provenance: who wrote this row, and which operation produced it.
+  -- NULL means "the user, typing" — see src/lib/provenance/types.ts.
+  source_actor TEXT,
+  source_key_id TEXT,
+  source_label TEXT,
+  source_run_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(user_id, slug)
 );
 
 CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id);
+CREATE INDEX IF NOT EXISTS idx_notes_run ON notes(user_id, source_run_id);
 CREATE INDEX IF NOT EXISTS idx_notes_project ON notes(project_id);
 CREATE INDEX IF NOT EXISTS idx_notes_type ON notes(note_type);
 CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC);
@@ -196,6 +203,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   position INTEGER DEFAULT 0,
   tags TEXT DEFAULT '[]',
   metadata TEXT DEFAULT '{}',
+  -- Provenance: who wrote this row, and which operation produced it.
+  -- NULL means "the user, typing" — see src/lib/provenance/types.ts.
+  source_actor TEXT,
+  source_key_id TEXT,
+  source_label TEXT,
+  source_run_id TEXT,
   title TEXT,
   description TEXT,
   delegated_to TEXT,
@@ -209,6 +222,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_run ON tasks(user_id, source_run_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_date);
@@ -278,11 +292,18 @@ CREATE TABLE IF NOT EXISTS reminders (
   triggered_at TEXT,
   dismissed_at TEXT,
   metadata TEXT DEFAULT '{}',
+  -- Provenance: who wrote this row, and which operation produced it.
+  -- NULL means "the user, typing" — see src/lib/provenance/types.ts.
+  source_actor TEXT,
+  source_key_id TEXT,
+  source_label TEXT,
+  source_run_id TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id);
+CREATE INDEX IF NOT EXISTS idx_reminders_run ON reminders(user_id, source_run_id);
 CREATE INDEX IF NOT EXISTS idx_reminders_status ON reminders(status);
 CREATE INDEX IF NOT EXISTS idx_reminders_remind_at ON reminders(remind_at);
 CREATE INDEX IF NOT EXISTS idx_reminders_project ON reminders(project_id);
@@ -303,10 +324,17 @@ CREATE TABLE IF NOT EXISTS captures (
   linked_projects TEXT DEFAULT '[]',
   tags TEXT DEFAULT '[]',
   metadata TEXT DEFAULT '{}',
+  -- Provenance: who wrote this row, and which operation produced it.
+  -- NULL means "the user, typing" — see src/lib/provenance/types.ts.
+  source_actor TEXT,
+  source_key_id TEXT,
+  source_label TEXT,
+  source_run_id TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_captures_user ON captures(user_id);
+CREATE INDEX IF NOT EXISTS idx_captures_run ON captures(user_id, source_run_id);
 CREATE INDEX IF NOT EXISTS idx_captures_daily ON captures(daily_note_id);
 CREATE INDEX IF NOT EXISTS idx_captures_date ON captures(captured_at);
 CREATE INDEX IF NOT EXISTS idx_captures_user_processed ON captures(user_id, processed, captured_at DESC);
@@ -960,7 +988,22 @@ export interface Project {
   updated_at: string;
 }
 
-export interface Note {
+/**
+ * Who wrote a row and which operation produced it.
+ *
+ * Optional because every row predating these columns has NULL in all four,
+ * and because session-cookie routes deliberately leave them unset — NULL
+ * reads as "human". The vocabulary and the readers live in
+ * `src/lib/provenance`.
+ */
+export interface ProvenanceFields {
+  source_actor?: string | null;
+  source_key_id?: string | null;
+  source_label?: string | null;
+  source_run_id?: string | null;
+}
+
+export interface Note extends ProvenanceFields {
   id: string;
   user_id: string;
   project_id: string | null;
@@ -1030,7 +1073,7 @@ export interface MonthlyJournal {
   updated_at: string;
 }
 
-export interface Task {
+export interface Task extends ProvenanceFields {
   id: string;
   user_id: string;
   note_id: string | null;
@@ -1058,7 +1101,7 @@ export interface Task {
   updated_at: string;
 }
 
-export interface Reminder {
+export interface Reminder extends ProvenanceFields {
   id: string;
   user_id: string;
   title: string;
@@ -1091,7 +1134,7 @@ export interface LinkMetadata {
   error?: string;           // If fetch/scrape failed
 }
 
-export interface Capture {
+export interface Capture extends ProvenanceFields {
   id: string;
   user_id: string;
   daily_note_id: string | null;

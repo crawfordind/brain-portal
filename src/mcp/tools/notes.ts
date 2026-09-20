@@ -8,6 +8,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { query, queryOne, db } from "../db";
 import { errorResult, type ToolContext } from "../guard";
+import {
+  stampColumns,
+  stampPlaceholders,
+  stampValues,
+} from "@/lib/provenance";
 
 export function registerNoteTools(server: McpServer, ctx: ToolContext) {
   // ─── List Notes ────────────────────────────────────────
@@ -189,9 +194,15 @@ export function registerNoteTools(server: McpServer, ctx: ToolContext) {
       const contentPlain = params.content.replace(/<[^>]*>/g, "");
       const wordCount = contentPlain.split(/\s+/).filter(Boolean).length;
 
+      // Who wrote this, and which job it came out of. One long agent run
+      // writing fifty notes stamps the same run id on all fifty, so the
+      // stream can render them as one row instead of burying the user's own
+      // work under them.
+      const stamp = ctx.provenance();
+
       const result = await queryOne<{ id: string }>(
-        `INSERT INTO notes (user_id, title, slug, content, content_plain, note_type, project_id, is_pinned, word_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO notes (user_id, title, slug, content, content_plain, note_type, project_id, is_pinned, word_count, ${stampColumns()})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${stampPlaceholders()})
          RETURNING id`,
         [
           userId,
@@ -203,6 +214,7 @@ export function registerNoteTools(server: McpServer, ctx: ToolContext) {
           params.project_id || null,
           params.is_pinned ? 1 : 0,
           wordCount,
+          ...stampValues(stamp),
         ]
       );
 
