@@ -3,6 +3,7 @@ import { db, query, queryOne, mutate } from "@/lib/db/client";
 import type { User, Session, MagicLink } from "@/lib/db/schema";
 import { randomBytes, createHash } from "crypto";
 import { mayCreateAccount } from "./signup-policy";
+import { getAppUrl } from "@/lib/app-url";
 
 const SESSION_COOKIE = "brain_session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
@@ -37,8 +38,7 @@ export async function createMagicLink(email: string, baseUrl?: string, expirySec
     args: [email, hashedToken, expiresAt],
   });
 
-  // Use provided baseUrl, then env var, then fallback to localhost
-  const appUrl = baseUrl || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = (baseUrl || getAppUrl()).replace(/\/$/, "");
   return `${appUrl}/auth/verify?token=${token}&email=${encodeURIComponent(email)}`;
 }
 

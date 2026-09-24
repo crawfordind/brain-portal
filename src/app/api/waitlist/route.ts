@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, queryOne } from "@/lib/db/client";
 import { sendEmail, isEmailConfigured } from "@/lib/email/index";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getAppUrl } from "@/lib/app-url";
 
 export async function POST(request: NextRequest) {
   // Unauthenticated, and it sends an email per new address — without a limit
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest) {
   });
 
   if (isEmailConfigured()) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://brain-portal.vercel.app";
+    const appUrl = getAppUrl();
 
     await sendEmail({
       to: email,

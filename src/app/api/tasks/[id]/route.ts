@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, queryOne, mutate } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { Task } from "@/lib/db/schema";
-import { getNextOccurrence } from "@/lib/tasks/recurrence";
+import { spawnNextOccurrence } from "@/lib/tasks/complete";
 import { safeParseJson, isErrorResponse, isValidTaskStatus, isValidPriority } from "@/lib/api/validation";
 
 interface RouteParams {
@@ -172,34 +172,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     const effectiveEndDate = body.recurrenceEndDate !== undefined ? (body.recurrenceEndDate as string | null) : existing.recurrence_end_date;
 
     if (body.status === 'completed' && existing.status !== 'completed' && effectiveRule) {
-      const next = getNextOccurrence(
-        effectiveRule,
-        new Date(),
-        effectiveEndDate
-      );
-
-      if (next) {
-        await db.execute({
-          sql: `
-            INSERT INTO tasks
-              (user_id, content, status, priority, project_id, note_id, due_date,
-               recurrence_rule, recurrence_end_date, parent_task_id, tags)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
-          `,
-          args: [
-            user.id,
-            existing.content,
-            existing.priority,
-            existing.project_id || null,
-            existing.note_id || null,
-            next.toISOString().split('T')[0],
-            effectiveRule,
-            effectiveEndDate || null,
-            id,
-            existing.tags || '[]',
-          ],
-        });
-      }
+      await spawnNextOccurrence(user.id, existing, effectiveRule, effectiveEndDate);
     }
 
     // Handing a task to an agent has to actually queue the work, the same way

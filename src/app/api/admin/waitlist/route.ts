@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { query, db } from "@/lib/db/client";
 import { requireAdmin } from "@/lib/auth/admin";
 import { sendEmail, isEmailConfigured } from "@/lib/email/index";
+import { getAppUrl } from "@/lib/app-url";
 
 interface WaitlistEntry {
   id: string;
@@ -74,8 +75,7 @@ export async function PATCH(request: NextRequest) {
     );
 
     if (entry[0] && isEmailConfigured()) {
-      const appUrl =
-        process.env.NEXT_PUBLIC_APP_URL || "https://brain-portal.vercel.app";
+      const appUrl = getAppUrl();
       const loginUrl = `${appUrl}/auth/login`;
 
       await sendEmail({

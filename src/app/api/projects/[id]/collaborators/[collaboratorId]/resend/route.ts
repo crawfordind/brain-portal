@@ -9,6 +9,7 @@ import {
 import { createMagicLink } from "@/lib/auth/index";
 import { queryOne } from "@/lib/db/client";
 import type { ProjectCollaborator } from "@/lib/db/schema";
+import { getAppUrl } from "@/lib/app-url";
 
 interface RouteParams {
   params: Promise<{ id: string; collaboratorId: string }>;
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       user.id
     );
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+    const baseUrl = getAppUrl({ requestOrigin: request.nextUrl.origin });
     const SEVEN_DAYS = 7 * 24 * 60 * 60;
     const magicLinkUrl = await createMagicLink(collab.email, baseUrl, SEVEN_DAYS);
     const inviteUrl = `${magicLinkUrl}&invite=${inviteToken}`;

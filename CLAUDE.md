@@ -223,6 +223,8 @@ Required for development (see `.env.example`):
   any id the live catalog no longer lists is skipped. See *Model Selection*.
 - `SMTP_*` - Email for magic links
 - `NEXT_PUBLIC_APP_URL`, `SESSION_SECRET` - App config
+- `APP_URL` - optional runtime override for every emailed link; see *Email &
+  Links Out of the App*. `EMAIL_ACTION_SECRET` - optional, signs email buttons.
 - `CRON_SECRET` - **Required in production.** Guards every `/api/cron/*` route.
   Unset, `verifyCronSecret` 401s every scheduled request, so the agent queue is
   never drained and delegated work sits in `queued` with no error to show for
@@ -251,6 +253,63 @@ user can always sign in, whatever the mode.
 `POST /api/auth/login` checks the policy *before* sending mail, so the route
 cannot be used as a relay to arbitrary addresses, and returns the identical
 "check your email" response either way so it cannot enumerate accounts.
+
+## Email & Links Out of the App
+
+Every link that leaves the browser (magic links, invites, share links, every
+notification email) is built from **`getAppUrl()`** (`src/lib/app-url.ts`).
+Never write `process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"`: that
+is how an overdue-task email came to link to localhost. `NEXT_PUBLIC_*` is
+inlined at *build* time and a cron-sent email has no request to fall back on.
+Resolution: `APP_URL` (runtime) → `NEXT_PUBLIC_APP_URL` →
+`VERCEL_PROJECT_PRODUCTION_URL` (production deploys only) → request origin →
+`VERCEL_URL` → localhost (dev only). A loopback value is skipped in production.
+The login route uses it too, instead of the client-supplied `Host` header,
+which let anyone mint a sign-in email linking to a domain of their choosing.
+
+### Quick actions in emails
+
+Task alerts carry **Mark done / Tomorrow / Next week**; reminders carry
+**Done / Snooze 1 hour / Tomorrow 9am**; the daily digest carries Done /
+Tomorrow per overdue and due-soon task. Each is a link to
+`/api/email/action?token=…`.
+
+- **Tokens** (`src/lib/email/action-tokens.ts`): `v1.<payload>.<hmac>`, signed
+  with `EMAIL_ACTION_SECRET` or `SESSION_SECRET`, 14-day expiry (unsubscribe:
+  1 year). No secret → emails render without buttons. No table, so a token
+  cannot be revoked individually, which is why every action is **safe to
+  repeat**: complete is conditional on not already being complete (a
+  recurring task never spawns twice), extend carries the absolute target date
+  signed at send time, snooze is relative to the click.
+- **GET never writes.** Link previews and scanners issue GETs, so a GET renders
+  a confirmation page that a real browser auto-submits as a POST (a button when
+  JS is off). Trade-off: a scanner that *executes* JavaScript could still post;
+  the actions are idempotent and the result page offers **Undo**.
+- **Unsubscribe**: every notification email has a per-category footer link and
+  `List-Unsubscribe` + `List-Unsubscribe-Post` headers (RFC 8058), so Gmail's
+  own "Unsubscribe" button works. One-click POSTs may only ever unsubscribe.
+- **Deep links**: `/tasks?task=<id>` opens that task's panel.
+- `/api/email/action` is in `publicRoutes`; the token is the credential.
+- Everything user- or model-authored in a template goes through `escapeHtml`
+  (`src/lib/email/html.ts`); subjects are stripped of CR/LF.
+
+### Timezone
+
+`notification_preferences.timezone` existed but nothing set it, so everyone was
+on UTC. The settings panel now adopts the device's zone while the stored value
+is the default, and exposes a picker. It drives quiet hours, the digest hour
+and weekly day, "Tomorrow 9am", and **overdue** (`src/lib/notifications/due-queries.ts`):
+a date-only task is overdue once its day has ended *for the user*. The old
+`due_date < datetime('now')` compared `'2026-09-24' < '2026-09-24 10:00:00'`
+as text and flagged tasks due today as overdue from UTC midnight.
+
+### Delivery
+
+`sendEmail` has connection/socket timeouts, retries once on transient SMTP
+errors (4xx, connection drops), rebuilds the transporter after a failure,
+generates a plain-text part when none is given, and infers `secure` from port
+465 when `SMTP_SECURE` is unset. Snoozed reminders now re-fire (the scan only
+matched `status = 'pending'`, and snoozing sets `'snoozed'`).
 
 ## Fetching User-Supplied URLs
 

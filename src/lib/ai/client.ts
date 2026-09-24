@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { computeInsightConfidence } from "./insight-confidence";
 import { AUTO_ROUTER_MODEL, type ModelSlot } from "./models/slots";
+import { getAppUrl } from "@/lib/app-url";
 
 // OpenRouter uses the OpenAI-compatible API.
 //
@@ -26,7 +27,7 @@ function getOpenRouter(): OpenAI {
       apiKey: process.env.OPENROUTER_API_KEY,
       defaultHeaders: {
         "HTTP-Referer":
-          process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+          getAppUrl(),
         "X-Title": "Brain Portal",
       },
     });

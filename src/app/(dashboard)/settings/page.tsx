@@ -328,7 +328,7 @@ export default function SettingsPage() {
       </Card>
 
       {/* Notifications */}
-      <Card>
+      <Card id="notifications" className="scroll-mt-20">
         <CardHeader>
           <CardTitle className="text-base md:text-lg">Notifications</CardTitle>
           <CardDescription className="text-xs md:text-sm">

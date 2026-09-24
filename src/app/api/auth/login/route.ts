@@ -4,6 +4,7 @@ import { sendEmail, isEmailConfigured } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { mayCreateAccount } from "@/lib/auth/signup-policy";
 import { queryOne } from "@/lib/db/client";
+import { getAppUrl } from "@/lib/app-url";
 
 export async function POST(request: NextRequest) {
   const requestStartTime = Date.now();
@@ -52,10 +53,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Get the base URL from the request
-    const protocol = request.headers.get("x-forwarded-proto") || "https";
-    const host = request.headers.get("host") || "localhost:3000";
-    const baseUrl = `${protocol}://${host}`;
+    // The configured origin, not the Host header: the Host header is supplied
+    // by the client, so trusting it let anyone request a sign-in email whose
+    // link pointed at a domain of their choosing (the token rides along).
+    // The request origin is only a fallback for local development.
+    const baseUrl = getAppUrl({ requestOrigin: request.nextUrl.origin });
 
     const magicLink = await createMagicLink(email, baseUrl);
 

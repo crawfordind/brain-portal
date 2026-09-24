@@ -7,6 +7,7 @@ import {
   sendInviteEmail,
 } from "@/lib/collaborators";
 import { createMagicLink } from "@/lib/auth/index";
+import { getAppUrl } from "@/lib/app-url";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
 
     // Create magic link with 7-day expiry to match invite lifespan, then append invite token
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+    const baseUrl = getAppUrl({ requestOrigin: request.nextUrl.origin });
     const SEVEN_DAYS = 7 * 24 * 60 * 60;
     const magicLinkUrl = await createMagicLink(email.toLowerCase().trim(), baseUrl, SEVEN_DAYS);
     const inviteUrl = `${magicLinkUrl}&invite=${inviteToken}`;

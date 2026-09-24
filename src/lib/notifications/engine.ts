@@ -19,6 +19,9 @@ import type {
   NotificationType,
 } from "@/lib/db/schema";
 import { sendNotificationEmail } from "./emails";
+import { dueSoonClause, overdueClause } from "./due-queries";
+import { reminderQuickActions, taskQuickActions, type EmailActionLink } from "@/lib/email/links";
+import { formatDueLabel, hourInTimeZone, isDateOnly, safeTimeZone, todayInTimeZone } from "@/lib/email/when";
 import { getSystemHealth } from "@/lib/system-health";
 import { diagnoseError } from "@/lib/system-health/diagnose";
 
@@ -126,9 +129,13 @@ export async function createNotification(
       if (existing) return null;
     }
 
-    await db.execute({
+    // RETURNING, not "the newest row for this user": two notifications
+    // created in the same second made that lookup return the wrong id, and the
+    // wrong row then got marked as emailed.
+    const inserted = await db.execute({
       sql: `INSERT INTO notifications (user_id, type, title, body, priority, entity_type, entity_id, action_url, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id`,
       args: [
         input.userId,
         input.type,
@@ -142,12 +149,8 @@ export async function createNotification(
       ],
     });
 
-    const notif = await queryOne<{ id: string }>(
-      "SELECT id FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-      [input.userId]
-    );
-
-    return notif?.id || null;
+    const id = inserted.rows[0]?.id;
+    return typeof id === "string" ? id : id != null ? String(id) : null;
   } catch (error) {
     console.error("[NOTIF] Failed to create notification:", error);
     return null;
@@ -199,10 +202,13 @@ export async function getNotificationPreferences(
 
 // ─── Check Quiet Hours ──────────────────────────────
 
-function isQuietHours(prefs: NotificationPreferences): boolean {
-  const now = new Date();
-  const hour = now.getUTCHours(); // Simplified: uses UTC
+export function isQuietHours(prefs: NotificationPreferences, now: Date = new Date()): boolean {
+  // Quiet hours are the user's own night, not UTC's.
+  const hour = hourInTimeZone(now, safeTimeZone(prefs.timezone));
   const { quiet_hours_start, quiet_hours_end } = prefs;
+  if (quiet_hours_start == null || quiet_hours_end == null || quiet_hours_start === quiet_hours_end) {
+    return false;
+  }
 
   if (quiet_hours_start > quiet_hours_end) {
     // Wraps midnight (e.g., 22-7)
@@ -220,10 +226,17 @@ async function scanReminders(userId: string): Promise<NotificationInput[]> {
   // This prevents concurrent scans from picking up the same reminders.
   // The WHERE status = 'pending' ensures only one scan can claim each reminder.
   await db.execute({
+    // A snoozed reminder has status 'snoozed', so matching only 'pending'
+    // meant snoozing anything silenced it for good. datetime() normalises ISO
+    // timestamps ("…T…Z"), which compare wrongly against datetime('now') as text.
     sql: `UPDATE reminders SET status = 'triggered', triggered_at = datetime('now'), updated_at = datetime('now')
-          WHERE user_id = ? AND status = 'pending'
-            AND remind_at <= datetime('now')
-            AND (snoozed_until IS NULL OR snoozed_until <= datetime('now'))`,
+          WHERE user_id = ?
+            AND (
+              (status = 'pending' AND datetime(remind_at) <= datetime('now')
+                AND (snoozed_until IS NULL OR datetime(snoozed_until) <= datetime('now')))
+              OR (status = 'snoozed' AND snoozed_until IS NOT NULL
+                AND datetime(snoozed_until) <= datetime('now'))
+            )`,
     args: [userId],
   });
 
@@ -251,7 +264,8 @@ async function scanReminders(userId: string): Promise<NotificationInput[]> {
       priority: reminder.priority as NotificationInput["priority"],
       entityType: "reminder",
       entityId: reminder.id,
-      actionUrl: "/tasks",
+      // Reminders live in the stream, not the task list.
+      actionUrl: "/",
       metadata: { remind_at: reminder.remind_at },
     });
   }
@@ -266,6 +280,9 @@ async function scanTasks(
   prefs: NotificationPreferences
 ): Promise<NotificationInput[]> {
   const notifications: NotificationInput[] = [];
+  const tz = safeTimeZone(prefs.timezone);
+  const overdue = overdueClause(tz);
+  const dueSoon = dueSoonClause(tz, prefs.due_soon_hours);
 
   // Overdue tasks (past due_date, not completed)
   const overdueTasks = await queryAll<{
@@ -278,23 +295,21 @@ async function scanTasks(
   }>(
     `SELECT id, title, content, due_date, priority, project_id FROM tasks
      WHERE user_id = ? AND status IN ('pending', 'in_progress')
-       AND due_date IS NOT NULL AND due_date < datetime('now')`,
-    [userId]
+       AND ${overdue.sql}`,
+    [userId, ...overdue.args]
   );
 
   for (const task of overdueTasks) {
-    const hoursOverdue = Math.round(
-      (Date.now() - new Date(task.due_date).getTime()) / (1000 * 60 * 60)
-    );
+    const hoursOverdue = hoursSinceDue(task.due_date, tz);
     notifications.push({
       userId,
       type: "task_overdue",
-      title: `Overdue: ${task.title || task.content}`,
-      body: `This task was due ${hoursOverdue}h ago. ${task.title || task.content}`,
+      title: `Overdue: ${taskLabel(task)}`,
+      body: `Was due ${formatDueLabel(task.due_date, tz)} (${describeOverdue(hoursOverdue)}).`,
       priority: hoursOverdue > 48 ? "urgent" : "high",
       entityType: "task",
       entityId: task.id,
-      actionUrl: "/tasks",
+      actionUrl: taskPath(task.id),
       metadata: { due_date: task.due_date, hours_overdue: hoursOverdue },
     });
   }
@@ -309,25 +324,27 @@ async function scanTasks(
   }>(
     `SELECT id, title, content, due_date, priority FROM tasks
      WHERE user_id = ? AND status IN ('pending', 'in_progress')
-       AND due_date IS NOT NULL
-       AND due_date > datetime('now')
-       AND due_date <= datetime('now', '+${prefs.due_soon_hours} hours')`,
-    [userId]
+       AND ${dueSoon.sql}`,
+    [userId, ...dueSoon.args]
   );
 
   for (const task of dueSoonTasks) {
-    const hoursUntil = Math.round(
-      (new Date(task.due_date).getTime() - Date.now()) / (1000 * 60 * 60)
-    );
+    const dueToday = isDateOnly(task.due_date) && task.due_date.trim() === todayInTimeZone(new Date(), tz);
+    const hoursUntil = isDateOnly(task.due_date)
+      ? null
+      : Math.max(0, Math.round((new Date(task.due_date).getTime() - Date.now()) / 3_600_000));
     notifications.push({
       userId,
       type: "task_due_soon",
-      title: `Due soon: ${task.title || task.content}`,
-      body: `Due in ${hoursUntil}h. ${task.title || task.content}`,
-      priority: hoursUntil <= 4 ? "high" : "medium",
+      title: `${dueToday ? "Due today" : "Due soon"}: ${taskLabel(task)}`,
+      body:
+        hoursUntil === null
+          ? `Due ${dueToday ? "today" : formatDueLabel(task.due_date, tz)}.`
+          : `Due ${formatDueLabel(task.due_date, tz)} (in about ${hoursUntil}h).`,
+      priority: dueToday || (hoursUntil !== null && hoursUntil <= 4) ? "high" : "medium",
       entityType: "task",
       entityId: task.id,
-      actionUrl: "/tasks",
+      actionUrl: taskPath(task.id),
       metadata: { due_date: task.due_date, hours_until: hoursUntil },
     });
   }
@@ -364,7 +381,7 @@ async function scanAgentTasks(
       priority: "medium",
       entityType: "agent_task",
       entityId: task.id,
-      actionUrl: "/tasks",
+      actionUrl: "/review",
       metadata: { agent: task.assigned_agent, task_id: task.task_id },
     });
   }
@@ -660,8 +677,10 @@ export async function runNotificationScan(userId: string): Promise<ScanResult> {
           if (user) {
             const sent = await sendNotificationEmail({
               to: user.email,
+              userId,
               userName: user.display_name || "there",
               notification: notif,
+              actions: quickActionsFor(notif, prefs),
             });
             if (sent) {
               result.emailsSent++;
@@ -693,6 +712,53 @@ export async function runNotificationScan(userId: string): Promise<ScanResult> {
   }
 
   return result;
+}
+
+// ─── Helpers: task wording, links and quick actions ─
+
+function taskLabel(task: { title: string | null; content: string }): string {
+  return (task.title || task.content || "Untitled task").split("\n")[0].slice(0, 140);
+}
+
+function taskPath(taskId: string): string {
+  return `/tasks?task=${encodeURIComponent(taskId)}`;
+}
+
+/** Hours since a task fell due; for a date-only task, whole days since that date. */
+function hoursSinceDue(dueDate: string, tz: string): number {
+  if (isDateOnly(dueDate)) {
+    const today = todayInTimeZone(new Date(), tz);
+    const [y1, m1, d1] = dueDate.trim().split("-").map(Number);
+    const [y2, m2, d2] = today.split("-").map(Number);
+    const days = Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000);
+    return Math.max(0, days) * 24;
+  }
+  const due = new Date(dueDate.includes("T") ? dueDate : `${dueDate.replace(" ", "T")}Z`).getTime();
+  return Number.isNaN(due) ? 0 : Math.max(0, Math.round((Date.now() - due) / 3_600_000));
+}
+
+function describeOverdue(hours: number): string {
+  if (hours < 24) return hours <= 1 ? "just now" : `${hours} hours ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+/** The one-tap buttons an alert email should carry, if any. */
+function quickActionsFor(notif: NotificationInput, prefs: NotificationPreferences): EmailActionLink[] {
+  if (!notif.entityId) return [];
+  switch (notif.type) {
+    case "task_overdue":
+    case "task_due_soon":
+      return taskQuickActions(
+        notif.userId,
+        { id: notif.entityId, dueDate: (notif.metadata?.due_date as string | undefined) ?? null },
+        safeTimeZone(prefs.timezone)
+      );
+    case "reminder_due":
+      return reminderQuickActions(notif.userId, notif.entityId);
+    default:
+      return [];
+  }
 }
 
 // ─── Helper: Should this type trigger email? ────────
