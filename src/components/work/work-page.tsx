@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { parseISO, isToday, isPast, startOfDay } from "date-fns";
 import { Plus, Filter, Bot, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -226,6 +226,37 @@ export function WorkPage() {
     });
     if (ok) bulkDeleteMutation.mutate(Array.from(selection.selectedIds));
   };
+
+  // `/tasks?task=<id>` opens that task — the link every task email carries.
+  // Fetched by id rather than looked up in the loaded list, so it works for a
+  // task hidden by the current filter or already completed. The param is then
+  // dropped so closing the panel doesn't reopen it.
+  const searchParams = useSearchParams();
+  const deepLinkedTaskId = searchParams.get("task");
+  const openedDeepLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!deepLinkedTaskId || openedDeepLink.current === deepLinkedTaskId) return;
+    openedDeepLink.current = deepLinkedTaskId;
+    let cancelled = false;
+    fetch(`/api/tasks/${encodeURIComponent(deepLinkedTaskId)}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((data: { task?: Task }) => {
+        if (cancelled || !data.task) return;
+        state.openTask(data.task);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error("That task couldn't be found. It may have been deleted.");
+      })
+      .finally(() => {
+        const params = new URLSearchParams(searchParams);
+        params.delete("task");
+        const query = params.toString();
+        router.replace(query ? `/tasks?${query}` : "/tasks", { scroll: false });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deepLinkedTaskId]);
 
   const handleTaskClick = (task: Task) => {
     state.openTask(task);

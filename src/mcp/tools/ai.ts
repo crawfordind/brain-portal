@@ -12,6 +12,7 @@ import { errorResult, type ToolContext } from "../guard";
 
 // We use OpenRouter directly here since this runs outside Next.js
 import OpenAI from "openai";
+import { getAppUrl } from "@/lib/app-url";
 
 function getOpenRouter() {
   if (!process.env.OPENROUTER_API_KEY) {
@@ -21,7 +22,7 @@ function getOpenRouter() {
     baseURL: "https://openrouter.ai/api/v1",
     apiKey: process.env.OPENROUTER_API_KEY,
     defaultHeaders: {
-      "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+      "HTTP-Referer": getAppUrl(),
       "X-Title": "Brain Portal MCP",
     },
   });

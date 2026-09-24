@@ -11,6 +11,7 @@
  * - Due-soon thresholds
  */
 
+import { useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -58,6 +59,45 @@ export function NotificationPreferencesPanel() {
   });
 
   const prefs = data?.preferences;
+
+  const deviceTimeZone = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch {
+      return "UTC";
+    }
+  }, []);
+
+  const timeZoneOptions = useMemo(() => {
+    let zones: string[] = [];
+    try {
+      zones = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
+    } catch {
+      zones = [];
+    }
+    const all = new Set(["UTC", deviceTimeZone, prefs?.timezone || "UTC", ...zones]);
+    return [...all].sort().map((z) => ({ value: z, label: z === deviceTimeZone ? `${z} (this device)` : z }));
+  }, [deviceTimeZone, prefs?.timezone]);
+
+  // Emails compute "tomorrow", quiet hours and the digest hour in this zone.
+  // Nothing ever set it, so everyone was on UTC: adopt the device's zone once,
+  // while the stored value is still the untouched default.
+  const adoptedTimeZone = useRef(false);
+  useEffect(() => {
+    if (!prefs || adoptedTimeZone.current) return;
+    if (prefs.timezone && prefs.timezone !== "UTC") return;
+    if (deviceTimeZone === "UTC") return;
+    adoptedTimeZone.current = true;
+    fetch("/api/notifications/preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timezone: deviceTimeZone }),
+    })
+      .then((res) => {
+        if (res.ok) queryClient.invalidateQueries({ queryKey: ["notification-preferences"] });
+      })
+      .catch(() => {});
+  }, [prefs, deviceTimeZone, queryClient]);
 
   if (isLoading || !prefs) {
     return (
@@ -131,12 +171,19 @@ export function NotificationPreferencesPanel() {
         description="When to send daily and weekly digests"
       >
         <SelectRow
+          label="Timezone"
+          description="Used for digest timing, quiet hours and email quick actions"
+          value={prefs.timezone || "UTC"}
+          options={timeZoneOptions}
+          onChange={(v) => update("timezone", v)}
+        />
+        <SelectRow
           label="Daily digest hour"
-          description="Hour of day to send daily digest (UTC)"
+          description={`Hour of day to send daily digest (${prefs.timezone || "UTC"})`}
           value={String(prefs.daily_digest_hour)}
           options={Array.from({ length: 24 }, (_, i) => ({
             value: String(i),
-            label: `${i.toString().padStart(2, "0")}:00 UTC`,
+            label: `${i.toString().padStart(2, "0")}:00`,
           }))}
           onChange={(v) => update("daily_digest_hour", parseInt(v))}
         />
@@ -323,8 +370,8 @@ function SelectRow({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="flex items-center justify-between py-2">
-      <div className="flex-1">
+    <div className="flex items-center justify-between gap-3 py-2">
+      <div className="flex-1 min-w-0">
         <p className="text-sm">{label}</p>
         {description && (
           <p className="text-xs text-muted-foreground">{description}</p>
@@ -333,7 +380,7 @@ function SelectRow({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-muted border border-border rounded-md px-2 py-1 text-sm min-w-[120px]"
+        className="bg-muted border border-border rounded-md px-2 py-1 text-sm min-w-[120px] max-w-[55%] truncate"
       >
         {options.map((opt) => (
           <option key={opt.value} value={opt.value}>

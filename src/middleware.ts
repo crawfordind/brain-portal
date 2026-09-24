@@ -5,8 +5,9 @@ import type { NextRequest } from "next/server";
  * Routes reachable without a session cookie.
  *
  * Every one of these authenticates itself by another means — an MCP bearer
- * key, the cron secret, a service token, or a share token — or is genuinely
- * public. Matching is on exact path or path-prefix-plus-slash, never bare
+ * key, the cron secret, a service token, a share token, or a signed email
+ * action token — or is genuinely public. Matching is on exact path or
+ * path-prefix-plus-slash, never bare
  * `startsWith`: with bare prefixes "/api/brain" also matched
  * "/api/brainstorm-everything", so a route added later under a public
  * prefix-neighbour would silently inherit public access.
@@ -22,6 +23,7 @@ const publicRoutes = [
   "/api/mcp/rpc",
   "/api/cron",
   "/api/brain",
+  "/api/email/action",
   "/waitlist",
   "/api/waitlist",
   "/shared",

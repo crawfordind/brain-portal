@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { getCurrentUser } from "@/lib/auth";
 import { queryOne, mutate } from "@/lib/db/client";
 import type { Note } from "@/lib/db/schema";
+import { getAppUrl } from "@/lib/app-url";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     // If already shared, return existing token
     if (note.share_token) {
-      const shareUrl = `${process.env.NEXT_PUBLIC_APP_URL}/shared/${note.share_token}`;
+      const shareUrl = `${getAppUrl({ requestOrigin: request.nextUrl.origin })}/shared/${note.share_token}`;
       return NextResponse.json({
         shareUrl,
         token: note.share_token,
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Generate new token
     const token = randomUUID();
-    const shareUrl = `${process.env.NEXT_PUBLIC_APP_URL}/shared/${token}`;
+    const shareUrl = `${getAppUrl({ requestOrigin: request.nextUrl.origin })}/shared/${token}`;
 
     // Update database with share_token and shared_at
     await mutate(
@@ -125,7 +126,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     // Generate new UUID v4 token
     const token = randomUUID();
-    const shareUrl = `${process.env.NEXT_PUBLIC_APP_URL}/shared/${token}`;
+    const shareUrl = `${getAppUrl({ requestOrigin: request.nextUrl.origin })}/shared/${token}`;
 
     // Update database (old token auto-invalidated)
     await mutate(

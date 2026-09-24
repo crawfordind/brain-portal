@@ -9,6 +9,13 @@ import {
   generateAndSendWeeklyReport,
 } from "@/lib/notifications/digest";
 import { verifyCronSecret } from "@/lib/api/validation";
+import { hourInTimeZone, safeTimeZone } from "@/lib/email/when";
+
+/** Day of week (0 = Sunday) as seen from `timeZone`. */
+function dayInTimeZone(now: Date, timeZone: string): number {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(now);
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(name);
+}
 
 /**
  * Cron endpoint for processing notifications
@@ -38,16 +45,22 @@ export async function GET(request: NextRequest) {
 
     // 2. Check if any users need their daily digest
     const users = await queryAll<{ id: string }>("SELECT id FROM users");
-    const currentHour = new Date().getUTCHours();
-    const currentDay = new Date().getUTCDay(); // 0=Sunday, 1=Monday...
+    const now = new Date();
 
     for (const user of users) {
       try {
         const prefs = await getNotificationPreferences(user.id);
+        // Digest hour and report day are the user's wall clock, not UTC's.
+        const timeZone = safeTimeZone(prefs.timezone);
+        const currentHour = hourInTimeZone(now, timeZone);
+        const currentDay = dayInTimeZone(now, timeZone);
 
-        // Daily digest check
-        if (prefs.email_daily_digest && prefs.ai_digest_enabled) {
-          if (prefs.daily_digest_hour === currentHour) {
+        // Daily digest check. "At or after" the chosen hour, not "during" it:
+        // a single missed cron run used to skip that day's digest entirely.
+        // generateAndSendDailyDigest() is once-per-day on its own. Turning the
+        // AI summary off no longer turns the whole digest off with it.
+        if (prefs.email_daily_digest) {
+          if (currentHour >= prefs.daily_digest_hour) {
             const digestResult = await generateAndSendDailyDigest(user.id);
             if (digestResult.success) {
               results.digests.sent++;
@@ -58,10 +71,10 @@ export async function GET(request: NextRequest) {
         }
 
         // Weekly report check (default: Monday)
-        if (prefs.email_weekly_report && prefs.ai_weekly_enabled) {
+        if (prefs.email_weekly_report) {
           if (
             prefs.weekly_report_day === currentDay &&
-            prefs.daily_digest_hour === currentHour
+            currentHour >= prefs.daily_digest_hour
           ) {
             const reportResult = await generateAndSendWeeklyReport(user.id);
             if (reportResult.success) {

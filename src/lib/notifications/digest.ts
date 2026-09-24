@@ -13,6 +13,8 @@ import { complete, completeJSON } from "@/lib/ai/client";
 import { getCached, setCache, generateCacheKey } from "@/lib/processing/cache";
 import { createNotification, getNotificationPreferences } from "./engine";
 import { sendDailyDigestEmail, sendWeeklyReportEmail } from "./emails";
+import { dueSoonClause, overdueClause } from "./due-queries";
+import { safeTimeZone, todayInTimeZone } from "@/lib/email/when";
 
 // ─── Daily Digest Generation ────────────────────────
 
@@ -29,8 +31,10 @@ interface DailyDigestData {
   streak: { type: string; length: number } | null;
 }
 
-async function gatherDailyData(userId: string): Promise<DailyDigestData> {
+async function gatherDailyData(userId: string, timeZone: string): Promise<DailyDigestData> {
   const today = new Date().toISOString().split("T")[0];
+  const overdue = overdueClause(timeZone);
+  const dueSoon = dueSoonClause(timeZone, 24);
 
   const [
     tasksCompleted,
@@ -54,16 +58,17 @@ async function gatherDailyData(userId: string): Promise<DailyDigestData> {
     queryAll<{ id: string; title: string | null; content: string; due_date: string; priority: string }>(
       `SELECT id, title, content, due_date, priority FROM tasks
        WHERE user_id = ? AND status IN ('pending', 'in_progress')
-         AND due_date IS NOT NULL AND due_date < datetime('now')`,
-      [userId]
+         AND ${overdue.sql}
+       ORDER BY due_date ASC`,
+      [userId, ...overdue.args]
     ),
     // Due soon (next 24h)
     queryAll<{ id: string; title: string | null; content: string; due_date: string; priority: string }>(
       `SELECT id, title, content, due_date, priority FROM tasks
        WHERE user_id = ? AND status IN ('pending', 'in_progress')
-         AND due_date IS NOT NULL AND due_date > datetime('now')
-         AND due_date <= datetime('now', '+24 hours')`,
-      [userId]
+         AND ${dueSoon.sql}
+       ORDER BY due_date ASC`,
+      [userId, ...dueSoon.args]
     ),
     // Notes created today
     queryAll<{ title: string; note_type: string; word_count: number }>(
@@ -219,20 +224,21 @@ export async function generateAndSendDailyDigest(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const prefs = await getNotificationPreferences(userId);
+    const timeZone = safeTimeZone(prefs.timezone);
 
-    // Check if already sent today
+    // Check if already sent today — "today" in the user's zone.
     if (prefs.last_daily_digest) {
-      const lastDigest = new Date(prefs.last_daily_digest);
+      const lastDigest = parseSqliteTimestamp(prefs.last_daily_digest);
       const now = new Date();
       if (
-        lastDigest.toISOString().split("T")[0] ===
-        now.toISOString().split("T")[0]
+        lastDigest &&
+        todayInTimeZone(lastDigest, timeZone) === todayInTimeZone(now, timeZone)
       ) {
         return { success: true }; // Already sent today
       }
     }
 
-    const data = await gatherDailyData(userId);
+    const data = await gatherDailyData(userId, timeZone);
     const aiDigest = await generateAIDailyDigest(userId, data);
 
     // Create in-app notification
@@ -260,11 +266,14 @@ export async function generateAndSendDailyDigest(
       if (user) {
         await sendDailyDigestEmail({
           to: user.email,
+          userId,
           userName: user.display_name || "there",
+          timeZone,
           date: new Date().toLocaleDateString("en-US", {
             weekday: "long",
             month: "long",
             day: "numeric",
+            timeZone,
           }),
           stats: {
             tasksCompleted: data.tasksCompleted.length,
@@ -461,13 +470,17 @@ Be specific, reference actual task/note names when possible. No generic advice.`
     return output;
   } catch (error) {
     console.error("[DIGEST] AI weekly report failed:", error);
-    return {
-      report: `This week: ${data.tasksCompleted} tasks completed, ${data.notesWritten} notes written, ${data.wordsWritten.toLocaleString()} words.`,
-      achievements: data.tasksCompleted > 0 ? [`Completed ${data.tasksCompleted} tasks`] : [],
-      focusAreas: [],
-      recommendations: [],
-    };
+    return fallbackWeeklyReport(data);
   }
+}
+
+function fallbackWeeklyReport(data: WeeklyData) {
+  return {
+    report: `This week: ${data.tasksCompleted} tasks completed, ${data.notesWritten} notes written, ${data.wordsWritten.toLocaleString()} words.`,
+    achievements: data.tasksCompleted > 0 ? [`Completed ${data.tasksCompleted} tasks`] : [],
+    focusAreas: [] as string[],
+    recommendations: [] as string[],
+  };
 }
 
 export async function generateAndSendWeeklyReport(
@@ -478,16 +491,18 @@ export async function generateAndSendWeeklyReport(
 
     // Check if already sent this week
     if (prefs.last_weekly_report) {
-      const lastReport = new Date(prefs.last_weekly_report);
+      const lastReport = parseSqliteTimestamp(prefs.last_weekly_report);
       const now = new Date();
-      const daysSince = (now.getTime() - lastReport.getTime()) / (1000 * 60 * 60 * 24);
+      const daysSince = lastReport ? (now.getTime() - lastReport.getTime()) / (1000 * 60 * 60 * 24) : Infinity;
       if (daysSince < 6) {
         return { success: true }; // Already sent this week
       }
     }
 
     const data = await gatherWeeklyData(userId);
-    const aiReport = await generateAIWeeklyReport(userId, data);
+    const aiReport = prefs.ai_weekly_enabled
+      ? await generateAIWeeklyReport(userId, data)
+      : fallbackWeeklyReport(data);
 
     // Create in-app notification
     await createNotification({
@@ -515,10 +530,12 @@ export async function generateAndSendWeeklyReport(
       if (user) {
         const now = new Date();
         const weekStart = new Date(now.getTime() - 7 * 86400000);
-        const weekRange = `${weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+        const timeZone = safeTimeZone(prefs.timezone);
+        const weekRange = `${weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone })} – ${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone })}`;
 
         await sendWeeklyReportEmail({
           to: user.email,
+          userId,
           userName: user.display_name || "there",
           weekRange,
           stats: {
@@ -555,6 +572,16 @@ export async function generateAndSendWeeklyReport(
 }
 
 // ─── Helper ──────────────────────────────────────────
+
+/**
+ * `datetime('now')` writes `YYYY-MM-DD HH:MM:SS` with no zone, which is UTC;
+ * `new Date()` would read it as local time.
+ */
+function parseSqliteTimestamp(value: string): Date | null {
+  const normalized = /[zZ]|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value.replace(" ", "T")}Z`;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
 function getWeekKey(): string {
   const now = new Date();

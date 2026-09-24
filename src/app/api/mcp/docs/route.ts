@@ -30,6 +30,7 @@ import {
   type PromptSpec,
 } from "@/lib/mcp/catalog";
 import { MCP_SCOPES } from "@/lib/mcp/keys";
+import { getAppUrl } from "@/lib/app-url";
 
 export const runtime = "nodejs";
 
@@ -548,11 +549,9 @@ function buildMarkdown(baseUrl: string): string {
 // ─── Handler ──────────────────────────────────────────────────────────
 
 function getBaseUrl(req: NextRequest): string {
-  // Prefer the public env URL, fall back to the request origin.
-  const fromEnv = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
-  if (fromEnv) return fromEnv;
+  // Prefer the configured URL, fall back to the request origin.
   const url = new URL(req.url);
-  return `${url.protocol}//${url.host}`;
+  return getAppUrl({ requestOrigin: `${url.protocol}//${url.host}` });
 }
 
 export async function GET(request: NextRequest) {
