@@ -19,7 +19,8 @@ export type Operation =
   | "extract_text"
   | "generate_description"
   | "generate_thumbnail"
-  | "link-scrape-and-embed";
+  | "link-scrape-and-embed"
+  | "extract-interactions";
 
 export interface QueueJobInput {
   userId: string;

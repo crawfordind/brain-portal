@@ -16,14 +16,33 @@ import {
 } from "@/lib/crm/schema";
 
 /**
+ * The base schema as it stood before this migration.
+ *
+ * `schema.ts` now admits the two queue operations this migration adds, because
+ * the content sweeper queues `extract-interactions` on databases that never ran
+ * it. Stripping them back out keeps these tests about what they always tested:
+ * an older database being widened.
+ */
+function preCrmSchema(): string {
+  const stripped = schema.replace(
+    /,\s*'create-org-from-capture',\s*'extract-interactions'/,
+    ""
+  );
+  if (stripped === schema) {
+    throw new Error("Fixture drift: schema.ts no longer lists the CRM queue operations");
+  }
+  return stripped;
+}
+
+/**
  * Split the schema into executable statements.
  *
  * Trigger bodies contain their own semicolons between BEGIN and END, so they
  * are removed before splitting. The migration under test touches no triggers,
  * and FTS triggers would otherwise fire on fixture inserts for no benefit.
  */
-function schemaStatements(): string[] {
-  return schema
+function schemaStatements(base: string = preCrmSchema()): string[] {
+  return base
     .replace(/CREATE TRIGGER[\s\S]*?END;/g, "")
     // Strip line comments first. Dropping whole chunks that merely *begin*
     // with a comment would silently discard the statement underneath it.
@@ -33,9 +52,9 @@ function schemaStatements(): string[] {
     .filter((s) => s.length > 0);
 }
 
-async function freshDb(): Promise<Client> {
+async function freshDb(base?: string): Promise<Client> {
   const db = createClient({ url: ":memory:" });
-  for (const statement of schemaStatements()) {
+  for (const statement of schemaStatements(base)) {
     await db.execute(statement);
   }
   await db.execute(`INSERT INTO users (id, email) VALUES ('u1','a@b.com')`);
@@ -190,6 +209,14 @@ describe("applyCrmPhase0Migration", () => {
     }
     expect(await ddlContains(db, "processing_queue", "extract-interactions")).toBe(
       true
+    );
+  });
+
+  it("skips the queue rebuild on a database built from the current schema", async () => {
+    const current = await freshDb(schema);
+    const steps = await applyCrmPhase0Migration(current);
+    expect(steps.find((s) => s.label === "processing_queue rebuild")?.status).toBe(
+      "skipped"
     );
   });
 

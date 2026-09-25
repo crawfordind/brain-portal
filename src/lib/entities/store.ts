@@ -232,11 +232,37 @@ export async function ingestSourceEntities(params: {
   title?: string;
   occurredAt?: string | null;
 }): Promise<IngestResult> {
-  const { userId, sourceType, sourceId, occurredAt = null } = params;
   const combined = `${params.title ?? ""}\n\n${params.text ?? ""}`;
   const extracted = await extractEntities(combined);
+  const { result } = await ingestExtractedEntities(params, extracted);
+  return result;
+}
+
+/**
+ * Ingest entities that have already been extracted: resolve/upsert → record
+ * mentions → build co-occurrence edges.
+ *
+ * Returned alongside the counts is the entity id each extracted key resolved
+ * to, which is what lets a caller attach something else — a touch point — to
+ * the same row the mention landed on, including a row the merge gate flagged
+ * rather than fused.
+ */
+export async function ingestExtractedEntities(
+  params: {
+    userId: string;
+    sourceType: string;
+    sourceId: string;
+    occurredAt?: string | null;
+  },
+  extracted: ExtractedEntity[]
+): Promise<{ result: IngestResult; entityIdsByKey: Map<string, string> }> {
+  const { userId, sourceType, sourceId, occurredAt = null } = params;
+  const entityIdsByKey = new Map<string, string>();
   if (extracted.length === 0) {
-    return { entitiesFound: 0, mentionsAdded: 0, edges: 0 };
+    return {
+      result: { entitiesFound: 0, mentionsAdded: 0, edges: 0 },
+      entityIdsByKey,
+    };
   }
 
   const entityIds: string[] = [];
@@ -246,6 +272,7 @@ export async function ingestSourceEntities(params: {
     const entityId = await upsertEntity(userId, e);
     if (!entityId) continue;
     entityIds.push(entityId);
+    entityIdsByKey.set(e.key, entityId);
 
     const inserted = await recordMention(
       userId,
@@ -270,5 +297,8 @@ export async function ingestSourceEntities(params: {
   }
 
   const edges = await linkCoOccurrence(userId, entityIds);
-  return { entitiesFound: extracted.length, mentionsAdded, edges };
+  return {
+    result: { entitiesFound: extracted.length, mentionsAdded, edges },
+    entityIdsByKey,
+  };
 }

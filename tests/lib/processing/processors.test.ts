@@ -48,6 +48,12 @@ describe("runJob", () => {
     );
   });
 
+  it("refuses to extract contacts from anything but a note or a capture", async () => {
+    await expect(
+      runJob(job({ operation: "extract-interactions", entity_type: "task" }))
+    ).rejects.toThrow(/Cannot extract contacts from entity type 'task'/);
+  });
+
   it("refuses to scan an entity type the task scanner cannot load", async () => {
     await expect(
       runJob(job({ operation: "scan_for_tasks", entity_type: "attachment" }))

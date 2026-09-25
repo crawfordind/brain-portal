@@ -49,6 +49,7 @@ export const SERVERLESS_OPERATIONS = [
   "generate_tags",
   "find_connections",
   "scan_for_tasks",
+  "extract-interactions",
 ] as const;
 
 async function getNote(entityId: string): Promise<NoteRow> {
@@ -170,6 +171,21 @@ async function processScanForTasks(job: QueueJob): Promise<void> {
 }
 
 /**
+ * New contacts and touch points from a note or capture.
+ *
+ * The operation name was reserved by the CRM Phase 0 migration, which widened
+ * the queue's CHECK for it; `scripts/migrate.ts` now widens it too.
+ */
+async function processExtractInteractions(job: QueueJob): Promise<void> {
+  if (job.entity_type !== "note" && job.entity_type !== "capture") {
+    throw new Error(`Cannot extract contacts from entity type '${job.entity_type}'`);
+  }
+  const { extractContactsFromSource } = await import("@/lib/crm/auto-extract");
+  // null means the row was deleted while queued: nothing left to read.
+  await extractContactsFromSource(job.user_id, job.entity_type, job.entity_id);
+}
+
+/**
  * Run one job. Throws with a descriptive message if the work fails, so the
  * caller can record it against the job rather than losing the reason.
  */
@@ -185,6 +201,8 @@ export async function runJob(job: QueueJob): Promise<void> {
       return processConnections(job);
     case "scan_for_tasks":
       return processScanForTasks(job);
+    case "extract-interactions":
+      return processExtractInteractions(job);
     default:
       throw new Error(`Operation '${job.operation}' is not handled by this worker`);
   }

@@ -484,7 +484,8 @@ async function migrate() {
         'generate_embedding', 'generate_summary', 'generate_tags',
         'find_connections', 'analyze_capture', 'recompute_all',
         'scan_for_tasks', 'extract_metadata', 'extract_text',
-        'generate_description', 'generate_thumbnail', 'link-scrape-and-embed'
+        'generate_description', 'generate_thumbnail', 'link-scrape-and-embed',
+        'create-org-from-capture', 'extract-interactions'
       )),
       tier TEXT NOT NULL CHECK (tier IN ('local', 'embedding', 'fast_llm', 'full_llm')),
       priority INTEGER DEFAULT 0,
@@ -499,6 +500,18 @@ async function migrate() {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_queue_status ON processing_queue(status, priority DESC, scheduled_at)`,
     `CREATE INDEX IF NOT EXISTS idx_queue_entity ON processing_queue(entity_type, entity_id)`,
+    // What the content sweeper last saw of each note and capture. See
+    // src/lib/processing/sweep.ts.
+    `CREATE TABLE IF NOT EXISTS content_index_state (
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content_hash TEXT NOT NULL,
+      pipeline TEXT NOT NULL,
+      source_updated_at TEXT,
+      swept_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (entity_type, entity_id)
+    )`,
 
     // =====================================================
     // ATTACHMENTS (File & Image Management)
@@ -1065,7 +1078,13 @@ async function migrate() {
   // =====================================================
   console.log("\nApplying data migrations...");
 
-  // Migration: Update processing_queue CHECK constraint to include new attachment operations
+  // Migration: Update processing_queue CHECK constraint to include new operations
+  //
+  // `extract-interactions` is the content sweeper's contacts job. It used to
+  // arrive only with `npm run migrate:crm-phase-0`, which widens the same
+  // CHECK; widening it here as well means a deployment gets automatic contact
+  // extraction from its normal build, and the rebuild below is a no-op on a
+  // database the CRM migration already widened.
   //
   // We detect whether the migration is needed by inspecting the stored DDL in
   // sqlite_master rather than probing with a test INSERT — the probe fails the
@@ -1081,6 +1100,8 @@ async function migrate() {
       "generate_description",
       "generate_thumbnail",
       "link-scrape-and-embed",
+      "create-org-from-capture",
+      "extract-interactions",
     ];
     const needsMigration = existingSql.length > 0 && requiredOps.some(
       (op) => !existingSql.includes(`'${op}'`)
@@ -1106,7 +1127,8 @@ async function migrate() {
               'generate_embedding', 'generate_summary', 'generate_tags',
               'find_connections', 'analyze_capture', 'recompute_all',
               'scan_for_tasks', 'extract_metadata', 'extract_text',
-              'generate_description', 'generate_thumbnail', 'link-scrape-and-embed'
+              'generate_description', 'generate_thumbnail', 'link-scrape-and-embed',
+              'create-org-from-capture', 'extract-interactions'
             )),
             tier TEXT NOT NULL CHECK (tier IN ('local', 'embedding', 'fast_llm', 'full_llm')),
             priority INTEGER DEFAULT 0,

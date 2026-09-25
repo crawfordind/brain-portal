@@ -757,6 +757,46 @@ the `embeddings` table's CHECK constraint permits only `note`, `capture` and
 `task_candidate`, so an attachment vector has nowhere to be stored. Both stay
 with `npx tsx scripts/process-queue.ts` until those are addressed.
 
+### The sweeper: every note gets processed, whoever wrote it
+
+Processing used to be something each write path had to ask for. Three did
+(`POST /api/notes`, `PATCH /api/notes/[id]`, `POST /api/share`), none asked for
+tags, and the MCP tools, `/api/brain`, journal, daily notes, the Brain Bar,
+skills and weekly reviews asked for nothing. The MCP server *cannot* enqueue: it
+runs outside Next.js on its own client. So a note an agent wrote was never
+embedded, connected, tagged or read for contacts.
+
+`sweepUnprocessedContent` (`src/lib/processing/sweep.ts`) runs at the start of
+every `/api/cron/process-queue` run and asks the rows themselves what changed,
+so it covers every writer, including ones added later. Do not add per-route
+enqueues for the steps it owns; the routes' existing enqueues are harmless
+(`enqueue` skips a job already pending) but no longer load-bearing.
+
+- **Pipeline per note** (`planNotePipeline`, pure): `generate_embedding` →
+  `find_connections` (with wikilinks), `generate_tags` (≥20 words),
+  `generate_summary` (>50 words), `extract-interactions` (contacts, see *CRM
+  Layer*). Captures get `extract-interactions` only; they are searched by FTS,
+  not embeddings. Priorities sit below the routes' so a backfill never delays a
+  fresh save.
+- **`content_index_state`** records per row the content hash, pipeline tag and
+  the `updated_at` it swept. An edit re-runs the pipeline; a pin/archive/move
+  (timestamp moved, hash did not) is marked current without a model call.
+  `source_updated_at` stores the row's own timestamp, never "now", so an edit
+  landing mid-sweep is still seen next run.
+- **Failures are not retried forever.** State is written when jobs are queued;
+  a failing job exhausts its own retries and shows in *Background Failure
+  Visibility*. The next edit tries again.
+- **Mid-edit notes wait** `SETTLE_MINUTES` (3) so contacts are not read from
+  half a sentence.
+- **Backfill is automatic and bounded**: rows with no state (everything written
+  before this) are swept newest-first, 8 notes + 8 captures per run, and not at
+  all while ≥60 jobs are pending. Bump `PIPELINE_VERSION` to re-sweep every row
+  after adding a step.
+- Adding the CRM later re-sweeps everything once: the pipeline tag includes
+  `+crm` only when `entities`, `interactions` and the queue CHECK all allow it.
+- `content_index_state` and the widened queue CHECK are created by
+  `npm run db:migrate` (which runs on every build). No manual step.
+
 ## Background Failure Visibility
 
 Background work (agent delegation, the embedding queue, heartbeat, skills) runs
@@ -993,6 +1033,37 @@ and reasoning: `docs/plans/2026-09-13-crm-phase-0-design.md`.
 - **Migration**: `npm run migrate:crm-phase-0`, then optionally
   `npm run seed:ventures`. Run `npm run audit:merge-candidates` first — it is
   read-only and reports how many existing pairs the gate will flag.
+
+### Automatic contacts and touch points
+
+The Rolodex fills itself from what the user writes. The sweeper queues
+`extract-interactions` for each changed note and capture; the job
+(`src/lib/crm/auto-extract.ts`) makes **one** LLM call (`extractKnowledge`)
+returning entities *and* touches.
+
+- **New contacts**: extracted people and orgs go through
+  `ingestExtractedEntities`, i.e. the same merge gate as every other path. A
+  person or org entity is a contact, so there is no separate "create contact"
+  step. Ambiguous matches land in the review queue as merge candidates.
+- **Touch points**: a touch is something that *happened* between the author and
+  a person/org (met, called, emailed, messaged, saw at an event). Mentions,
+  intentions ("I should call Dana") and plans are not touches. The rules are in
+  `normalizeTouches` (`src/lib/crm/touches.ts`, pure, unit-tested): only
+  person/org entities, future-dated = plan = dropped, bad dates fall back to
+  the source's day, one touch per contact per source.
+- **Dedup**: stored with `externalId = auto:<entityId>:<day>`, so the key is
+  `{channel}:auto:{entity}:{day}`. Four captures about one meeting are one
+  touch, and a re-edited note does not add a row because the model reworded its
+  summary. Rows carry `metadata.extracted = true`.
+- **The day** is a daily note's own date, else the source's timestamp in the
+  user's `notification_preferences.timezone` (`localDay`), so an evening note
+  is not filed under tomorrow.
+- **What is read**: the user's own words however they arrived (typed, MCP key,
+  import). Not agent or skill output (it names companies the user never spoke
+  to), not generated notes (`weekly`, `insight`, `monthly_journal`, which would
+  double-count touches), not link captures.
+- A failed model call throws so the queue retries; `extractEntities` (the
+  manual `POST /api/entities/extract` path) still swallows errors.
 
 **Not in Phase 0**: deals and pipelines, intake (BCC dropbox, calendar, contact
 scraping), compliance enforcement, and semantic search over interaction bodies
