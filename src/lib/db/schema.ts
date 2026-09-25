@@ -582,7 +582,8 @@ CREATE TABLE IF NOT EXISTS processing_queue (
     'generate_embedding', 'generate_summary', 'generate_tags',
     'find_connections', 'analyze_capture', 'recompute_all',
     'scan_for_tasks', 'link-scrape-and-embed',
-    'extract_metadata', 'generate_thumbnail', 'extract_text', 'generate_description'
+    'extract_metadata', 'generate_thumbnail', 'extract_text', 'generate_description',
+    'create-org-from-capture', 'extract-interactions'
   )),
   tier TEXT NOT NULL CHECK (tier IN ('local', 'embedding', 'fast_llm', 'full_llm')),
   priority INTEGER DEFAULT 0,
@@ -598,6 +599,21 @@ CREATE TABLE IF NOT EXISTS processing_queue (
 
 CREATE INDEX IF NOT EXISTS idx_queue_status ON processing_queue(status, priority DESC, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_queue_entity ON processing_queue(entity_type, entity_id);
+
+-- What the content sweeper last saw of each note and capture, so it can tell
+-- an edit (re-run the pipeline) from a pin (nothing to do). See
+-- src/lib/processing/sweep.ts. No FK on entity_id: it is polymorphic, and an
+-- orphaned row is a few bytes that nothing reads.
+CREATE TABLE IF NOT EXISTS content_index_state (
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_hash TEXT NOT NULL,
+  pipeline TEXT NOT NULL,
+  source_updated_at TEXT,
+  swept_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (entity_type, entity_id)
+);
 
 -- =====================================================
 -- AI AGENT DELEGATION SYSTEM

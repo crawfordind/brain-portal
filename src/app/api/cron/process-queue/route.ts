@@ -3,12 +3,19 @@ import { db, queryAll } from "@/lib/db/client";
 import type { Capture } from "@/lib/db/schema";
 import { verifyCronSecret } from "@/lib/api/validation";
 import { runJob, SERVERLESS_OPERATIONS, type QueueJob } from "@/lib/processing/processors";
+import { sweepUnprocessedContent } from "@/lib/processing/sweep";
 
 /**
  * GET /api/cron/process-queue
  *
  * Drains `processing_queue`: embeddings (search indexing), summaries, tags,
- * note connections, task scanning and link scraping.
+ * note connections, task scanning, link scraping, and new contacts and touch
+ * points read out of notes and captures.
+ *
+ * Before draining, it sweeps for notes and captures that changed since they
+ * were last processed and queues their pipeline (see src/lib/processing/sweep.ts),
+ * so content is processed whichever path wrote it — MCP, agents and skills
+ * included — and the jobs it queues are drained in the same run.
  *
  * Scheduled from vercel.json (every 5 minutes). For local testing:
  *   curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/process-queue
@@ -32,7 +39,10 @@ const TIME_BUDGET_MS = (maxDuration - 45) * 1000;
 const STUCK_TIMEOUT_MINUTES = 15;
 
 const LINK_BATCH_SIZE = 5;
-const JOB_BATCH_SIZE = 25;
+// Sized for a sweep's worth of new work (up to five jobs per note) plus what the
+// routes queued since the last run. The time budget, not this number, is what
+// actually bounds a run.
+const JOB_BATCH_SIZE = 50;
 
 export async function GET(request: NextRequest) {
   const authError = verifyCronSecret(request);
@@ -111,6 +121,15 @@ export async function GET(request: NextRequest) {
     if (strandedRetired.rowsAffected > 0) {
       console.log(
         `[Cron] Retired ${strandedRetired.rowsAffected} stranded job(s) left pending with no retries`
+      );
+    }
+
+    // ── Find content no write path queued, so it is drained in this run ──
+    const sweep = await sweepUnprocessedContent();
+    if (sweep.jobsQueued > 0 || sweep.unchanged > 0) {
+      console.log(
+        `[Cron] Swept ${sweep.notesQueued} note(s) and ${sweep.capturesQueued} capture(s): ` +
+          `${sweep.jobsQueued} job(s) queued, ${sweep.unchanged} unchanged`
       );
     }
 
@@ -205,6 +224,7 @@ export async function GET(request: NextRequest) {
       skipped,
       stuck_reset: stuckReset,
       stuck_retired: stuckRetired + strandedRetired.rowsAffected,
+      sweep,
       duration_ms: duration,
       message: `Processed ${processed} jobs, ${errors} errors`,
     });

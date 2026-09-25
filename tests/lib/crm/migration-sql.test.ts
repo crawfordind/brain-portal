@@ -14,7 +14,11 @@ import { applyCrmPhase0Migration } from "@/lib/crm/schema";
 /** A database in the state production was in before the migration. */
 async function preMigrationDb(): Promise<Client> {
   const db = createClient({ url: ":memory:" });
+  // schema.ts now admits the queue operations this migration adds (the content
+  // sweeper needs them on databases that never ran it). Strip them, so this is
+  // still the state production was in before the migration.
   const statements = schema
+    .replace(/,\s*'create-org-from-capture',\s*'extract-interactions'/, "")
     .replace(/CREATE TRIGGER[\s\S]*?END;/g, "")
     .replace(/^\s*--.*$/gm, "")
     .split(";")

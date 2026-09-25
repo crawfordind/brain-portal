@@ -13,8 +13,19 @@ vi.mock('@/lib/processing/processors', () => ({
   SERVERLESS_OPERATIONS: ['generate_embedding', 'generate_summary'],
 }));
 
+vi.mock('@/lib/processing/sweep', () => ({
+  sweepUnprocessedContent: vi.fn().mockResolvedValue({
+    notesQueued: 0,
+    capturesQueued: 0,
+    unchanged: 0,
+    jobsQueued: 0,
+    errors: 0,
+  }),
+}));
+
 import { GET } from '@/app/api/cron/process-queue/route';
-import { db } from '@/lib/db/client';
+import { db, queryAll } from '@/lib/db/client';
+import { sweepUnprocessedContent } from '@/lib/processing/sweep';
 import { NextRequest } from 'next/server';
 
 const makeRequest = () =>
@@ -89,5 +100,34 @@ describe('GET /api/cron/process-queue — stuck job recovery', () => {
     for (const claim of claims) {
       expect(claim.sql).toContain("status = 'pending'");
     }
+  });
+});
+
+describe('GET /api/cron/process-queue — content sweep', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(db.execute).mockResolvedValue({ rowsAffected: 0, rows: [] } as never);
+  });
+
+  it('sweeps for unprocessed content before draining, so what it queues runs this pass', async () => {
+    await GET(makeRequest());
+
+    expect(sweepUnprocessedContent).toHaveBeenCalledTimes(1);
+    const sweptAt = vi.mocked(sweepUnprocessedContent).mock.invocationCallOrder[0];
+    const firstDrain = vi.mocked(queryAll).mock.invocationCallOrder[0];
+    expect(sweptAt).toBeLessThan(firstDrain);
+  });
+
+  it('reports what the sweep did', async () => {
+    vi.mocked(sweepUnprocessedContent).mockResolvedValueOnce({
+      notesQueued: 2,
+      capturesQueued: 1,
+      unchanged: 3,
+      jobsQueued: 9,
+      errors: 0,
+    });
+
+    const body = await (await GET(makeRequest())).json();
+    expect(body.sweep).toMatchObject({ notesQueued: 2, jobsQueued: 9 });
   });
 });
