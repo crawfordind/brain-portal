@@ -57,6 +57,10 @@ import { useMobile } from "@/hooks/use-mobile";
 import { useAskAbout } from "@/hooks/use-ask-about";
 import { AgentReviewFocusPanel } from "@/components/agents/agent-review-focus-panel";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { NoteLenses } from "@/components/lenses/note-lenses";
+import { useNoteLenses } from "@/hooks/use-note-lenses";
+import { setTaskChecked } from "@/lib/lenses/blocks";
+import { parseDbTimestamp } from "@/lib/stream/grouping";
 
 interface Note {
   id: string;
@@ -73,6 +77,8 @@ interface Note {
   updated_at: string;
   share_token: string | null;
   shared_at: string | null;
+  /** 0 for the owner, 1 for a project collaborator. */
+  viewer_only?: number;
 }
 
 export default function NoteDetailPage() {
@@ -126,6 +132,19 @@ export default function NoteDetailPage() {
     assigned_agent: string;
     updated_at: string;
   }>;
+
+  // Lenses: the same note as charts, a timeline, a checklist… (see Note Lenses)
+  const noteLenses = useNoteLenses({
+    noteId: note?.id,
+    content,
+    referenceDate: parseDbTimestamp(note?.created_at) ?? undefined,
+    canReadDeeper: note?.viewer_only === 0,
+  });
+  const toggleTaskInNote = useCallback(
+    (taskIndex: number, done: boolean) =>
+      setContent((prev) => setTaskChecked(prev, taskIndex, done)),
+    []
+  );
 
   // Handle attachment insertion
   const handleInsertAttachment = (attachment: Attachment) => {
@@ -363,6 +382,18 @@ export default function NoteDetailPage() {
       </div>
     );
   }
+
+  const lensProps = {
+    noteId: note.id,
+    projectId: note.project_id,
+    lenses: noteLenses.lenses,
+    deepRead: noteLenses.deepRead,
+    isStale: noteLenses.isStale,
+    canReadDeeper: noteLenses.canReadDeeper,
+    isReading: noteLenses.isReading,
+    onReadDeeper: noteLenses.readDeeper,
+    onToggleTask: canEditNote ? toggleTaskInNote : undefined,
+  };
 
   return (
     <div className="space-y-4 md:space-y-6">
@@ -606,7 +637,24 @@ export default function NoteDetailPage() {
           className="min-h-[500px]"
         />
 
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
+          <NoteLenses {...lensProps}>
+            <MarkdownEditor
+              content={content}
+              onChange={canEditNote ? setContent : () => {}}
+              placeholder="Start writing..."
+              autoFocus
+              editable={canEditNote}
+              projectId={note.project_id}
+              noteId={note.id}
+            />
+          </NoteLenses>
+        </div>
+      </div>
+
+      {/* Mobile: Editor + attachment section below */}
+      <div className="lg:hidden space-y-4">
+        <NoteLenses {...lensProps}>
           <MarkdownEditor
             content={content}
             onChange={canEditNote ? setContent : () => {}}
@@ -616,20 +664,7 @@ export default function NoteDetailPage() {
             projectId={note.project_id}
             noteId={note.id}
           />
-        </div>
-      </div>
-
-      {/* Mobile: Editor + attachment section below */}
-      <div className="lg:hidden space-y-4">
-        <MarkdownEditor
-          content={content}
-          onChange={canEditNote ? setContent : () => {}}
-          placeholder="Start writing..."
-          autoFocus
-          editable={canEditNote}
-          projectId={note.project_id}
-          noteId={note.id}
-        />
+        </NoteLenses>
         {canEditNote && (
           <NoteAttachments
             noteId={note.id}
