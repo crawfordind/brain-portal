@@ -166,6 +166,30 @@ A canvas-based sketch pad with OneNote-style tools plus AI handwriting transcrip
 - **Editor integration**: the PenTool button inserts a `<figure>` (image) plus, optionally, the
   transcription as editable markdown below it.
 
+### Note Lenses (fluid views of a note)
+
+The note page offers the same note as other views (chart, timeline,
+checklist, stat tiles, table, fact card, section cards, next steps) in a tab
+strip you tap or swipe. The raw note is always the first tab and the source of
+truth. Design and roadmap: `docs/plans/2026-09-25-note-lenses-design.md`.
+
+- **The model reads; rules choose.** `sense.ts` (note → signals) and
+  `choose.ts` (signals → lenses) are pure, deterministic and run as you type.
+  The optional "Read deeper" (`ai-extract.ts`, `POST /api/notes/[id]/lenses`)
+  only *extracts* signals from loose prose; it never picks a chart. So the same
+  numbers always get the same view, and each lens states why in one sentence.
+  Don't route view selection through a model.
+- **Both dialects.** `blocks.ts` reads TipTap HTML and markdown (MCP-written
+  notes) into one block list, regex-based so it runs server-side too.
+- **Write-back** is `setTaskChecked`: ticking a lens checkbox flips the Nth
+  `data-checked` (or `- [ ]`) in the body and autosave does the rest. It
+  returns the body unchanged for an out-of-range index.
+- **Model reads are cached** in `ai_cache` per (note, `contentFingerprint`);
+  `GET` only reads the cache and never calls a model. Owner-only.
+- **The editor is never inside a scroll container** (it would break the sticky
+  toolbar); it stays mounted and hidden while a lens is shown.
+- A note with nothing structured shows no strip at all. No tables, no migration.
+
 ## Architecture Overview
 
 This is a Next.js 16 (App Router) personal knowledge management system with AI features, using Turso (SQLite edge database) and OpenRouter for LLM/embeddings.
