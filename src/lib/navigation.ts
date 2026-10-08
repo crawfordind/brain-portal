@@ -65,5 +65,8 @@ export function isActiveRoute(pathname: string, href: string): boolean {
  * place instead of as a conditional buried in the layout's JSX.
  */
 export function contentWidthClass(pathname: string): string {
-  return pathname === "/" ? "max-w-6xl" : "max-w-4xl";
+  // Operations is lists and two-column sections, like the dashboard.
+  return pathname === "/" || isActiveRoute(pathname, "/operations")
+    ? "max-w-6xl"
+    : "max-w-4xl";
 }

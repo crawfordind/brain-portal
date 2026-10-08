@@ -17,6 +17,17 @@
  */
 
 import { z } from "zod";
+import {
+  createOperationalItemShape,
+  getAutomationHealthShape,
+  getPortfolioShape,
+  listIntakeShape,
+  listOperationalItemsShape,
+  listRelationshipsShape,
+  operationsOverviewShape,
+  setOperationalStateShape,
+  triageCaptureShape,
+} from "@/lib/operations/tool-schemas";
 
 // ─── Tools ────────────────────────────────────────────────────────────
 
@@ -31,7 +42,8 @@ export interface ToolSpec {
     | "captures"
     | "search"
     | "ai"
-    | "crm";
+    | "crm"
+    | "operations";
   inputSchema: z.ZodObject<z.ZodRawShape>;
   /** Example arguments (also used in the markdown docs). */
   example?: Record<string, unknown>;
@@ -683,6 +695,81 @@ export const TOOLS: ToolSpec[] = [
       include_interactions: z.boolean().default(true),
     }),
     example: { format: "csv" },
+  },
+  // ─── Operations ────────────────────────────────────────
+  // Shapes are shared with src/mcp/tools/operations.ts so they cannot drift.
+  {
+    name: "operations_overview",
+    description:
+      "What needs the user now: overdue/due today, blocked, decisions, waiting on, promises, this week, untriaged captures, failing automations.",
+    scope: "tasks:read",
+    category: "operations",
+    inputSchema: z.object(operationsOverviewShape),
+  },
+  {
+    name: "list_operational_items",
+    description:
+      "Open operational items by view (decisions, waiting, commitments, blocked, blocked_by_me, today, week, all), filterable by counterparty, project, venture, date.",
+    scope: "tasks:read",
+    category: "operations",
+    inputSchema: z.object(listOperationalItemsShape),
+    example: { view: "waiting", counterparty: "Will" },
+  },
+  {
+    name: "set_operational_state",
+    description:
+      "Relabel one task: decision, waiting on someone, promise, blocked/unblocked, move project, reschedule, complete or close. Returns the previous state for undo.",
+    scope: "tasks:write",
+    category: "operations",
+    inputSchema: z.object(setOperationalStateShape),
+    example: { task_id: "t_xyz789", kind: "waiting", counterparty: "Will", expected_at: "2026-10-15" },
+  },
+  {
+    name: "create_operational_item",
+    description: "Create a task that is a decision, something waited on, a promise, or an action.",
+    scope: "tasks:write",
+    category: "operations",
+    inputSchema: z.object(createOperationalItemShape),
+    example: { title: "Pick the spring seed supplier", kind: "decision", due_date: "2026-10-20" },
+  },
+  {
+    name: "get_portfolio",
+    description:
+      "Projects by venture with lane state, health, next move, owner and next date. Flags dormant-looking projects without changing them.",
+    scope: "projects:read",
+    category: "operations",
+    inputSchema: z.object(getPortfolioShape),
+  },
+  {
+    name: "list_relationships",
+    description:
+      "People/orgs with something open either way: what the user owes them, what they owe, stage, ventures, last touch.",
+    scope: "crm:read",
+    category: "operations",
+    inputSchema: z.object(listRelationshipsShape),
+  },
+  {
+    name: "list_intake",
+    description: "Untriaged captures with rule-based proposals and their reasons. Nothing is created by listing.",
+    scope: "captures:read",
+    category: "operations",
+    inputSchema: z.object(listIntakeShape),
+  },
+  {
+    name: "triage_capture",
+    description:
+      "Confirm a capture as a task/decision/waiting/commitment, file it, dismiss it, or reopen it (undo). Confirm only on the user's request.",
+    scope: "tasks:write",
+    category: "operations",
+    inputSchema: z.object(triageCaptureShape),
+  },
+  {
+    name: "get_automation_health",
+    description:
+      "Background jobs and heartbeat rules with status, last success and a plain-language failure signal. n8n is reported as not connected.",
+    scope: "tasks:read",
+    category: "operations",
+    inputSchema: z.object(getAutomationHealthShape),
   },
 ];
 

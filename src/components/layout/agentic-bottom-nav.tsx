@@ -3,8 +3,10 @@
 /**
  * Agentic Bottom Nav - 4-button mobile navigation with more menu
  *
- * Layout: Tasks | Brain (center) | Notes | More
- * The center Brain button is the primary stream/home entry point.
+ * Layout: Tasks | Ops | Brain (center) | Notes | More
+ * The center Brain button is the primary stream/home entry point. Operations
+ * sits beside it because it is the other screen meant to be opened first on
+ * a phone; with five buttons the Brain button stays dead centre.
  *
  * "More" opens a bottom sheet holding everything the four buttons cannot:
  * Review, Contacts, Journal, Projects, Settings, and Sign Out. Two changes
@@ -38,6 +40,7 @@ import {
   X,
   Contact,
   Bot,
+  Gauge,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -68,6 +71,7 @@ export function AgenticBottomNav() {
   }, [moreOpen]);
 
   const isTasksActive = isActiveRoute(pathname, "/tasks");
+  const isOpsActive = isActiveRoute(pathname, "/operations");
   const isBrainActive = pathname === "/" || isActiveRoute(pathname, "/stream");
   const isNotesActive = isActiveRoute(pathname, "/notes");
   const isMoreContext =
@@ -190,7 +194,7 @@ export function AgenticBottomNav() {
       {/* Bottom nav bar */}
       <nav className="fixed bottom-0 left-0 right-0 z-[100] border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div
-          className="grid grid-cols-4 items-end h-18 px-2"
+          className="grid grid-cols-5 items-end h-18 px-2"
           style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
         >
           {/* Tasks */}
@@ -207,6 +211,23 @@ export function AgenticBottomNav() {
             <CheckSquare className="h-5 w-5" />
             <span className="text-[10px] font-medium leading-tight">
               Tasks
+            </span>
+          </Link>
+
+          {/* Operations */}
+          <Link
+            href="/operations"
+            className={cn(
+              "col-span-1 flex flex-col items-center justify-center gap-1 py-2",
+              "min-h-14 transition-colors",
+              isOpsActive
+                ? "text-primary"
+                : "text-muted-foreground active:text-foreground"
+            )}
+          >
+            <Gauge className="h-5 w-5" />
+            <span className="text-[10px] font-medium leading-tight">
+              Ops
             </span>
           </Link>
 

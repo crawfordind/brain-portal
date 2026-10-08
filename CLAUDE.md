@@ -124,6 +124,55 @@ two quick "Load more" clicks could append the same page twice.
 
 Design and the rest of the roadmap: `docs/plans/2026-09-14-stream-dashboard-v2-design.md`.
 
+### Operations Control Center (`/operations`)
+
+A decision-and-execution layer over records Brain Portal already owns. It is
+**not** a second task system: every row is a `tasks`, `projects`, `entities` or
+`captures` row, and nothing is copied. Code: `src/lib/operations/`,
+`src/components/operations/`, `/api/operations/*`, MCP module `operations`.
+
+| View | Answers |
+|------|---------|
+| Today (`/operations`) | overdue/due today, blocked, decisions, waiting on, promises, this week, untriaged captures, failing automations. Bounded: each item once, each section capped. |
+| Portfolio | projects by venture, lane state, health, next move, owner, next date; *suggests* dormancy |
+| Follow-through | full lists of decisions, waiting on, commitments, blocked |
+| People | per contact: what you owe them, what they owe you, stage, last touch |
+| Intake | captures with a rule-based proposal; captured → proposed → confirmed |
+| Automations | queues, heartbeat rules, skills; n8n shown as **not connected** |
+
+- **No migration.** Operational facts live in JSON already on every row:
+  `tasks.metadata.ops` (`kind` action/decision/waiting/commitment, `owner`,
+  `counterparty` + `counterparty_entity_id`, `expected_at`, `blocked_by`,
+  `direction`, `why`, `options`, `consequence`, `source`) and
+  `projects.metadata.ops.lane_state`. **Absent means ordinary**: a task with no
+  `ops` is a confirmed action the user owns, which is what every existing task
+  is. `src/lib/operations/types.ts` imports nothing so the browser, routes and
+  MCP share it.
+- **`projects.status` is never rewritten.** Lane state is read from it
+  (planning → future, stalled → blocked, completed/archived → reference) and
+  labelled "from status" until the user chooses one.
+- **Proposals are computed, never stored** (`triage.ts`, pure, rules not a
+  model, each with its reasons). Only Confirm writes a task, which carries
+  `ops.source` back to the capture; the capture is marked processed with a
+  `metadata.triage` note. `reopen` undoes confirm/file/dismiss (a confirmed
+  task is cancelled, not deleted).
+- **Every write returns the previous state** and the UI's toast offers an exact
+  Undo. Writes use `PATCH /api/operations/items/[id]`, not `PUT
+  /api/tasks/[id]`, so a relabel never triggers delegation side effects; a
+  completion still spawns the next occurrence of a recurring task.
+- **Counterparty names link to a contact only on an exact, unique match.** Two
+  "Will"s means no link, never a guess.
+- **Automation status needs evidence.** A job that leaves no rows is
+  `unknown`; nothing is shown healthy on faith. Only failing/degraded reach the
+  home screen.
+- **MCP tools**: `operations_overview`, `list_operational_items`,
+  `set_operational_state`, `create_operational_item`, `get_portfolio`,
+  `list_relationships`, `list_intake`, `triage_capture`,
+  `get_automation_health` (input shapes shared with the catalog via
+  `src/lib/operations/tool-schemas.ts`).
+- Navigation: sidebar *Today* group, and a fifth mobile button ("Ops") left of
+  the centred Stream button.
+
 ### Navigation
 
 Both surfaces name the same destinations the same way, and both badge the same
@@ -1156,12 +1205,14 @@ A full-featured MCP server that exposes Brain Portal's capabilities to Claude Co
 - `src/mcp/server.ts` - Main entry point (stdio transport, auth, registration)
 - `src/mcp/auth.ts` - API key authentication (SHA-256 hashed keys, scoped to users)
 - `src/mcp/db.ts` - Standalone Turso client (runs outside Next.js)
-- `src/mcp/tools/` - MCP tool implementations (38 tools; `index.ts` is the single
+- `src/mcp/tools/` - MCP tool implementations (47 tools; `index.ts` is the single
   registration point both transports and the catalog test use)
 - `src/mcp/resources/` - MCP resource providers (7 resources)
 - `src/mcp/prompts/` - MCP prompt templates (4 prompts)
 
-### Tools (38 total)
+### Tools (47 total)
+
+The 9 Operations tools are listed under *Operations Control Center*.
 
 | Tool | Description |
 |------|-------------|
