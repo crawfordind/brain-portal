@@ -84,7 +84,7 @@ export const setOperationalStateShape = {
     .string()
     .nullable()
     .optional()
-    .describe('Move to this project ("make this a Commonwealth task"). Find ids with get_portfolio or list_projects.'),
+    .describe('Move to this project ("make this a Corner Store task"). Find ids with get_portfolio or list_projects.'),
 };
 
 export const createOperationalItemShape = {

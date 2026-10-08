@@ -4,13 +4,13 @@ import { extractDueDate, proposeTriage, proposalTitle } from "@/lib/operations/t
 const CONTEXT = {
   today: "2026-10-08",
   projects: [
-    { id: "p1", name: "General Store", ventureName: "Commonwealth Project" },
-    { id: "p2", name: "Tree Nursery Grant", ventureName: "Run-a-Muck Farms" },
-    { id: "p3", name: "Spawn Lab", ventureName: "Run-a-Muck Farms" },
+    { id: "p1", name: "Corner Store", ventureName: "Harbor Co-op" },
+    { id: "p2", name: "Orchard Grant", ventureName: "Northwind Farms" },
+    { id: "p3", name: "Spawn Lab", ventureName: "Northwind Farms" },
   ],
   contacts: [
     { id: "e1", name: "Will" },
-    { id: "e2", name: "Dana Smith" },
+    { id: "e2", name: "Dana Reyes" },
   ],
 };
 
@@ -20,7 +20,7 @@ function propose(content: string, captureType = "thought", capturedAt = "2026-10
 
 describe("proposeTriage", () => {
   it("reads waiting-on and links the named contact", () => {
-    const p = propose("Waiting on Will to send the cooler quote for the General Store");
+    const p = propose("Waiting on Will to send the cooler quote for the Corner Store");
     expect(p).toMatchObject({
       kind: "waiting",
       counterparty: "Will",
@@ -36,19 +36,19 @@ describe("proposeTriage", () => {
   });
 
   it("reads a decision and its options", () => {
-    const p = propose("Need to decide between Johnny's and Fedco for seed");
+    const p = propose("Need to decide between Supplier B and Supplier A for seed");
     expect(p.kind).toBe("decision");
-    expect(p.options).toEqual(["Johnny's", "Fedco for seed"]);
+    expect(p.options).toEqual(["Supplier B", "Supplier A for seed"]);
   });
 
   it("reads promises in both directions", () => {
-    expect(propose("I promised Dana Smith the soil samples by Friday")).toMatchObject({
+    expect(propose("I promised Dana Reyes the soil samples by Friday")).toMatchObject({
       kind: "commitment",
       direction: "i_owe",
-      counterparty: "Dana Smith",
+      counterparty: "Dana Reyes",
       dueDate: "2026-10-09",
     });
-    expect(propose("Dana Smith promised the signed letter")).toMatchObject({
+    expect(propose("Dana Reyes promised the signed letter")).toMatchObject({
       kind: "commitment",
       direction: "they_owe",
     });
@@ -65,8 +65,8 @@ describe("proposeTriage", () => {
   });
 
   it("maps a venture name to a project only when the venture has exactly one", () => {
-    expect(propose("Commonwealth Project shelf reset").projectId).toBe("p1");
-    expect(propose("Run-a-Muck Farms fencing").projectId).toBeNull();
+    expect(propose("Harbor Co-op shelf reset").projectId).toBe("p1");
+    expect(propose("Northwind Farms fencing").projectId).toBeNull();
   });
 });
 

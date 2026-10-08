@@ -88,15 +88,15 @@ async function seed() {
 
   await exec(
     `INSERT INTO entities (id, user_id, canonical_name, normalized_key, entity_type, metadata) VALUES
-     ('v1', ?, 'Commonwealth Project', 'commonwealth', 'org', '{"is_venture":true}'),
+     ('v1', ?, 'Harbor Co-op', 'harborcoop', 'org', '{"is_venture":true}'),
      ('e1', ?, 'Will', 'will', 'person', '{"crm":{"relationship_stage":"vendor"}}'),
-     ('e2', ?, 'Dana Smith', 'danasmith', 'person', '{}')`,
+     ('e2', ?, 'Dana Reyes', 'danareyes', 'person', '{}')`,
     [USER, USER, USER]
   );
 
   await exec(
     `INSERT INTO projects (id, user_id, name, slug, status, venture_id, updated_at) VALUES
-     ('p1', ?, 'General Store', 'general-store', 'active', 'v1', '2026-10-01 10:00:00'),
+     ('p1', ?, 'Corner Store', 'corner-store', 'active', 'v1', '2026-10-01 10:00:00'),
      ('p2', ?, 'Old Import', 'old-import', 'active', NULL, '2025-01-01 10:00:00'),
      ('p3', ?, 'Seed Library', 'seed-library', 'planning', NULL, '2026-09-01 10:00:00')`,
     [USER, USER, USER]
@@ -108,7 +108,7 @@ async function seed() {
      ('t2', ?, 'p1', 'Cooler quote', 'pending', 'medium', NULL,
         '{"ops":{"kind":"waiting","counterparty":"Will","counterparty_entity_id":"e1","expected_at":"2026-10-05"}}', NULL),
      ('t3', ?, NULL, 'Which seed supplier', 'pending', 'high', '2026-10-20',
-        '{"ops":{"kind":"decision","why":"spring order","options":["Fedco","Johnny''s"]}}', NULL),
+        '{"ops":{"kind":"decision","why":"spring order","options":["Supplier A","Supplier B"]}}', NULL),
      ('t4', ?, NULL, 'Water the spawn', 'pending', 'medium', '2026-10-08', '{}', 'FREQ=DAILY'),
      ('t5', ?, 'p1', 'Done already', 'completed', 'low', '2026-09-01', '{}', NULL),
      ('tx', ?, NULL, 'Someone else''s task', 'pending', 'medium', NULL, '{}', NULL)`,
@@ -117,7 +117,7 @@ async function seed() {
 
   await exec(
     `INSERT INTO captures (id, user_id, content, capture_type, captured_at, processed) VALUES
-     ('c1', ?, 'Waiting on Will for the cooler quote for the General Store', 'thought', '2026-10-08 09:00:00', 0),
+     ('c1', ?, 'Waiting on Will for the cooler quote for the Corner Store', 'thought', '2026-10-08 09:00:00', 0),
      ('c2', ?, 'Already handled', 'thought', '2026-10-07 09:00:00', 1)`,
     [USER, USER]
   );
@@ -159,8 +159,8 @@ describe("overview", () => {
     const item = await getOpsItem(USER, "t2");
     expect(item).toMatchObject({
       href: "/tasks?task=t2",
-      projectSlug: "general-store",
-      ventureName: "Commonwealth Project",
+      projectSlug: "corner-store",
+      ventureName: "Harbor Co-op",
     });
   });
 });
@@ -232,7 +232,7 @@ describe("creating an item", () => {
 describe("portfolio", () => {
   it("groups by venture, derives states, and only suggests dormancy", async () => {
     const portfolio = await getPortfolio(USER, NOW);
-    expect(portfolio.lanes[0].name).toBe("Commonwealth Project");
+    expect(portfolio.lanes[0].name).toBe("Harbor Co-op");
     const projects = portfolio.lanes.flatMap((l) => l.projects);
     const byId = Object.fromEntries(projects.map((p) => [p.id, p]));
 
