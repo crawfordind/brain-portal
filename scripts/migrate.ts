@@ -1,5 +1,6 @@
 import { createClient } from "@libsql/client";
 import * as dotenv from "dotenv";
+import { applyJackRuntimeMigration } from "../src/lib/agents/jack/schema";
 
 dotenv.config({ path: ".env.local" });
 
@@ -1202,6 +1203,20 @@ async function migrate() {
         console.error(`✗ Index Error:`, err.message?.substring(0, 100));
       }
     }
+  }
+
+  // Delegated tasks run on Jack (Hermes), not OpenRouter. Additive columns and
+  // tables; on the first application only, work the OpenRouter runtime left
+  // pending is parked where nothing executes it. See
+  // docs/plans/2026-10-08-jack-task-runtime-design.md.
+  console.log("\nJack task runtime...");
+  try {
+    const report = await applyJackRuntimeMigration(db, (m) => console.log(m));
+    successCount += report.steps.filter((s) => s.status === "applied").length;
+    skipCount += report.steps.filter((s) => s.status === "skipped").length;
+  } catch (error: unknown) {
+    errorCount++;
+    console.error(`✗ Jack runtime migration:`, (error as Error).message?.substring(0, 160));
   }
 
   // Backfill existing tasks: content -> title

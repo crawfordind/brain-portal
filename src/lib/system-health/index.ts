@@ -25,6 +25,7 @@ import {
   type DiagnosisCode,
 } from "./diagnose";
 import type { SystemHealth, SystemIssue } from "./types";
+import { getJackConfig } from "@/lib/agents/jack/config";
 
 export type { Diagnosis, DiagnosisCode } from "./diagnose";
 export type { IssueKind, SystemHealth, SystemIssue } from "./types";
@@ -80,6 +81,7 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
       `SELECT id, title, assigned_agent, status, last_error, retry_count, max_retries, updated_at
          FROM agent_tasks
         WHERE user_id = ? AND status = 'failed'
+          AND (runtime IS NULL OR jack_state = 'failed')
           AND updated_at > datetime('now', ?)
         ORDER BY updated_at DESC
         LIMIT 50`,
@@ -103,11 +105,11 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     issues.push({
       signature: issueSignature(["agent_task", code, latest.updated_at]),
       kind: "agent_task",
-      subsystem: "AI delegation",
+      subsystem: "Jack (delegated tasks)",
       subject:
         rows.length > 1
-          ? `${rows.length} agent tasks failed, including "${latest.title}"`
-          : `"${latest.title}" (${latest.assigned_agent} agent)`,
+          ? `${rows.length} delegated tasks failed, including "${latest.title}"`
+          : `"${latest.title}"`,
       diagnosis: exhausted
         ? { ...diagnosis, severity: "error" }
         : diagnosis,
@@ -119,13 +121,13 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     });
   }
 
-  // Stalled: created but never claimed. No error text exists for these, which is
-  // exactly why they were invisible before.
+  // Stalled: accepted for Jack but never handed over. `needs_dispatch` is not
+  // in here: that is work deliberately parked, reported below.
   const stalled = await probe(() =>
     queryAll<{ n: number; oldest: string; sample: string }>(
       `SELECT COUNT(*) as n, MIN(updated_at) as oldest, MIN(title) as sample
          FROM agent_tasks
-        WHERE user_id = ? AND status IN ('queued', 'revision_requested')
+        WHERE user_id = ? AND runtime = 'jack' AND jack_state IN ('queued', 'dispatching')
           AND updated_at < datetime('now', ?)`,
       [userId, `-${STALL_MINUTES} minutes`]
     )
@@ -135,11 +137,11 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     issues.push({
       signature: issueSignature(["agent_stalled", row.oldest]),
       kind: "agent_task",
-      subsystem: "AI delegation",
+      subsystem: "Jack (delegated tasks)",
       subject:
         row.n > 1
-          ? `${row.n} delegated tasks have been waiting over ${STALL_MINUTES} minutes`
-          : `"${row.sample}" has been waiting over ${STALL_MINUTES} minutes`,
+          ? `${row.n} delegated tasks have been waiting over ${STALL_MINUTES} minutes to reach Jack`
+          : `"${row.sample}" has been waiting over ${STALL_MINUTES} minutes to reach Jack`,
       diagnosis: diagnosisFor("WORKER_NOT_RUNNING"),
       rawError: "",
       occurredAt: row.oldest,
@@ -148,38 +150,74 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     });
   }
 
-  // Stuck: claimed by a worker that died mid-run.
-  const stuck = await probe(() =>
+  // Parked: not sent because Jack is not connected (or legacy work awaiting a
+  // decision). Only an issue while Jack is unavailable; otherwise it is simply
+  // in the "Needs you" list.
+  const jack = getJackConfig();
+  if (jack.state !== "ready") {
+    const parked = await probe(() =>
+      queryAll<{ n: number; oldest: string; sample: string }>(
+        `SELECT COUNT(*) as n, MIN(updated_at) as oldest, MIN(title) as sample
+           FROM agent_tasks
+          WHERE user_id = ? AND runtime = 'jack' AND jack_state = 'needs_dispatch'`,
+        [userId]
+      )
+    );
+    if (parked[0]?.n > 0) {
+      const row = parked[0];
+      issues.push({
+        signature: issueSignature(["jack_parked", jack.state]),
+        kind: "agent_task",
+        subsystem: "Jack (delegated tasks)",
+        subject:
+          row.n > 1
+            ? `${row.n} delegated tasks are waiting because Jack is not connected`
+            : `"${row.sample}" is waiting because Jack is not connected`,
+        diagnosis: {
+          ...diagnosisFor("JACK_NOT_CONFIGURED"),
+          severity: jack.state === "misconfigured" ? "error" : "warning",
+        },
+        rawError: jack.reason ?? "",
+        occurredAt: row.oldest,
+        count: row.n,
+        actionUrl: "/review",
+      });
+    }
+  }
+
+  // Unreachable: Jack has runs in flight that Brain Portal cannot see.
+  const unreachable = await probe(() =>
     queryAll<{ n: number; oldest: string; sample: string }>(
-      `SELECT COUNT(*) as n, MIN(updated_at) as oldest, MIN(title) as sample
-         FROM agent_tasks
-        WHERE user_id = ? AND status = 'processing'
-          AND updated_at < datetime('now', ?)`,
+      `SELECT COUNT(*) as n, MIN(r.unreachable_since) as oldest, MIN(at.title) as sample
+         FROM agent_task_runs r
+         JOIN agent_tasks at ON at.id = r.agent_task_id
+        WHERE at.user_id = ? AND r.unreachable_since IS NOT NULL
+          AND at.jack_state IN ('running', 'awaiting_approval', 'awaiting_input', 'cancelling')
+          AND r.unreachable_since < datetime('now', ?)`,
       [userId, `-${STUCK_MINUTES} minutes`]
     )
   );
-  if (stuck[0]?.n > 0) {
-    const row = stuck[0];
+  if (unreachable[0]?.n > 0) {
+    const row = unreachable[0];
     issues.push({
-      signature: issueSignature(["agent_stuck", row.oldest]),
+      signature: issueSignature(["jack_unreachable", row.oldest]),
       kind: "agent_task",
-      subsystem: "AI delegation",
+      subsystem: "Jack (delegated tasks)",
       subject:
         row.n > 1
-          ? `${row.n} agent tasks have been running for over ${STUCK_MINUTES} minutes`
-          : `"${row.sample}" has been running for over ${STUCK_MINUTES} minutes`,
-      diagnosis: {
-        ...diagnosisFor("AI_TIMEOUT"),
-        title: "An agent task stopped part-way through",
-        explanation:
-          "The server started this work but never finished it — usually because the request hit its time limit. It is normally picked up and retried automatically within a few minutes.",
-      },
+          ? `${row.n} tasks Jack is working on cannot be checked`
+          : `"${row.sample}" cannot be checked`,
+      diagnosis: diagnosisFor("JACK_UNREACHABLE"),
       rawError: "",
       occurredAt: row.oldest,
       count: row.n,
       actionUrl: "/review",
     });
   }
+
+  // A long-running Jack task is not a fault: Jack does real work and the
+  // poller is still in touch with it. Only "never accepted" (above) and
+  // "cannot be reached" are.
 
   return issues;
 }
@@ -361,17 +399,17 @@ async function checkConfiguration(): Promise<SystemIssue[]> {
     });
   }
 
-  const agentCount = await probe(() =>
-    queryAll<{ n: number }>(`SELECT COUNT(*) as n FROM agent_configs WHERE is_active = 1`)
-  );
-  if (agentCount.length > 0 && agentCount[0].n === 0) {
+  // agent_configs rows are no longer needed to run delegated work (Jack runs
+  // it), so their absence is not reported. A misconfigured Jack connection is.
+  const jack = getJackConfig();
+  if (jack.state === "misconfigured") {
     issues.push({
-      signature: "config:AGENT_NOT_CONFIGURED",
+      signature: "config:JACK_MISCONFIGURED",
       kind: "configuration",
       subsystem: "Server configuration",
-      subject: "No AI agents are configured on this server",
-      diagnosis: diagnosisFor("AGENT_NOT_CONFIGURED"),
-      rawError: "",
+      subject: "Jack is enabled but its connection settings are invalid",
+      diagnosis: { ...diagnosisFor("JACK_NOT_CONFIGURED"), severity: "error" },
+      rawError: jack.reason ?? "",
       occurredAt: now,
       count: 1,
     });

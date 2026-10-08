@@ -29,8 +29,10 @@ import {
   ArrowUpRight,
   FileText,
   Plus,
+  Send,
   Trash2,
 } from "lucide-react";
+import { useSendToJack } from "@/hooks/use-send-to-jack";
 import { toast } from "sonner";
 import {
   CompartmentBadges,
@@ -88,6 +90,7 @@ export default function ContactBriefPage({
 }) {
   const { entityId } = use(params);
   const queryClient = useQueryClient();
+  const { sendToJack } = useSendToJack();
   const [channelKind, setChannelKind] = useState("email");
   const [channelValue, setChannelValue] = useState("");
 
@@ -169,6 +172,17 @@ export default function ContactBriefPage({
           {data.resolution === "unresolved" && <UnresolvedBadge />}
           {data.mergeCandidate && <MergeCandidateBadge />}
           <CompartmentBadges compartments={data.compartments} />
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto min-h-11 md:min-h-9"
+            onClick={() =>
+              sendToJack({ id: data.entity.id, type: "contact", title: `About ${data.entity.canonical_name}` })
+            }
+          >
+            <Send className="mr-1.5 h-3.5 w-3.5" />
+            Send to Jack
+          </Button>
         </div>
         <p className="text-sm text-muted-foreground">
           {data.entity.entity_type} · {data.counts.interactions} touches ·{" "}

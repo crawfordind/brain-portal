@@ -3,11 +3,26 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { Bot, ArrowRight } from 'lucide-react';
+import { Bot, ArrowRight, PlugZap } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AgentTaskCard } from './agent-task-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { shouldPoll } from './jack-state-badge';
+
+interface QueueTask {
+  status: string;
+  runtime?: string | null;
+  jack_state?: string | null;
+}
+
+/** Mirrors the server's "Needs you" filter in /api/agent-tasks. */
+function needsYou(t: QueueTask): boolean {
+  return (
+    t.status === 'awaiting_review' ||
+    ['awaiting_approval', 'awaiting_input', 'needs_dispatch', 'needs_review'].includes(t.jack_state ?? '')
+  );
+}
 
 interface AgentQueueProps {
   onTaskClick: (taskId: string) => void;
@@ -21,7 +36,9 @@ export function AgentQueue({ onTaskClick, onCreateTask }: AgentQueueProps) {
     queryKey: ['agent-tasks', filter],
     queryFn: async () => {
       const url = new URL('/api/agent-tasks', window.location.origin);
-      if (filter !== 'all') {
+      if (filter === 'needs_you') {
+        url.searchParams.set('needsYou', 'true');
+      } else if (filter !== 'all') {
         url.searchParams.set('status', filter);
       }
       const res = await fetch(url);
@@ -32,54 +49,50 @@ export function AgentQueue({ onTaskClick, onCreateTask }: AgentQueueProps) {
     // doesn't change until the user acts, so polling it wastes a round-trip
     // every 5s per open tab.
     refetchInterval: (q) => {
-      const tasks = (q.state.data as { tasks?: { status: string }[] } | undefined)?.tasks ?? [];
-      const hasActive = tasks.some(
-        (t) => t.status === 'queued' || t.status === 'processing' || t.status === 'awaiting_review'
-      );
-      return hasActive ? 5000 : false;
+      const tasks = (q.state.data as { tasks?: QueueTask[] } | undefined)?.tasks ?? [];
+      return tasks.some((t) => shouldPoll(t)) ? 5000 : false;
     },
   });
 
   const tasks = data?.tasks || [];
 
   const counts = {
-    queued: tasks.filter((t: { status: string }) => t.status === 'queued').length,
-    processing: tasks.filter((t: { status: string }) => t.status === 'processing').length,
-    awaiting_review: tasks.filter((t: { status: string }) => t.status === 'awaiting_review').length,
+    needs_you: tasks.filter((t: QueueTask) => needsYou(t)).length,
+    processing: tasks.filter((t: QueueTask) => t.status === 'processing').length,
   };
+  const jack: { state: string; message: string } | undefined = data?.jack;
 
   return (
     <div className="space-y-4">
       <Tabs value={filter} onValueChange={setFilter}>
         <TabsList className="w-full justify-start overflow-x-auto">
           <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="queued">
-            Queued
-            {counts.queued > 0 && (
+          <TabsTrigger value="needs_you">
+            Needs you
+            {counts.needs_you > 0 && filter === 'all' && (
               <Badge variant="secondary" className="ml-2 bg-orange-500 text-white">
-                {counts.queued}
+                {counts.needs_you}
               </Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="processing">
-            Processing
+            In progress
             {counts.processing > 0 && (
               <Badge variant="secondary" className="ml-2 bg-blue-500 text-white">
                 {counts.processing}
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="awaiting_review">
-            Needs Review
-            {counts.awaiting_review > 0 && (
-              <Badge variant="secondary" className="ml-2 bg-purple-500 text-white">
-                {counts.awaiting_review}
-              </Badge>
-            )}
-          </TabsTrigger>
           <TabsTrigger value="approved">Completed</TabsTrigger>
         </TabsList>
       </Tabs>
+
+      {jack && jack.state !== 'ready' && (
+        <div role="status" className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          <PlugZap className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" aria-hidden />
+          <p>{jack.message} Delegated work is kept as <strong>Not sent</strong> and nothing is sent anywhere.</p>
+        </div>
+      )}
 
       <div className="space-y-3">
         {isLoading ? (
@@ -90,9 +103,9 @@ export function AgentQueue({ onTaskClick, onCreateTask }: AgentQueueProps) {
               <Bot className="h-8 w-8 text-muted-foreground" />
             </div>
             <div className="space-y-1">
-              <h3 className="font-semibold text-lg">No agent tasks yet</h3>
+              <h3 className="font-semibold text-lg">{filter === 'needs_you' ? 'Nothing needs you' : 'Nothing sent to Jack yet'}</h3>
               <p className="text-sm text-muted-foreground max-w-xs">
-                Delegate tasks to AI agents — they can write, research, analyze, and code while you focus on other work.
+                Use &ldquo;Send to Jack&rdquo; on any task, note or capture. Jack does the work with its own tools and reports back here.
               </p>
             </div>
             {onCreateTask ? (
@@ -110,7 +123,7 @@ export function AgentQueue({ onTaskClick, onCreateTask }: AgentQueueProps) {
             )}
           </div>
         ) : (
-          tasks.map((task: { id: string; title: string; status: string; priority: string; agent_name?: string; agent_icon?: string; created_at: string; updated_at: string }) => (
+          tasks.map((task: QueueTask & { id: string; title: string; priority: string; agent_name?: string; agent_icon?: string; created_at: string; updated_at: string }) => (
             <AgentTaskCard key={task.id} task={task} onView={() => onTaskClick(task.id)} />
           ))
         )}

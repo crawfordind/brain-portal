@@ -1,6 +1,7 @@
 import { AgenticLayout } from "@/components/layout/agentic-layout";
 import { VoiceProvider } from "@/components/voice";
 import { ChatProvider } from "@/components/chat/chat-provider";
+import { SendToJackDialog } from "@/components/agents/send-to-jack-dialog";
 
 /**
  * Dashboard Layout - Agentic Workflow
@@ -19,6 +20,7 @@ export default function DashboardLayout({
     <VoiceProvider showFAB={true} showOnboarding={true}>
       <ChatProvider>
         <AgenticLayout>{children}</AgenticLayout>
+        <SendToJackDialog />
       </ChatProvider>
     </VoiceProvider>
   );

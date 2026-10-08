@@ -154,7 +154,9 @@ export function ModelSettingsPanel() {
       </div>
 
       <div className="space-y-2">
-        {data.slots.map((slotView) => (
+        {/* Delegated tasks run on Jack (Hermes), so the OpenRouter "AI agents"
+            slot no longer picks anything and is not offered. */}
+        {data.slots.filter((slotView) => slotView.slot !== "agent").map((slotView) => (
           <SlotRow
             key={slotView.slot}
             view={slotView}
@@ -169,6 +171,9 @@ export function ModelSettingsPanel() {
             isSaving={saveMutation.isPending}
           />
         ))}
+        <p className="px-1 pt-1 text-xs text-muted-foreground">
+          Delegated tasks run on Jack, not on these models, and do not use OpenRouter credits.
+        </p>
       </div>
     </div>
   );

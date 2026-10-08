@@ -1494,6 +1494,11 @@ export interface AgentTask {
   last_error: string | null;
   context_used: string; // JSON array of { id, title, similarity }
   routed_by: 'user' | 'auto_llm' | 'auto_rule' | 'heartbeat';
+  /** NULL: a historical row the retired OpenRouter runtime owned. 'jack': runs on Jack (Hermes). */
+  runtime?: 'jack' | null;
+  /** Precise lifecycle for Jack tasks; see src/lib/agents/jack/types.ts. `status` is its coarse projection. */
+  jack_state?: string | null;
+  jack_session_id?: string | null;
   created_at: string;
   updated_at: string;
 }

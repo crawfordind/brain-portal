@@ -107,9 +107,11 @@ export const SLOT_DEFINITIONS: Record<ModelSlot, SlotDefinition> = {
 
   agent: {
     slot: "agent",
-    label: "AI agents",
+    label: "AI agents (retired)",
+    // Delegated tasks run on Jack (Hermes); nothing resolves this slot any more
+    // and Settings does not show it. Kept so saved preferences still parse.
     description:
-      "The default for delegated work. Individual agents can still pin their own model, which overrides this.",
+      "No longer used: delegated tasks run on Jack, not OpenRouter.",
     usedFor: [
       "Every one of the 17 specialist agents",
       "Revisions when you ask an agent to try again",

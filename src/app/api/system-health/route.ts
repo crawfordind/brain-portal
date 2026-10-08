@@ -10,10 +10,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { db, queryAll } from "@/lib/db/client";
+import { queryAll } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { getSystemHealth } from "@/lib/system-health";
-import { executeAgentTask } from "@/lib/agents/executor";
+import { sendToJack, JackActionError } from "@/lib/agents/jack/dispatcher";
+import { getJackConfig } from "@/lib/agents/jack/config";
 import { safeParseJson, isErrorResponse } from "@/lib/api/validation";
 
 export async function GET() {
@@ -75,25 +76,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ requeued: 0, message: "Nothing to retry" });
     }
 
-    for (const candidate of candidates) {
-      await db.execute({
-        sql: `UPDATE agent_tasks
-                 SET status = 'queued',
-                     retry_count = 0,
-                     updated_at = datetime('now')
-               WHERE id = ? AND user_id = ? AND status = 'failed'`,
-        args: [candidate.id, user.id],
-      });
-
-      // Fire-and-forget, exactly as delegation does. The executor's atomic claim
-      // makes this safe alongside the cron worker, and the cron remains the
-      // safety net if this request's background work is cut short.
-      executeAgentTask(candidate.id).catch((error) => {
-        console.error(`[SystemHealth] retry of ${candidate.id} failed:`, error);
-      });
+    // Retrying means sending to Jack. There is no other runtime to retry on.
+    const config = getJackConfig();
+    if (config.state !== "ready") {
+      return NextResponse.json(
+        { requeued: 0, message: config.reason ?? "Jack connection not configured." },
+        { status: 503 }
+      );
     }
 
-    return NextResponse.json({ requeued: candidates.length });
+    let requeued = 0;
+    for (const candidate of candidates) {
+      try {
+        await sendToJack(candidate.id, user.id, { config });
+        requeued++;
+      } catch (error) {
+        // A task that is not retryable as it stands (e.g. an earlier version is
+        // still reviewable) is skipped, not failed.
+        if (!(error instanceof JackActionError)) throw error;
+      }
+    }
+
+    return NextResponse.json({ requeued });
   } catch (error) {
     console.error("[API] POST /api/system-health failed:", error);
     return NextResponse.json({ error: "Failed to retry" }, { status: 500 });

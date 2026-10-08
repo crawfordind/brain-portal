@@ -24,10 +24,12 @@ import {
   BookOpen,
   Loader2,
   AlertCircle,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAskAbout, toChatItemType } from "@/hooks/use-ask-about";
+import { useSendToJack, toJackSourceType } from "@/hooks/use-send-to-jack";
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import type { StreamItemType } from "@/lib/stream/types";
@@ -74,6 +76,7 @@ export function StreamItemDetail() {
   const [isArchiving, setIsArchiving] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const { askAbout } = useAskAbout();
+  const { sendToJack } = useSendToJack();
 
   const fetchItem = useCallback(async (id: string) => {
     setIsLoading(true);
@@ -366,6 +369,19 @@ export function StreamItemDetail() {
                   >
                     <Sparkles className="h-3.5 w-3.5 mr-1.5" />
                     Ask about this
+                  </Button>
+                )}
+                {item.type !== "agent_output" && toJackSourceType(item.type) !== null && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs flex-1 min-w-[100px]"
+                    onClick={() =>
+                      sendToJack({ id: item.id, type: item.type, title: item.title, content: item.content })
+                    }
+                  >
+                    <Send className="h-3.5 w-3.5 mr-1.5" />
+                    Send to Jack
                   </Button>
                 )}
                 <Button variant="outline" size="sm" className="text-xs flex-1 min-w-[100px]" onClick={handleOpenFull}>

@@ -3,7 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 
 /**
- * Number of agent outputs sitting in `awaiting_review`.
+ * Number of delegated tasks waiting on the user: output to review, an
+ * approval Jack is paused on, or work parked as "not sent" / "needs review".
  *
  * Shared by every surface that advertises the Review queue (sidebar, mobile
  * "More" sheet, the Work command bar) so they can never disagree about how
@@ -12,9 +13,9 @@ import { useQuery } from "@tanstack/react-query";
  */
 export function useReviewCount() {
   const { data } = useQuery({
-    queryKey: ["agent-tasks-count", "awaiting_review"],
+    queryKey: ["agent-tasks-count", "needs-you"],
     queryFn: async () => {
-      const res = await fetch("/api/agent-tasks?status=awaiting_review&countOnly=true");
+      const res = await fetch("/api/agent-tasks?needsYou=true&countOnly=true");
       if (!res.ok) return { count: 0 };
       return res.json() as Promise<{ count: number }>;
     },

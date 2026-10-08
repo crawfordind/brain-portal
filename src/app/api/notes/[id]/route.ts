@@ -62,7 +62,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     canEditNote = canEdit(access);
   }
 
-  return NextResponse.json({ note, canEdit: canEditNote });
+  // isOwner: some actions (e.g. Send to Jack) are owner-only, not editor-level.
+  return NextResponse.json({ note, canEdit: canEditNote, isOwner: note.user_id === user.id });
 }
 
 // PUT /api/notes/[id] - Update note (supports both id and slug)

@@ -3,6 +3,7 @@ import { db, queryOne } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { AgentTask } from "@/lib/db/schema";
 import { syncTaskStatusFromAgentTask } from "@/lib/agents/status-sync";
+import { recordReviewDecision } from "@/lib/agents/jack/dispatcher";
 
 // POST /api/agent-tasks/[id]/approve - Approve current output
 export async function POST(
@@ -42,9 +43,10 @@ export async function POST(
 
   // Update task status
   await db.execute({
-    sql: "UPDATE agent_tasks SET status = 'approved', updated_at = datetime('now') WHERE id = ?",
-    args: [id],
+    sql: "UPDATE agent_tasks SET status = 'approved', updated_at = datetime('now') WHERE id = ? AND user_id = ?",
+    args: [id, user.id],
   });
+  await recordReviewDecision(id, user.id, "approved");
 
   // Sync task status
   await syncTaskStatusFromAgentTask(id, 'approved');

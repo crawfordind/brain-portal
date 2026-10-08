@@ -13,6 +13,7 @@ npm run db:migrate   # Run database migrations (tsx scripts/migrate.ts)
 npm run user:create  # Create an account (signups are closed by default)
 npm run migrate:chat-item-context  # Allow 'item' as a chat context type
 npm run migrate:provenance         # Record who wrote each row, and which run
+npm run migrate:jack-runtime       # Jack task runtime (also runs in db:migrate)
 
 # MCP Server
 npm run mcp:start    # Start MCP server (requires env vars)
@@ -299,15 +300,18 @@ Required for development (see `.env.example`):
 - `APP_URL` - optional runtime override for every emailed link; see *Email &
   Links Out of the App*. `EMAIL_ACTION_SECRET` - optional, signs email buttons.
 - `CRON_SECRET` - **Required in production.** Guards every `/api/cron/*` route.
-  Unset, `verifyCronSecret` 401s every scheduled request, so the agent queue is
-  never drained and delegated work sits in `queued` with no error to show for
-  it. See *Background Failure Visibility* below.
+  Unset, `verifyCronSecret` 401s every scheduled request, so delegated work is
+  never handed to Jack and sits in `queued` with no error to show for it. See *Background Failure Visibility* below.
 - `SIGNUP_MODE` / `ALLOWED_EMAILS` - who may have an account created. Defaults
   to `closed`. See *Who Can Sign Up*.
 - `ADMIN_EMAILS` - comma-separated. Fails closed: unset means nobody is admin.
 - `TRUST_PROXY_HEADERS` - set `false` when Node is directly internet-facing.
 - `BRAIN_SERVICE_TOKEN` / `BRAIN_SERVICE_EMAIL` - both required to enable
   `/api/brain`, which is otherwise 503. There is **no default account**.
+- `JACK_ENABLED`, `JACK_HERMES_URL`, `JACK_HERMES_API_KEY`, `JACK_PROFILE`,
+  `JACK_EDGE_CLIENT_ID`, `JACK_EDGE_CLIENT_SECRET` - the Jack runtime for
+  delegated tasks. Server-only; off unless `JACK_ENABLED=true`. See *Delegated
+  Tasks Run on Jack* and `docs/operations/jack-runtime.md`.
 
 ## Who Can Sign Up
 
@@ -523,122 +527,124 @@ Stream card (quick action + menu), stream detail panel, note page menu, task
 list row, task detail, kanban and calendar. The calendar and kanban hooks were
 previously `// TODO` / `console.log` stubs and now work.
 
-## Background Agent Work
+## Delegated Tasks Run on Jack
 
-Delegation did not disappear; it stopped being something the user drives by
-hand. What remains runs out of band:
+Every delegated task (`agent_tasks`) is executed by **Jack**, an existing Hermes
+Agent profile, through the Hermes API server's Runs API. Brain Portal owns the
+records (task, versions, feedback, audit trail); Jack executes with its own
+tools, memory, skills and MCP access to Brain Portal. **There is no OpenRouter
+path for delegated work and no fallback to one**: the old executor
+(`executor.ts`, `context.ts`) is deleted, and `tests/lib/agents/jack/boundaries.test.ts`
+fails if anything on the task path imports the OpenRouter client, embeddings or
+the model resolver. Design: `docs/plans/2026-10-08-jack-task-runtime-design.md`.
+Operator setup, live test, key rotation, rollback: `docs/operations/jack-runtime.md`.
 
-- **Heartbeat** rules (`action_type: "delegate_to_agent"`)
-- **The `delegate_to_agent` skill**
-- **The `delegate_to_agent` MCP tool**
+Ways in: **Send to Jack** (`useSendToJack` → `SendToJackDialog`, on tasks, stream
+items, notes, projects and contacts), heartbeat `delegate_to_agent`, the
+`delegate_to_agent` skill and MCP tool. "Ask about this" stays the quick chat.
+Output lands in `/review` (`ReviewView` → `AgentQueue` → `AgentReviewFocusPanel`).
 
-These insert into `agent_tasks`, `executeAgentTask()` runs them, and the output
-lands in `/review` (`ReviewView` → `AgentQueue` → `AgentReviewFocusPanel`) where
-approve / revise / reject still apply — because nobody was sitting in front of
-that work when it ran.
+### Off by default, honest when off
+
+`getJackConfig` (`src/lib/agents/jack/config.ts`) is `ready` only with
+`JACK_ENABLED=true`, an https `JACK_HERMES_URL` and a ≥16-char
+`JACK_HERMES_API_KEY`. Otherwise new work is stored as `needs_dispatch` ("Not
+sent") with the reason, the cron makes **no network call at all**, and System
+Health reports it. `publicJackStatus` is the only view a browser gets: words,
+never the URL or key.
+
+### Lifecycle: `jack_state` precise, `status` coarse
+
+`agent_tasks.status` has a CHECK constraint and two tables cascade from the
+table, so it is not rebuilt. Nullable `runtime` (`NULL` = historical OpenRouter
+row, read-only history; `'jack'`) and `jack_state` were added; `status` is the
+projection every existing reader understands (`coarseStatus` in
+`src/lib/agents/jack/types.ts`, which imports nothing).
+
+`needs_dispatch` · `needs_review` · `queued` · `dispatching` · `running` ·
+`awaiting_approval` · `awaiting_input` (reserved) · `cancelling` ·
+`awaiting_review` · `completed` · `rejected` · `failed` · `cancelled`.
+A failed or cancelled *revision* leaves the earlier version reviewable.
+
+### Integrity (`src/lib/agents/jack/dispatcher.ts`)
+
+- **Atomic claim** `queued → dispatching`; `rowsAffected = 0` means stand down.
+- **Idempotent submit.** The exact request body and a random `Idempotency-Key`
+  are written to `agent_task_runs` before `POST /v1/runs`; retries replay those
+  bytes under that key, so Hermes returns the original run instead of starting a
+  second one. Bounded (6) with backoff, only for outcomes where Hermes did not
+  start work. After that the run is `abandoned` and **Retry** reuses its key.
+- **No automatic retry after a run started** (`failed`, `interrupted`): it may
+  have done things. Daniel retries explicitly.
+- **Exactly-once output**: one `db.batch` claims the run, inserts the next
+  version only if the run has none, records it, advances the task. Note the
+  guard sits *outside* the `MAX()` aggregate, which always yields a row.
+- **Polling, not SSE**: the cron (every minute) and the task detail route
+  (throttled, 4s timeout) read `GET /v1/runs/{id}`, which carries the pending
+  approval. Unreachable leaves the state alone and says "Jack unreachable since
+  …"; a run Hermes forgot becomes `failed` (`lost`), never a made-up output.
+- **One Hermes session per task** (`brain-portal-task-<id>`): a revision is the
+  next turn of the same conversation, and still carries the previous version.
+- **Adoption**: MCP, heartbeat and skills insert `status='queued'` with
+  `runtime IS NULL`; the cron adopts those (`adoptNewTasks`). The migration
+  parked every legacy pending row first, so such a row is new by construction.
+
+### Context and the confirmation boundary
+
+The envelope (`envelope.ts`, pure) carries the source record and its id, pinned
+notes (≤5), note highlights, the project, URLs and guardrails, fenced in
+`<brain_portal_context>` and escaped with `escapePromptContent`
+(`src/lib/agents/prompt.ts`). Dropped versus the old executor: embedding
+auto-retrieval, other active tasks, recent captures. Every read is scoped to the
+owner. `JACK_TASK_RULES` tells Jack to propose record changes rather than make
+them and never to send, post, publish, buy, trade, change credentials or delete.
+
+The enforced gate is Hermes: Brain Portal's MCP server configured
+`trust: untrusted` in Jack makes every tool without `readOnlyHint: true` wait for
+approval. `registerAllTools` marks read-only tools from the catalog
+(`isReadOnlyTool`), so reads flow and writes pause. Review shows the redacted
+request (`parsePendingApproval` + `redactJackText`) with **Approve once** /
+**Deny** only; Hermes's `session`/`always` are never offered.
+
+### Tables and routes
+
+- `agent_task_runs` — one row per submission: idempotency key, request body,
+  Hermes run/session ids, state, approval, usage, `unreachable_since`.
+- `agent_task_events` — audit trail: actor (`user`/`jack`/`system`), kind, run.
+- `GET/POST /api/agent-tasks` (`?needsYou=true` = waiting on Daniel),
+  `GET/DELETE /api/agent-tasks/[id]`, `POST …/[id]/send|cancel|approval|revise|approve|reject`,
+  `GET /api/jack/status` (`?check=true` = live `/v1/capabilities` test).
+  Every browser-supplied id is checked against the session user
+  (`src/lib/agents/jack/guard.ts`); per-user rate limits; 64 KB body cap.
+- `/api/cron/process-agent-queue` runs `runJackQueuePass` and nothing else.
+
+**Migration**: `applyJackRuntimeMigration` (`src/lib/agents/jack/schema.ts`), run
+by `npm run db:migrate` and `npm run migrate:jack-runtime`. On its first
+application only, legacy `queued`/`revision_requested` → `needs_dispatch`,
+`processing` or missing source → `needs_review`, in a coarse status the
+outgoing deployment's cron never selects (it runs in `prebuild` while the old
+build is live). History is untouched.
 
 ### Supported source types
 
-| Source Type | AI Behavior | Original Preserved |
-|-------------|-------------|-------------------|
-| **Task** | Complete the task | Yes |
-| **Note** | Feedback, suggestions, alternative perspectives, next steps | Yes |
-| **Capture/Thought** | Expand and complete the thought | Yes |
-| **Reminder** | Prepare context, action items, relevant info | Yes |
-| **Insight** | Deeper analysis, practical applications | Yes |
-
-**IMPORTANT**: the original content is NEVER deleted. AI outputs are linked
-alongside the original.
+Task, note (and journal), capture/thought, reminder, insight, project, contact.
+The server resolves ambiguous stream types (a stream "task" may be a capture)
+against the tables, as the chat does. The original is never deleted; outputs
+are linked alongside it. For task sources, `tasks.agent_task_id` is linked (if
+free) and status sync applies:
+`queued/processing/revision_requested/awaiting_review` → `in_progress`,
+`approved` → `completed`, `rejected/failed` → `pending`.
 
 ### Agent types
 
-The 17 specialist types still exist as `agent_configs` rows and a background
-caller may name one. They are no longer a roster the user picks from:
-`AGENT_ROLES` (`src/lib/agents/constants.ts`) names the *job* ("Code",
-"Research") wherever a label is rendered, because a badge reading "Alex" told
-the user nothing about what ran.
-
-`agent_type: "auto"` now means **`general`**. The keyword/LLM router that used
-to choose among 17 existed to spare the user a 17-way choice in a dialog that no
-longer exists; `src/lib/agents/router.ts`, `POST /api/agents/route` and the
-`agent_routing_log` audit table are gone with it.
+The 17 types survive as a *label* for the job (`assigned_agent`, default
+`general`; `auto` means `general`). They no longer need an `agent_configs` row:
+Jack runs everything.
 
 ### Nothing fires behind the user's back
 
-`POST /api/stream` used to delegate automatically whenever the classifier
-suggested an agent, and the Brain Bar carried its own 17-agent picker. Capturing
-a thought therefore started background work nobody asked for, which piled up in
-a review queue nobody visited. The classifier still *names* a suggestion; only
-an explicit `delegatedTo` from the caller acts on it.
-
-### Database Tables
-
-- `agent_configs` - Agent definitions with system prompts
-- `agent_tasks` - Delegated tasks (with `source_type` / `source_id` for any entity)
-- `agent_task_outputs` - Versioned outputs
-- `agent_task_feedback` - User review feedback
-
-### API Routes
-
-- `GET/POST /api/agent-tasks` - List/create agent tasks.
-  `?sourceType=&sourceId=` answers "what background work exists against this
-  entity?", which is what the note page asks. That used to be `GET
-  /api/delegate`; the endpoint went with the delegation UI, the question did not.
-- `GET/DELETE /api/agent-tasks/[id]` - Task details/deletion
-- `POST /api/agent-tasks/[id]/approve|revise|reject` - Review actions
-- `GET /api/agent-tasks/stats` - Aggregate stats
-- `GET /api/agents`, `GET /api/agents/[type]` - Agent configs
-
-### Key Services
-
-- `src/lib/agents/context.ts` - Build task context from notes/embeddings
-- `src/lib/agents/executor.ts` - Execute agent tasks with type-specific prompts
-- `src/lib/agents/status-sync.ts` - Sync statuses (task entities only)
-
-### Status Sync
-
-For task entities, agent_task and task statuses are synchronized:
-- `queued/processing/revision_requested` → `in_progress`
-- `awaiting_review` → `in_progress`
-- `approved` → `completed`
-- `rejected/failed` → `pending`
-
-For non-task entities, only the agent_task status is tracked.
-
-### Execution & Queue Reliability
-
-Delegation entry points kick off `executeAgentTask()` fire-and-forget, and
-`/api/cron/process-agent-queue` (every minute) is the safety net. Both can reach
-the same task, so execution is built around a single invariant:
-
-- **Atomic claim.** `executeAgentTask()` starts with a conditional
-  `UPDATE … SET status='processing' WHERE id=? AND status IN ('queued',
-  'revision_requested','failed')`. `rowsAffected === 0` means another worker owns
-  the task and this one returns without calling the model. Without the claim,
-  two workers produce the same `version_number` and the loser trips
-  `UNIQUE(agent_task_id, version_number)` — failing a task that actually
-  succeeded.
-- **Version numbers come from SQL** (`COALESCE(MAX(version_number),0)+1`), never
-  from the in-memory `current_version` read at the start of the run.
-- **Empty output is a failure, not a result.** `completeWithMeta()` surfaces
-  `finish_reason`; a blank body with `finish_reason: "length"` is retried once at
-  double the token budget (reasoning models can spend the whole budget on hidden
-  tokens), and anything still blank throws instead of being stored as output.
-- **Transient upstream errors retry.** 429/5xx/network failures get bounded
-  exponential backoff inside `completeWithMeta`; other errors fail fast.
-- **The cron recovers three states**: tasks stuck in `processing` past the
-  timeout, revisions abandoned in `revision_requested`, and `failed` tasks that
-  still have `retry_count < max_retries`. `retry_count` resets to 0 on success.
-- **Only configured agents are dispatched.** A caller can name any of the 17
-  agent types, but delegation falls back to a seeded agent when the named one
-  has no `agent_configs` row — the executor hard-fails on a missing config.
-
-The cron declares `maxDuration = 300` and stops starting new work near that
-ceiling, so a run is never killed mid-task with a batch half-processed.
-
-**Migrations**: `npx tsx scripts/migrate-add-new-agents.ts` adds the 10
-professional agent types (legal, finance, hr, product, sales, operations,
-security, data_eng, educator, strategy).
+Capturing a thought never starts delegated work; the classifier only *names* a
+suggestion. Legacy pending work is parked, not auto-sent.
 
 ## Model Selection
 
@@ -649,7 +655,8 @@ subsystem quietly not working, and the fix was a code change and a redeploy.
 
 - **Slots** (`src/lib/ai/models/slots.ts`): jobs, not models — `fast`
   (summaries, tags, capture triage, task parsing, agent routing), `deep`
-  (insights, weekly reviews, project health), `agent` (delegated work),
+  (insights, weekly reviews, project health), `agent` (**retired**: delegated
+  work runs on Jack; kept so saved preferences parse, hidden in Settings),
   `vision` (handwriting, image and audio), `embedding` (search index). Each
   carries an ordered candidate list, a recommendation reason, and whether the
   Auto Router may stand in for it.
@@ -683,9 +690,8 @@ subsystem quietly not working, and the fix was a code change and a redeploy.
   breaks, and lists live models with context window, per-million pricing, and
   image support, recommended first.
 - **Storage**: `users.preferences` JSON under a `models` key. No migration.
-- **Agent overrides**: a model pinned on an `agent_configs` row still wins, but
-  it is now the *head of a chain* rather than the only option, so a config
-  pinned to a retired id degrades instead of failing every task.
+- **Agent overrides**: `agent_configs.model_id` is no longer read; delegated
+  tasks run on Jack (see *Delegated Tasks Run on Jack*).
 
 ## Provenance & Run Collapsing
 
@@ -1233,7 +1239,7 @@ The 9 Operations tools are listed under *Operations Control Center*.
 | `create_capture` | Quick capture a thought/idea/reference |
 | `semantic_search` | AI-powered similarity search via embeddings |
 | `generate_insights` | Generate AI insights from notes/captures |
-| `delegate_to_agent` | Queue background work for an agent (lands in `/review`) |
+| `delegate_to_agent` | Queue background work for Jack (lands in `/review`) |
 | `get_agent_task` | Check agent task status and output |
 | `list_agent_tasks` | List delegated agent tasks |
 | `search` | Full-text search across all entity types |
@@ -1298,6 +1304,11 @@ Every tool / resource / prompt invocation is guarded by `src/mcp/guard.ts`:
 2. **Rate limit** — token-bucket keyed by API-key id (`src/mcp/rate-limit.ts`), refilling continuously at `rate_limit_per_minute / 60000` tokens per ms.
 
 Canonical scopes (`MCP_SCOPES` in `src/lib/mcp/keys.ts`): `notes:read`, `notes:write`, `tasks:read`, `tasks:write`, `projects:read`, `projects:write`, `captures:read`, `captures:write`, `search:read`, `ai:search`, `ai:insights`, `ai:delegate`, `resources:read`, `prompts:read`, `crm:read`, `crm:write`. `*` is wildcard.
+
+**Read-only hints**: `registerAllTools` annotates every read-only tool
+`readOnlyHint: true` from the catalog (`isReadOnlyTool`: `*:read` scopes,
+`ai:search`, and the two agent-task lookups). Agent hosts that gate writes
+(Hermes `trust: untrusted`) rely on it; a new `*:read` tool inherits it.
 
 **Adding a tool module**: register it in `src/mcp/tools/index.ts`. Both transports
 and `tests/mcp/catalog.test.ts` derive from `TOOL_MODULES` there, so the catalog

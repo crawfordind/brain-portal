@@ -16,6 +16,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { parseUTCDate } from '@/lib/utils/date';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { JackStateBadge } from './jack-state-badge';
 
 interface AgentTaskCardProps {
   task: {
@@ -29,21 +30,14 @@ interface AgentTaskCardProps {
     note_title?: string;
     note_slug?: string;
     latest_summary?: string | null;
+    runtime?: string | null;
+    jack_state?: string | null;
+    last_error?: string | null;
     created_at: string;
     updated_at: string;
   };
   onView: () => void;
 }
-
-const statusColors: Record<string, string> = {
-  queued: 'bg-gray-500',
-  processing: 'bg-blue-500',
-  awaiting_review: 'bg-purple-500',
-  revision_requested: 'bg-orange-500',
-  approved: 'bg-green-500',
-  rejected: 'bg-red-500',
-  failed: 'bg-red-700',
-};
 
 const priorityColors: Record<string, string> = {
   low: 'text-gray-500',
@@ -52,7 +46,11 @@ const priorityColors: Record<string, string> = {
   urgent: 'text-red-500',
 };
 
+/** States whose explanation is worth showing on the card itself. */
+const ATTENTION = ['needs_dispatch', 'needs_review', 'failed', 'running'];
+
 export function AgentTaskCard({ task, onView }: AgentTaskCardProps) {
+  const isJack = task.runtime === 'jack';
   const timeAgo = formatDistanceToNow(parseUTCDate(task.updated_at), { addSuffix: true });
   const queryClient = useQueryClient();
   const confirm = useConfirm();
@@ -66,11 +64,11 @@ export function AgentTaskCard({ task, onView }: AgentTaskCardProps) {
       const res = await fetch(`/api/agent-tasks/${task.id}`, {
         method: 'DELETE',
       });
-      if (!res.ok) throw new Error('Failed to delete');
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to delete');
       toast.success('Task deleted');
       queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
-    } catch {
-      toast.error('Failed to delete task');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete task');
     }
   };
 
@@ -79,21 +77,22 @@ export function AgentTaskCard({ task, onView }: AgentTaskCardProps) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-lg">{task.agent_icon || '🤖'}</span>
-            <Badge variant="outline" className={`${statusColors[task.status]} text-white`}>
-              {task.status.replace(/_/g, ' ')}
-            </Badge>
+            {!isJack && <span className="text-lg">{task.agent_icon || '🤖'}</span>}
+            <JackStateBadge task={task} />
             <Badge variant="outline" className={priorityColors[task.priority]}>
               {task.priority}
             </Badge>
           </div>
           <h3 className="font-medium mb-1 truncate">{task.title}</h3>
+          {isJack && task.last_error && ATTENTION.includes(task.jack_state ?? '') && (
+            <p className="text-xs text-amber-700 dark:text-amber-400 line-clamp-2 mb-1">{task.last_error}</p>
+          )}
           {task.latest_summary && (
             <p className="text-xs text-muted-foreground line-clamp-2 mb-1">{task.latest_summary}</p>
           )}
           <div className="space-y-1">
             <p className="text-sm text-muted-foreground">
-              {task.agent_name} • {timeAgo}
+              {isJack ? 'Jack' : task.agent_name} • {timeAgo}
             </p>
             <div className="flex flex-wrap items-center gap-1.5 text-xs">
               {task.note_title && task.note_slug && (
@@ -117,9 +116,11 @@ export function AgentTaskCard({ task, onView }: AgentTaskCardProps) {
           </div>
         </div>
         <div className="flex gap-2">
-          {task.status === 'awaiting_review' && (
+          {task.jack_state === 'awaiting_approval' ? (
+            <Button size="sm">Decide</Button>
+          ) : task.status === 'awaiting_review' ? (
             <Button size="sm">Review</Button>
-          )}
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
               <Button variant="ghost" size="icon" className="h-8 w-8">

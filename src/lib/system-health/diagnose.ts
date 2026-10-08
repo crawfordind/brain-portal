@@ -25,6 +25,9 @@ export type DiagnosisCode =
   | "AI_TIMEOUT"
   | "AI_UPSTREAM_ERROR"
   | "AGENT_NOT_CONFIGURED"
+  | "JACK_NOT_CONFIGURED"
+  | "JACK_UNREACHABLE"
+  | "JACK_RUN_FAILED"
   | "WORKER_NOT_RUNNING"
   | "STORAGE_UNAVAILABLE"
   | "DATABASE_ERROR"
@@ -57,6 +60,12 @@ interface Rule {
  * mentions "quota", and an invalid key often arrives as a generic 401.
  */
 const RULES: Rule[] = [
+  // Jack (Hermes) runs every delegated task. Its messages are written by
+  // src/lib/agents/jack, so they are matched first and never mistaken for an
+  // OpenRouter failure by the generic status-code rules below.
+  { code: "JACK_NOT_CONFIGURED", match: /Jack connection not configured|JACK_ENABLED|JACK_HERMES_(URL|API_KEY)|JACK_EDGE_CLIENT/i },
+  { code: "JACK_UNREACHABLE", match: /Jack (could not be reached|unreachable|did not answer)|Jack rejected Brain Portal's credentials|Jack's server returned|connection to Jack dropped/i },
+  { code: "JACK_RUN_FAILED", match: /^Jack\b|Jack's gateway|Jack no longer has a record/i },
   { code: "AGENT_NOT_CONFIGURED", match: /agent (config|configuration) not found|no agent_configs|unknown agent type/i },
   { code: "AI_KEY_MISSING", match: /no auth credentials|api key.*(not|missing|unset|undefined)|missing api key|apikey.*required|OPENROUTER_API_KEY/i },
   { code: "AI_KEY_INVALID", match: /\b401\b|unauthorized|invalid api key|authentication (failed|error)|user not found/i },
@@ -150,6 +159,33 @@ const CATALOG: Record<DiagnosisCode, Omit<Diagnosis, "code">> = {
       "The agent_configs table is missing a row for this agent type. Run the agent seed/migration scripts (e.g. scripts/migrate-add-new-agents.ts).",
     userRetryable: false,
     severity: "error",
+  },
+  JACK_NOT_CONFIGURED: {
+    title: "Jack is not connected",
+    explanation:
+      "Delegated tasks run on Jack, and Brain Portal has no working connection to Jack yet. Tasks are kept, marked \"Not sent\", and nothing is sent anywhere until the connection is set up.",
+    adminHint:
+      "Set JACK_ENABLED=true, JACK_HERMES_URL (an https endpoint in front of Jack's Hermes API server) and JACK_HERMES_API_KEY (Jack's API_SERVER_KEY) in the deployment environment and redeploy. See docs/operations/jack-runtime.md.",
+    userRetryable: false,
+    severity: "warning",
+  },
+  JACK_UNREACHABLE: {
+    title: "Jack cannot be reached",
+    explanation:
+      "Brain Portal cannot talk to Jack right now, so it cannot hand over new tasks or see how running ones are doing. Nothing has been lost; tasks keep their state until Jack answers again.",
+    adminHint:
+      "Check that Jack's Hermes gateway is running (`hermes gateway`), that the tunnel or proxy in front of it is up, and that JACK_HERMES_API_KEY matches Jack's API_SERVER_KEY. GET /api/jack/status?check=true runs a live connection test.",
+    userRetryable: true,
+    severity: "error",
+  },
+  JACK_RUN_FAILED: {
+    title: "Jack could not finish a task",
+    explanation:
+      "Jack started the work but did not produce an answer. The task says why; it may have done part of the work, so check before retrying.",
+    adminHint:
+      "Open the task's Hermes session (brain-portal-task-<id>) in Jack to see the transcript and tool calls.",
+    userRetryable: true,
+    severity: "warning",
   },
   WORKER_NOT_RUNNING: {
     title: "Background work is not being picked up",

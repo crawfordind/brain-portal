@@ -28,7 +28,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useSendToJack } from "@/hooks/use-send-to-jack";
 import {
+  Send,
   ArrowLeft,
   MoreHorizontal,
   Star,
@@ -121,6 +123,7 @@ export default function ProjectDetailPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const confirm = useConfirm();
+  const { sendToJack } = useSendToJack();
   const slug = params.slug as string;
 
   const [isEditing, setIsEditing] = useState(false);
@@ -537,6 +540,13 @@ export default function ProjectDetailPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() => sendToJack({ id: project.id, type: "project", title: project.name, projectId: project.id })}
+                    >
+                      <Send className="h-4 w-4 mr-2" />
+                      Send to Jack
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => updateMutation.mutate({ status: "archived" })}
                     >

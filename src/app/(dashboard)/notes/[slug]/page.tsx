@@ -44,6 +44,7 @@ import {
   Brain,
   Bot,
   ExternalLink,
+  Send,
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -55,6 +56,7 @@ import { useAutoSave } from "@/hooks/use-auto-save";
 import { useProjects } from "@/hooks/use-projects";
 import { useMobile } from "@/hooks/use-mobile";
 import { useAskAbout } from "@/hooks/use-ask-about";
+import { useSendToJack } from "@/hooks/use-send-to-jack";
 import { AgentReviewFocusPanel } from "@/components/agents/agent-review-focus-panel";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { NoteLenses } from "@/components/lenses/note-lenses";
@@ -96,6 +98,7 @@ export default function NoteDetailPage() {
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
   const { askAbout } = useAskAbout();
+  const { sendToJack } = useSendToJack();
   const [reviewingTaskId, setReviewingTaskId] = useState<string | null>(null);
 
   const { data: projects } = useProjects();
@@ -114,6 +117,8 @@ export default function NoteDetailPage() {
   const note = data?.note as Note | undefined;
   // canEdit comes from the API: true for owner + project editors, false for viewers
   const canEditNote: boolean = data?.canEdit ?? true;
+  // Shared-project editors can edit but not delegate someone else's note.
+  const isOwner: boolean = data?.isOwner ?? false;
 
   // Fetch linked AI agent tasks for this note
   const { data: delegationData } = useQuery({
@@ -478,6 +483,16 @@ export default function NoteDetailPage() {
                       <Sparkles className="h-4 w-4 mr-2" />
                       Ask about this note
                     </DropdownMenuItem>
+                    {isOwner && (
+                      <DropdownMenuItem
+                        onClick={() =>
+                          sendToJack({ id: note.id, type: "note", title: note.title, projectId: note.project_id })
+                        }
+                      >
+                        <Send className="h-4 w-4 mr-2" />
+                        Send to Jack
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => togglePinMutation.mutate()}>
                       <Pin className="h-4 w-4 mr-2" />

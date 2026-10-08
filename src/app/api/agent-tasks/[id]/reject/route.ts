@@ -3,6 +3,8 @@ import { db, queryOne } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { AgentTask } from "@/lib/db/schema";
 import { syncTaskStatusFromAgentTask } from "@/lib/agents/status-sync";
+import { recordReviewDecision } from "@/lib/agents/jack/dispatcher";
+import { isActive, isJackState } from "@/lib/agents/jack/types";
 
 // POST /api/agent-tasks/[id]/reject - Reject and close task
 export async function POST(
@@ -15,8 +17,8 @@ export async function POST(
   }
 
   const { id } = await params;
-  const body = await request.json();
-  const { reason } = body;
+  const body = await request.json().catch(() => ({}));
+  const reason = typeof body?.reason === "string" ? body.reason.slice(0, 4000) : null;
 
   const task = await queryOne<AgentTask>(
     "SELECT * FROM agent_tasks WHERE id = ? AND user_id = ?",
@@ -25,6 +27,15 @@ export async function POST(
 
   if (!task) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  // Rejecting the record would not stop Jack. Cancel first, so the history
+  // never shows "rejected" over a run that is still doing things.
+  if (isJackState(task.jack_state) && isActive(task.jack_state)) {
+    return NextResponse.json(
+      { error: "Jack is still working on this task. Cancel it first." },
+      { status: 409 }
+    );
   }
 
   // Record feedback
@@ -38,9 +49,10 @@ export async function POST(
 
   // Update task status
   await db.execute({
-    sql: "UPDATE agent_tasks SET status = 'rejected', updated_at = datetime('now') WHERE id = ?",
-    args: [id],
+    sql: "UPDATE agent_tasks SET status = 'rejected', updated_at = datetime('now') WHERE id = ? AND user_id = ?",
+    args: [id, user.id],
   });
+  await recordReviewDecision(id, user.id, "rejected", reason);
 
   // Sync task status
   await syncTaskStatusFromAgentTask(id, 'rejected');
