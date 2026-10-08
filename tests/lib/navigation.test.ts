@@ -24,6 +24,12 @@ describe("contentWidthClass", () => {
     expect(contentWidthClass("/")).toBe("max-w-6xl");
   });
 
+  it("gives Operations the list measure too, but not routes that share its prefix", () => {
+    expect(contentWidthClass("/operations")).toBe("max-w-6xl");
+    expect(contentWidthClass("/operations/portfolio")).toBe("max-w-6xl");
+    expect(contentWidthClass("/operationsx")).toBe("max-w-4xl");
+  });
+
   it("keeps the reading measure everywhere prose is read or written", () => {
     for (const route of [
       "/notes",

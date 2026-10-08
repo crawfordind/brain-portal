@@ -6,7 +6,9 @@
  * Two groups, ordered by how often a destination has something waiting in it
  * rather than by when it was built:
  *
- *   Today   Stream, Tasks, Review, Contacts — the four that carry badges
+ *   Today   Stream, Operations, Tasks, Review, Contacts — what needs the user
+ *           (Operations is the control center over tasks, projects and
+ *           contacts; see src/lib/operations)
  *   Library Notes, Journal, Projects — where things are kept, not pending
  *
  * Every entry resolves to a distinct destination. "Brain" used to sit here
@@ -19,7 +21,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LogOut, Brain, Zap, FileText, FolderKanban, CheckSquare, Settings, BookOpen, Bot, Contact } from "lucide-react";
+import { LogOut, Brain, Zap, FileText, FolderKanban, CheckSquare, Settings, BookOpen, Bot, Contact, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +45,7 @@ interface SidebarItem {
 
 const todayNav: SidebarItem[] = [
   { name: "Stream", href: "/", icon: Zap },
+  { name: "Operations", href: "/operations", icon: Gauge },
   { name: "Tasks", href: "/tasks", icon: CheckSquare, badge: "tasks" },
   { name: "Review", href: "/review", icon: Bot, badge: "review" },
   { name: "Contacts", href: "/crm", icon: Contact, badge: "crm" },
