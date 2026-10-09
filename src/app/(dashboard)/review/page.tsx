@@ -13,7 +13,7 @@ import { useProjects } from "@/hooks/use-projects";
 import { TaskPanel } from "@/components/tasks/task-panel";
 
 /**
- * Review — agent output waiting on a decision.
+ * Review: delegated work in progress, and what it needs from you.
  *
  * A real route rather than a panel inside Work. Reviewing is the step that
  * turns delegated work into finished work; it used to sit three clicks deep
@@ -46,8 +46,8 @@ function ReviewPageContent() {
           <h1 className="shrink-0 text-xl font-bold lg:text-2xl">Review</h1>
           <p className="hidden truncate text-xs text-muted-foreground lg:block">
             {reviewCount > 0
-              ? `${reviewCount} agent output${reviewCount === 1 ? "" : "s"} awaiting your decision`
-              : "Approve, revise, or reject what your agents produce"}
+              ? `${reviewCount} item${reviewCount === 1 ? "" : "s"} waiting on you`
+              : "Approve, reply to, or reject delegated work"}
           </p>
         </div>
       </div>

@@ -639,7 +639,7 @@ If any issues are found, create follow-up tasks.
 
 **Step 1: Update CLAUDE.md if needed**
 
-Check if any architectural changes need to be documented in `/home/daniel/PROJECTS/brain-portal/CLAUDE.md`.
+Check if any architectural changes need to be documented in the repository's `CLAUDE.md`.
 
 **Step 2: Final verification**
 

@@ -24,6 +24,7 @@ import { reminderQuickActions, taskQuickActions, type EmailActionLink } from "@/
 import { formatDueLabel, hourInTimeZone, isDateOnly, safeTimeZone, todayInTimeZone } from "@/lib/email/when";
 import { getSystemHealth } from "@/lib/system-health";
 import { diagnoseError } from "@/lib/system-health/diagnose";
+import { getRuntimeConfig } from "@/lib/agents/runtime/config";
 
 // ─── Types ───────────────────────────────────────────
 
@@ -360,28 +361,36 @@ async function scanAgentTasks(
   const notifications: NotificationInput[] = [];
 
   // Recently completed agent tasks (awaiting review)
+  // A task whose revision failed reads `awaiting_review` (its earlier version
+  // is still there to review); only a real new version is "finished".
+  const agentName = getRuntimeConfig().displayName;
   const completedTasks = await queryAll<{
     id: string;
     title: string;
     assigned_agent: string;
     task_id: string | null;
+    runtime_state: string | null;
   }>(
-    `SELECT id, title, assigned_agent, task_id FROM agent_tasks
+    `SELECT id, title, assigned_agent, task_id, runtime_state FROM agent_tasks
      WHERE user_id = ? AND status = 'awaiting_review'
+       AND (runtime_state IS NULL OR runtime_state = 'awaiting_review')
        AND updated_at > datetime('now', '-12 hours')`,
     [userId]
   );
 
   for (const task of completedTasks) {
+    const managed = !!task.runtime_state;
     notifications.push({
       userId,
       type: "agent_complete",
-      title: `AI ${task.assigned_agent} finished: ${task.title}`,
-      body: `Your ${task.assigned_agent} agent completed "${task.title}" and is ready for review.`,
+      title: managed ? `${agentName} finished: ${task.title}` : `AI ${task.assigned_agent} finished: ${task.title}`,
+      body: managed
+        ? `${agentName}'s work on "${task.title}" is ready for your review.`
+        : `Your ${task.assigned_agent} agent completed "${task.title}" and is ready for review.`,
       priority: "medium",
       entityType: "agent_task",
       entityId: task.id,
-      actionUrl: "/review",
+      actionUrl: `/review?task=${task.id}`,
       metadata: { agent: task.assigned_agent, task_id: task.task_id },
     });
   }
@@ -392,9 +401,11 @@ async function scanAgentTasks(
     title: string;
     assigned_agent: string;
     last_error: string | null;
+    runtime_state: string | null;
   }>(
-    `SELECT id, title, assigned_agent, last_error FROM agent_tasks
+    `SELECT id, title, assigned_agent, last_error, runtime_state FROM agent_tasks
      WHERE user_id = ? AND status = 'failed'
+       AND (runtime_state IS NULL OR runtime_state = 'failed')
        AND updated_at > datetime('now', '-12 hours')`,
     [userId]
   );
@@ -406,7 +417,7 @@ async function scanAgentTasks(
     notifications.push({
       userId,
       type: "agent_failed",
-      title: `AI ${task.assigned_agent} couldn't finish "${task.title}"`,
+      title: task.runtime_state ? `${agentName} couldn't finish "${task.title}"` : `AI ${task.assigned_agent} couldn't finish "${task.title}"`,
       body: `${diagnosis.title}. ${diagnosis.explanation}`,
       priority: "high",
       entityType: "agent_task",
@@ -418,6 +429,47 @@ async function scanAgentTasks(
         admin_hint: diagnosis.adminHint,
       },
     });
+  }
+
+  // A Hermes agent is paused on a decision only the user can make. One notification per
+  // approval request: the entity id carries the request, so a second request
+  // on the same task notifies again and a re-scan of the same one does not.
+  // `agent_complete` is reused because the type CHECK cannot be widened
+  // without rebuilding the table.
+  try {
+    const waiting = await queryAll<{ id: string; title: string; approval: string | null }>(
+      `SELECT at.id, at.title, r.approval
+         FROM agent_tasks at
+         JOIN agent_task_runs r ON r.agent_task_id = at.id AND r.state = 'awaiting_approval'
+        WHERE at.user_id = ? AND at.runtime_state = 'awaiting_approval'`,
+      [userId]
+    );
+    for (const task of waiting) {
+      let requestId = "pending";
+      let description: string | null = null;
+      try {
+        const parsed = JSON.parse(task.approval ?? "{}");
+        requestId = parsed.requestId || requestId;
+        description = parsed.description || null;
+      } catch {
+        // keep defaults
+      }
+      notifications.push({
+        userId,
+        type: "agent_complete",
+        title: `${agentName} needs your approval: ${task.title}`,
+        body: description
+          ? `${agentName} has paused and is asking to: ${description}. Approve or deny it in Review.`
+          : `${agentName} has paused on "${task.title}" and needs your decision in Review.`,
+        priority: "high",
+        entityType: "agent_task_approval",
+        entityId: `${task.id}:${requestId}`,
+        actionUrl: `/review?task=${task.id}`,
+        metadata: { task_id: task.id, request_id: requestId },
+      });
+    }
+  } catch {
+    // agent_task_runs missing on a database that has not run the migration yet.
   }
 
   return notifications;

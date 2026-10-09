@@ -63,7 +63,7 @@ import {
 **Step 2: Run test to verify it fails**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && npx vitest run tests/lib/tasks/calendar-utils.test.ts
+npx vitest run tests/lib/tasks/calendar-utils.test.ts
 ```
 
 Expected: FAIL — `getMonthRange` is not exported.
@@ -108,7 +108,7 @@ export function getMonthRange(date: Date): { start: string; end: string } {
 **Step 4: Run test to verify it passes**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && npx vitest run tests/lib/tasks/calendar-utils.test.ts
+npx vitest run tests/lib/tasks/calendar-utils.test.ts
 ```
 
 Expected: All tests PASS.
@@ -116,7 +116,7 @@ Expected: All tests PASS.
 **Step 5: Commit**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && git add src/lib/tasks/calendar-utils.ts tests/lib/tasks/calendar-utils.test.ts && git commit -m "feat: add getMonthRange utility for mobile calendar"
+git add src/lib/tasks/calendar-utils.ts tests/lib/tasks/calendar-utils.test.ts && git commit -m "feat: add getMonthRange utility for mobile calendar"
 ```
 
 ---
@@ -512,7 +512,7 @@ export function MobileCalendarStrip() {
 **Step 2: Run typecheck**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && npm run typecheck 2>&1 | head -40
+npm run typecheck 2>&1 | head -40
 ```
 
 Expected: No errors in the new file. Fix any type errors before continuing.
@@ -520,7 +520,7 @@ Expected: No errors in the new file. Fix any type errors before continuing.
 **Step 3: Commit**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && git add src/components/layout/mobile-calendar-strip.tsx && git commit -m "feat: add MobileCalendarStrip component"
+git add src/components/layout/mobile-calendar-strip.tsx && git commit -m "feat: add MobileCalendarStrip component"
 ```
 
 ---
@@ -584,7 +584,7 @@ The final structure of the main content div should look like:
 **Step 3: Run typecheck**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && npm run typecheck 2>&1 | head -40
+npm run typecheck 2>&1 | head -40
 ```
 
 Expected: No errors.
@@ -592,7 +592,7 @@ Expected: No errors.
 **Step 4: Commit**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && git add src/components/layout/responsive-layout.tsx && git commit -m "feat: add mobile calendar strip to layout"
+git add src/components/layout/responsive-layout.tsx && git commit -m "feat: add mobile calendar strip to layout"
 ```
 
 ---
@@ -621,7 +621,7 @@ Replace with:
 **Step 2: Run typecheck**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && npm run typecheck 2>&1 | head -40
+npm run typecheck 2>&1 | head -40
 ```
 
 Expected: No errors.
@@ -629,7 +629,7 @@ Expected: No errors.
 **Step 3: Commit**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && git add src/components/dashboard/calendar-widget.tsx && git commit -m "fix: hide calendar week strip on mobile (replaced by header strip)"
+git add src/components/dashboard/calendar-widget.tsx && git commit -m "fix: hide calendar week strip on mobile (replaced by header strip)"
 ```
 
 ---
@@ -639,7 +639,7 @@ cd /home/daniel/PROJECTS/brain-portal && git add src/components/dashboard/calend
 **Step 1: Run all tests**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && npm test 2>&1 | tail -20
+npm test 2>&1 | tail -20
 ```
 
 Expected: All existing tests pass. The new `getMonthRange` test passes.
@@ -647,7 +647,7 @@ Expected: All existing tests pass. The new `getMonthRange` test passes.
 **Step 2: Run typecheck**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && npm run typecheck
+npm run typecheck
 ```
 
 Expected: No errors.
@@ -655,7 +655,7 @@ Expected: No errors.
 **Step 3: Start dev server and visually verify on mobile**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && npm run dev
+npm run dev
 ```
 
 On mobile (or browser DevTools mobile view at 390px width):
@@ -674,5 +674,5 @@ On mobile (or browser DevTools mobile view at 390px width):
 **Step 4: Final commit (if any cleanup needed)**
 
 ```bash
-cd /home/daniel/PROJECTS/brain-portal && git add -p && git commit -m "fix: mobile calendar strip visual polish"
+git add -p && git commit -m "fix: mobile calendar strip visual polish"
 ```

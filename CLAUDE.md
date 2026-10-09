@@ -2,6 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Open Source: No Personal Context
+
+Brain Portal is public (AGPL) and self-hosted by many people. Everything
+committed must work for, and read correctly to, any of them.
+
+- **No personal names, agents, businesses or paths** in code, prompts, UI
+  text, comments, tests, fixtures or docs. Prompts and copy say "the user";
+  fixtures use neutral data (`owner@example.com`, "Northwind"). A name a
+  deployment wants shown is configuration (e.g. `AGENT_DISPLAY_NAME`), never a
+  literal. Copyright and `package.json` author lines are normal attribution
+  and stay.
+- **No machine-specific paths** (`/home/<someone>/...`). Use repo-relative
+  paths and placeholders (`<profile>`, `<your-domain>`, `<your-app>`).
+- **Integrations are optional layers, not replacements.** A feature that
+  depends on one operator's infrastructure (a private agent, a tunnel, a paid
+  service) ships behind configuration, with the existing path as the default
+  and an honest "not configured" state. Never remove a path other self-hosters
+  rely on to suit one deployment, and never fall back silently from a provider
+  an operator chose to one they did not.
+- **Seed data ships empty.** Personal lists live in gitignored files with a
+  committed `*.example.json` (see `ventures.seed.json`).
+
 ## Build & Development Commands
 
 ```bash
@@ -13,6 +35,7 @@ npm run db:migrate   # Run database migrations (tsx scripts/migrate.ts)
 npm run user:create  # Create an account (signups are closed by default)
 npm run migrate:chat-item-context  # Allow 'item' as a chat context type
 npm run migrate:provenance         # Record who wrote each row, and which run
+npm run migrate:agent-runtime      # Delegated-task runtime (also runs in db:migrate)
 
 # MCP Server
 npm run mcp:start    # Start MCP server (requires env vars)
@@ -299,15 +322,20 @@ Required for development (see `.env.example`):
 - `APP_URL` - optional runtime override for every emailed link; see *Email &
   Links Out of the App*. `EMAIL_ACTION_SECRET` - optional, signs email buttons.
 - `CRON_SECRET` - **Required in production.** Guards every `/api/cron/*` route.
-  Unset, `verifyCronSecret` 401s every scheduled request, so the agent queue is
-  never drained and delegated work sits in `queued` with no error to show for
-  it. See *Background Failure Visibility* below.
+  Unset, `verifyCronSecret` 401s every scheduled request, so delegated work is
+  never handed to the runtime and sits in `queued` with no error to show for it. See *Background Failure Visibility* below.
 - `SIGNUP_MODE` / `ALLOWED_EMAILS` - who may have an account created. Defaults
   to `closed`. See *Who Can Sign Up*.
 - `ADMIN_EMAILS` - comma-separated. Fails closed: unset means nobody is admin.
 - `TRUST_PROXY_HEADERS` - set `false` when Node is directly internet-facing.
 - `BRAIN_SERVICE_TOKEN` / `BRAIN_SERVICE_EMAIL` - both required to enable
   `/api/brain`, which is otherwise 503. There is **no default account**.
+- `AGENT_RUNTIME` (`openrouter` default, `hermes`, `off`) and
+  `AGENT_DISPLAY_NAME` - which runtime runs delegated tasks and what the UI
+  calls it. For `hermes`: `HERMES_URL`, `HERMES_API_KEY`, optional
+  `HERMES_PROFILE`, `HERMES_EDGE_CLIENT_ID`, `HERMES_EDGE_CLIENT_SECRET`.
+  Server-only. See *Delegated Tasks: Pluggable Runtime* and
+  `docs/operations/agent-runtime.md`.
 
 ## Who Can Sign Up
 
@@ -523,122 +551,161 @@ Stream card (quick action + menu), stream detail panel, note page menu, task
 list row, task detail, kanban and calendar. The calendar and kanban hooks were
 previously `// TODO` / `console.log` stubs and now work.
 
-## Background Agent Work
+## Delegated Tasks: Pluggable Runtime
 
-Delegation did not disappear; it stopped being something the user drives by
-hand. What remains runs out of band:
+Delegated work (`agent_tasks`) runs on whichever runtime the server's
+`AGENT_RUNTIME` names. Brain Portal owns the records (task, versions, feedback,
+audit trail) and one lifecycle; a runtime adapter only executes.
 
-- **Heartbeat** rules (`action_type: "delegate_to_agent"`)
-- **The `delegate_to_agent` skill**
-- **The `delegate_to_agent` MCP tool**
+| `AGENT_RUNTIME` | What runs the task | Needs |
+|-----------------|--------------------|-------|
+| `openrouter` (**default**) | one model call, no tools (`runtime/openrouter.ts`) | `OPENROUTER_API_KEY` |
+| `hermes` | a Hermes Agent profile via its Runs API, with its own tools, memory and approvals | `HERMES_URL`, `HERMES_API_KEY` |
+| `off` | nothing; tasks are kept as "Not sent" | — |
 
-These insert into `agent_tasks`, `executeAgentTask()` runs them, and the output
-lands in `/review` (`ReviewView` → `AgentQueue` → `AgentReviewFocusPanel`) where
-approve / revise / reject still apply — because nobody was sitting in front of
-that work when it ran.
+**There is no fallback between runtimes, in either direction.** A Hermes
+deployment never spends OpenRouter credits on delegated work however
+unreachable Hermes is, and an OpenRouter deployment never calls a Hermes
+endpoint. `tests/lib/agents/runtime/boundaries.test.ts` fails if anything on the
+task path other than `runtime/openrouter.ts` imports OpenRouter code, and the
+dispatcher tests assert no-fallback both ways. Design:
+`docs/plans/2026-10-08-agent-runtime-design.md`. Operator setup, live test, key
+rotation, rollback: `docs/operations/agent-runtime.md`.
+
+`AGENT_DISPLAY_NAME` (default "Agent") is what the UI calls it: "Send to
+<name>", notification titles, the review panel. Nothing in the code or the
+prompts names a particular person or agent.
+
+Ways in: **Send to <name>** (`useSendToAgent` → `SendToAgentDialog`, on tasks,
+stream items, notes, projects and contacts), heartbeat `delegate_to_agent`, the
+`delegate_to_agent` skill and MCP tool. "Ask about this" stays the quick chat.
+Output lands in `/review` (`ReviewView` → `AgentQueue` → `AgentReviewFocusPanel`).
+
+### Honest when not configured
+
+`getRuntimeConfig` (`src/lib/agents/runtime/config.ts`, pure over its `env`)
+reports `ready`, `disabled` (`off`) or `misconfigured` with a reason that names
+variables, never values. Not ready means new work is stored as `needs_dispatch`
+("Not sent"), the cron makes **no network call at all**, and System Health
+reports it. `publicRuntimeStatus` is the only view a browser gets: runtime,
+display name, a message and `capabilities` (approvals, stop, live status and a
+connection test are Hermes-only), never a URL or key. The UI reads it through
+`useAgentRuntime`, so it never offers a control the runtime cannot honour; the
+model picker shows the "agent" slot only on `openrouter`.
+
+### Lifecycle: `runtime_state` precise, `status` coarse
+
+`agent_tasks.status` has a CHECK constraint and two tables cascade from the
+table, so it is not rebuilt. Nullable `runtime` (stamped at claim time with
+what actually ran it; `NULL` before then) and `runtime_state` (`NULL` = a row
+from before the lifecycle, read-only history) were added; `status` is the
+projection every existing reader understands (`coarseStatus` in
+`src/lib/agents/runtime/types.ts`, which imports nothing).
+
+`needs_dispatch` · `needs_review` · `queued` · `dispatching` · `running` ·
+`awaiting_approval` · `awaiting_input` (reserved) · `cancelling` ·
+`awaiting_review` · `completed` · `rejected` · `failed` · `cancelled`.
+A failed or cancelled *revision* leaves the earlier version reviewable.
+
+### Integrity (`src/lib/agents/runtime/dispatcher.ts`)
+
+- **Atomic claim** `queued → dispatching`; `rowsAffected = 0` means stand down.
+- **The run is recorded before the call**: request body and a random key go to
+  `agent_task_runs` first.
+- **Exactly-once output**: one `db.batch` claims the run, inserts the next
+  version only if the run has none, records it, advances the task. Note the
+  guard sits *outside* the `MAX()` aggregate, which always yields a row.
+- **Adoption**: MCP, heartbeat and skills insert `status='queued'` with
+  `runtime_state IS NULL`; the cron adopts those (`adoptNewTasks`).
+
+**OpenRouter** runs synchronously. Route handlers defer the call with Next's
+`after()` (`deps.schedule`), so a request never waits on a model. A model call
+has no side effects, so a failure is retried automatically after a 5-minute
+backoff while `retry_count < max_retries`; a run with no answer after 10
+minutes died with its worker and is re-queued. An empty answer is retried once
+with a doubled budget, then fails rather than storing a blank version. The
+agent type's `agent_configs` persona and pinned model are used when present.
+
+**Hermes** runs asynchronously:
+
+- **Idempotent submit.** Retries replay the recorded bytes under the recorded
+  `Idempotency-Key`, so Hermes returns the original run instead of starting a
+  second one. Bounded (6) with backoff, only for outcomes where Hermes did not
+  start work. After that the run is `abandoned` and **Retry** reuses its key.
+- **No automatic retry after a run started** (`failed`, `interrupted`): it may
+  have done things. The user retries explicitly.
+- **Polling, not SSE**: the cron (every minute) and the task detail route
+  (throttled, 4s timeout) read `GET /v1/runs/{id}`, which carries the pending
+  approval. Unreachable leaves the state alone and says "Hermes agent
+  unreachable since …"; a run Hermes forgot becomes `failed` (`lost`), never a
+  made-up output.
+- **One Hermes session per task** (`brain-portal-task-<id>`): a revision is the
+  next turn of the same conversation, and still carries the previous version.
+
+### Context and the confirmation boundary
+
+The envelope (`envelope.ts`, pure) carries the source record and its id, pinned
+notes (≤5), note highlights, the project, URLs, the user's guardrails and a
+per-source `Approach:` line, fenced in `<brain_portal_context>` and escaped
+with `escapePromptContent` (`src/lib/agents/prompt.ts`). Every read is scoped
+to the owner. `taskRules(runtime)` addresses "the user" and tells the model to
+propose record changes rather than make them; the OpenRouter rules add that it
+has no tools, the Hermes rules that it must never send, post, publish, buy,
+trade, change credentials or delete.
+
+On Hermes the enforced gate is the host: Brain Portal's MCP server configured
+`trust: untrusted` in the profile makes every tool without `readOnlyHint: true`
+wait for approval. `registerAllTools` marks read-only tools from the catalog
+(`isReadOnlyTool`), so reads flow and writes pause. Review shows the redacted
+request (`parsePendingApproval` + `redactAgentText`) with **Approve once** /
+**Deny** only; Hermes's `session`/`always` are never offered.
+
+### Tables and routes
+
+- `agent_task_runs` — one row per attempt: runtime, idempotency key, request
+  body, external run/session ids (Hermes), state, approval, usage,
+  `unreachable_since`.
+- `agent_task_events` — audit trail: actor (`user`/`agent`/`system`), kind, run.
+- `GET/POST /api/agent-tasks` (`?needsYou=true` = waiting on the user),
+  `GET/DELETE /api/agent-tasks/[id]`, `POST …/[id]/send|cancel|approval|revise|approve|reject`,
+  `GET /api/agent-runtime/status` (`?check=true` = live `/v1/capabilities`
+  test, Hermes only). Every browser-supplied id is checked against the session
+  user (`src/lib/agents/runtime/guard.ts`); per-user rate limits; 64 KB body cap.
+- `/api/cron/process-agent-queue` runs `runQueuePass` and nothing else.
+
+**Migration**: `applyAgentRuntimeMigration` (`src/lib/agents/runtime/schema.ts`),
+run by `npm run db:migrate` (with the build's `AGENT_RUNTIME`) and
+`npm run migrate:agent-runtime`. On its first application only: on
+`openrouter`, pending work keeps running as before (queued rows are adopted,
+pending revisions queued); on `hermes` or `off`, legacy `queued`/
+`revision_requested` → `needs_dispatch`, in a coarse status the outgoing
+deployment's cron never selects (it runs in `prebuild` while the old build is
+live). On any runtime, `processing` or a missing source → `needs_review`.
+History is untouched. A database that ran the early draft of this feature
+(runtime-specific column names) is renamed onto the generic schema, keeping
+every row.
 
 ### Supported source types
 
-| Source Type | AI Behavior | Original Preserved |
-|-------------|-------------|-------------------|
-| **Task** | Complete the task | Yes |
-| **Note** | Feedback, suggestions, alternative perspectives, next steps | Yes |
-| **Capture/Thought** | Expand and complete the thought | Yes |
-| **Reminder** | Prepare context, action items, relevant info | Yes |
-| **Insight** | Deeper analysis, practical applications | Yes |
-
-**IMPORTANT**: the original content is NEVER deleted. AI outputs are linked
-alongside the original.
+Task, note (and journal), capture/thought, reminder, insight, project, contact.
+The server resolves ambiguous stream types (a stream "task" may be a capture)
+against the tables, as the chat does. The original is never deleted; outputs
+are linked alongside it. For task sources, `tasks.agent_task_id` is linked (if
+free) and status sync applies:
+`queued/processing/revision_requested/awaiting_review` → `in_progress`,
+`approved` → `completed`, `rejected/failed` → `pending`.
 
 ### Agent types
 
-The 17 specialist types still exist as `agent_configs` rows and a background
-caller may name one. They are no longer a roster the user picks from:
-`AGENT_ROLES` (`src/lib/agents/constants.ts`) names the *job* ("Code",
-"Research") wherever a label is rendered, because a badge reading "Alex" told
-the user nothing about what ran.
-
-`agent_type: "auto"` now means **`general`**. The keyword/LLM router that used
-to choose among 17 existed to spare the user a 17-way choice in a dialog that no
-longer exists; `src/lib/agents/router.ts`, `POST /api/agents/route` and the
-`agent_routing_log` audit table are gone with it.
+The 17 types are a label for the job (`assigned_agent`, default `general`;
+`auto` means `general`). On OpenRouter an active `agent_configs` row for the
+type supplies its persona and pinned model; without one the generalist runs.
+On Hermes the type is a label only.
 
 ### Nothing fires behind the user's back
 
-`POST /api/stream` used to delegate automatically whenever the classifier
-suggested an agent, and the Brain Bar carried its own 17-agent picker. Capturing
-a thought therefore started background work nobody asked for, which piled up in
-a review queue nobody visited. The classifier still *names* a suggestion; only
-an explicit `delegatedTo` from the caller acts on it.
-
-### Database Tables
-
-- `agent_configs` - Agent definitions with system prompts
-- `agent_tasks` - Delegated tasks (with `source_type` / `source_id` for any entity)
-- `agent_task_outputs` - Versioned outputs
-- `agent_task_feedback` - User review feedback
-
-### API Routes
-
-- `GET/POST /api/agent-tasks` - List/create agent tasks.
-  `?sourceType=&sourceId=` answers "what background work exists against this
-  entity?", which is what the note page asks. That used to be `GET
-  /api/delegate`; the endpoint went with the delegation UI, the question did not.
-- `GET/DELETE /api/agent-tasks/[id]` - Task details/deletion
-- `POST /api/agent-tasks/[id]/approve|revise|reject` - Review actions
-- `GET /api/agent-tasks/stats` - Aggregate stats
-- `GET /api/agents`, `GET /api/agents/[type]` - Agent configs
-
-### Key Services
-
-- `src/lib/agents/context.ts` - Build task context from notes/embeddings
-- `src/lib/agents/executor.ts` - Execute agent tasks with type-specific prompts
-- `src/lib/agents/status-sync.ts` - Sync statuses (task entities only)
-
-### Status Sync
-
-For task entities, agent_task and task statuses are synchronized:
-- `queued/processing/revision_requested` → `in_progress`
-- `awaiting_review` → `in_progress`
-- `approved` → `completed`
-- `rejected/failed` → `pending`
-
-For non-task entities, only the agent_task status is tracked.
-
-### Execution & Queue Reliability
-
-Delegation entry points kick off `executeAgentTask()` fire-and-forget, and
-`/api/cron/process-agent-queue` (every minute) is the safety net. Both can reach
-the same task, so execution is built around a single invariant:
-
-- **Atomic claim.** `executeAgentTask()` starts with a conditional
-  `UPDATE … SET status='processing' WHERE id=? AND status IN ('queued',
-  'revision_requested','failed')`. `rowsAffected === 0` means another worker owns
-  the task and this one returns without calling the model. Without the claim,
-  two workers produce the same `version_number` and the loser trips
-  `UNIQUE(agent_task_id, version_number)` — failing a task that actually
-  succeeded.
-- **Version numbers come from SQL** (`COALESCE(MAX(version_number),0)+1`), never
-  from the in-memory `current_version` read at the start of the run.
-- **Empty output is a failure, not a result.** `completeWithMeta()` surfaces
-  `finish_reason`; a blank body with `finish_reason: "length"` is retried once at
-  double the token budget (reasoning models can spend the whole budget on hidden
-  tokens), and anything still blank throws instead of being stored as output.
-- **Transient upstream errors retry.** 429/5xx/network failures get bounded
-  exponential backoff inside `completeWithMeta`; other errors fail fast.
-- **The cron recovers three states**: tasks stuck in `processing` past the
-  timeout, revisions abandoned in `revision_requested`, and `failed` tasks that
-  still have `retry_count < max_retries`. `retry_count` resets to 0 on success.
-- **Only configured agents are dispatched.** A caller can name any of the 17
-  agent types, but delegation falls back to a seeded agent when the named one
-  has no `agent_configs` row — the executor hard-fails on a missing config.
-
-The cron declares `maxDuration = 300` and stops starting new work near that
-ceiling, so a run is never killed mid-task with a batch half-processed.
-
-**Migrations**: `npx tsx scripts/migrate-add-new-agents.ts` adds the 10
-professional agent types (legal, finance, hr, product, sales, operations,
-security, data_eng, educator, strategy).
+Capturing a thought never starts delegated work; the classifier only *names* a
+suggestion. Legacy pending work is parked, not auto-sent.
 
 ## Model Selection
 
@@ -649,7 +716,8 @@ subsystem quietly not working, and the fix was a code change and a redeploy.
 
 - **Slots** (`src/lib/ai/models/slots.ts`): jobs, not models — `fast`
   (summaries, tags, capture triage, task parsing, agent routing), `deep`
-  (insights, weekly reviews, project health), `agent` (delegated work),
+  (insights, weekly reviews, project health), `agent` (delegated tasks on
+  the OpenRouter runtime; shown in Settings only when `AGENT_RUNTIME=openrouter`),
   `vision` (handwriting, image and audio), `embedding` (search index). Each
   carries an ordered candidate list, a recommendation reason, and whether the
   Auto Router may stand in for it.
@@ -683,9 +751,9 @@ subsystem quietly not working, and the fix was a code change and a redeploy.
   breaks, and lists live models with context window, per-million pricing, and
   image support, recommended first.
 - **Storage**: `users.preferences` JSON under a `models` key. No migration.
-- **Agent overrides**: a model pinned on an `agent_configs` row still wins, but
-  it is now the *head of a chain* rather than the only option, so a config
-  pinned to a retired id degrades instead of failing every task.
+- **Agent overrides**: on the OpenRouter runtime an active `agent_configs`
+  row's `model_id` goes to the head of the `agent` slot's chain (see
+  *Delegated Tasks: Pluggable Runtime*). Hermes brings its own model.
 
 ## Provenance & Run Collapsing
 
@@ -1233,7 +1301,7 @@ The 9 Operations tools are listed under *Operations Control Center*.
 | `create_capture` | Quick capture a thought/idea/reference |
 | `semantic_search` | AI-powered similarity search via embeddings |
 | `generate_insights` | Generate AI insights from notes/captures |
-| `delegate_to_agent` | Queue background work for an agent (lands in `/review`) |
+| `delegate_to_agent` | Queue background work for the configured runtime (lands in `/review`) |
 | `get_agent_task` | Check agent task status and output |
 | `list_agent_tasks` | List delegated agent tasks |
 | `search` | Full-text search across all entity types |
@@ -1298,6 +1366,11 @@ Every tool / resource / prompt invocation is guarded by `src/mcp/guard.ts`:
 2. **Rate limit** — token-bucket keyed by API-key id (`src/mcp/rate-limit.ts`), refilling continuously at `rate_limit_per_minute / 60000` tokens per ms.
 
 Canonical scopes (`MCP_SCOPES` in `src/lib/mcp/keys.ts`): `notes:read`, `notes:write`, `tasks:read`, `tasks:write`, `projects:read`, `projects:write`, `captures:read`, `captures:write`, `search:read`, `ai:search`, `ai:insights`, `ai:delegate`, `resources:read`, `prompts:read`, `crm:read`, `crm:write`. `*` is wildcard.
+
+**Read-only hints**: `registerAllTools` annotates every read-only tool
+`readOnlyHint: true` from the catalog (`isReadOnlyTool`: `*:read` scopes,
+`ai:search`, and the two agent-task lookups). Agent hosts that gate writes
+(Hermes `trust: untrusted`) rely on it; a new `*:read` tool inherits it.
 
 **Adding a tool module**: register it in `src/mcp/tools/index.ts`. Both transports
 and `tests/mcp/catalog.test.ts` derive from `TOOL_MODULES` there, so the catalog

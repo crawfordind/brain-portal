@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, queryOne, queryAll } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
-import { AgentTask, AgentTaskOutput, AgentTaskFeedback } from "@/lib/db/schema";
+import { AgentTaskOutput, AgentTaskFeedback } from "@/lib/db/schema";
+import { getTaskForUser, reconcileTask, type RunRow } from "@/lib/agents/runtime/dispatcher";
+import { publicRuntimeStatus } from "@/lib/agents/runtime/config";
+import { checkRuntimeRateLimit } from "@/lib/agents/runtime/guard";
+import { isActive, isTaskState, POLLED_STATES, type PendingApproval } from "@/lib/agents/runtime/types";
 
-// GET /api/agent-tasks/[id] - Get task with outputs and feedback
+/** UI-triggered polls: short timeout so a slow agent never stalls the page, and throttled. */
+const UI_POLL = { timeoutMs: 4_000, minIntervalMs: 3_000 };
+
+// GET /api/agent-tasks/[id] - Get task with outputs, feedback, runs and audit trail
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -14,100 +21,194 @@ export async function GET(
   }
 
   const { id } = await params;
-  const task = await queryOne<AgentTask>(
-    "SELECT * FROM agent_tasks WHERE id = ? AND user_id = ?",
-    [id, user.id]
-  );
-
+  let task = await getTaskForUser(id, user.id);
   if (!task) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
-  // Fetch outputs
+  // Ask a Hermes agent for fresh status while someone is looking, so the page does not
+  // wait for the next cron pass. The cron keeps doing this when nobody is.
+  if (
+    task.runtime === "hermes" &&
+    isTaskState(task.runtime_state) &&
+    POLLED_STATES.includes(task.runtime_state) &&
+    checkRuntimeRateLimit(user.id, "poll").allowed
+  ) {
+    try {
+      await reconcileTask(id, { timeoutMs: UI_POLL.timeoutMs }, { minIntervalMs: UI_POLL.minIntervalMs });
+      task = (await getTaskForUser(id, user.id)) ?? task;
+    } catch (error) {
+      console.error("[API] on-demand agent poll failed:", error instanceof Error ? error.message : error);
+    }
+  }
+
   const outputs = await queryAll<AgentTaskOutput>(
     "SELECT * FROM agent_task_outputs WHERE agent_task_id = ? ORDER BY version_number DESC",
     [id]
   );
 
-  // Fetch feedback
   const feedback = await queryAll<AgentTaskFeedback>(
     "SELECT * FROM agent_task_feedback WHERE agent_task_id = ? ORDER BY created_at DESC",
     [id]
   );
 
-  // Resolve context_note_ids into note objects with titles
-  const contextNoteIds = JSON.parse(task.context_note_ids || '[]') as string[];
+  // Resolve context_note_ids into note objects with titles. Scoped to the
+  // owner: the ids were stored from a request body.
+  let contextNoteIds: string[] = [];
+  try {
+    const parsed = JSON.parse(task.context_note_ids || "[]");
+    if (Array.isArray(parsed)) contextNoteIds = parsed.filter((v): v is string => typeof v === "string");
+  } catch {
+    /* malformed data */
+  }
   let contextNotes: Array<{ id: string; title: string; slug: string }> = [];
   if (contextNoteIds.length > 0) {
-    const placeholders = contextNoteIds.map(() => '?').join(',');
+    const placeholders = contextNoteIds.map(() => "?").join(",");
     contextNotes = await queryAll<{ id: string; title: string; slug: string }>(
-      `SELECT id, title, slug FROM notes WHERE id IN (${placeholders})`,
-      contextNoteIds
+      `SELECT id, title, slug FROM notes WHERE user_id = ? AND id IN (${placeholders})`,
+      [user.id, ...contextNoteIds]
     );
   }
 
-  // Parse context_used (auto-retrieved notes)
-  const contextUsed = JSON.parse(task.context_used || '[]') as Array<{
-    id: string;
-    title: string;
-    similarity: number;
-  }>;
+  // Auto-retrieved notes (historical tasks only; the current runtimes use pinned context)
+  let contextUsed: Array<{ id: string; title: string; similarity: number }> = [];
+  try {
+    const parsed = JSON.parse(task.context_used || "[]");
+    if (Array.isArray(parsed)) contextUsed = parsed;
+  } catch {
+    /* malformed data */
+  }
 
-  // Resolve source entity for bidirectional linking
-  let sourceEntity: { id: string; type: string; title: string; url: string } | null = null;
-  const sourceType = (task as any).source_type || 'task';
-  const sourceId = (task as any).source_id || task.task_id;
+  const sourceEntity = await resolveSourceEntity(user.id, task.source_type || "task", task.source_id || task.task_id);
 
-  if (sourceId) {
-    switch (sourceType) {
-      case 'note': {
-        const note = await queryOne<{ id: string; title: string; slug: string }>(
-          "SELECT id, title, slug FROM notes WHERE id = ?",
-          [sourceId]
-        );
-        if (note) {
-          sourceEntity = { id: note.id, type: 'note', title: note.title, url: `/notes/${note.id}` };
-        }
-        break;
-      }
-      case 'task': {
-        const linkedTask = await queryOne<{ id: string; title: string; content: string }>(
-          "SELECT id, title, content FROM tasks WHERE id = ?",
-          [sourceId]
-        );
-        if (linkedTask) {
-          sourceEntity = { id: linkedTask.id, type: 'task', title: linkedTask.title || linkedTask.content, url: `/tasks` };
-        }
-        break;
-      }
-      case 'capture':
-      case 'thought': {
-        const capture = await queryOne<{ id: string; content: string }>(
-          "SELECT id, content FROM captures WHERE id = ?",
-          [sourceId]
-        );
-        if (capture) {
-          sourceEntity = { id: capture.id, type: sourceType, title: capture.content.slice(0, 60), url: `/` };
-        }
-        break;
-      }
-      case 'reminder': {
-        const reminder = await queryOne<{ id: string; title: string }>(
-          "SELECT id, title FROM reminders WHERE id = ?",
-          [sourceId]
-        );
-        if (reminder) {
-          sourceEntity = { id: reminder.id, type: 'reminder', title: reminder.title, url: `/` };
-        }
-        break;
-      }
+  // Runs and the audit trail. Only reference ids and outcomes leave the
+  // server: never the request body, tool arguments or credentials.
+  const runs = task.runtime_state
+    ? await queryAll<RunRow>(
+        "SELECT * FROM agent_task_runs WHERE agent_task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 20",
+        [id]
+      )
+    : [];
+  const events = task.runtime_state
+    ? await queryAll<{ id: string; actor: string; kind: string; detail: string | null; run_id: string | null; created_at: string }>(
+        "SELECT id, actor, kind, detail, run_id, created_at FROM agent_task_events WHERE agent_task_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 200",
+        [id]
+      )
+    : [];
+
+  let approval: PendingApproval | null = null;
+  const pendingRun = runs.find((r) => r.state === "awaiting_approval" && r.approval);
+  if (task.runtime_state === "awaiting_approval" && pendingRun?.approval) {
+    try {
+      approval = JSON.parse(pendingRun.approval) as PendingApproval;
+    } catch {
+      approval = null;
     }
   }
 
-  return NextResponse.json({ task, outputs, feedback, contextNotes, contextUsed, sourceEntity });
+  return NextResponse.json({
+    task,
+    outputs,
+    feedback,
+    contextNotes,
+    contextUsed,
+    sourceEntity,
+    agent: {
+      ...publicRuntimeStatus(),
+      approval,
+      unreachableSince: runs[0]?.unreachable_since ?? null,
+      runs: runs.map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        state: r.state,
+        externalRunId: r.external_run_id,
+        sessionId: r.session_id,
+        outputVersion: r.output_version,
+        model: r.runtime_model,
+        createdAt: r.created_at,
+        finishedAt: r.finished_at,
+      })),
+      events: events.map((e) => ({
+        id: e.id,
+        actor: e.actor,
+        kind: e.kind,
+        runId: e.run_id,
+        createdAt: e.created_at,
+        detail: safeDetail(e.detail),
+      })),
+    },
+  });
 }
 
-// DELETE /api/agent-tasks/[id] - Delete/cancel task
+function safeDetail(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSourceEntity(
+  userId: string,
+  sourceType: string,
+  sourceId: string | null
+): Promise<{ id: string; type: string; title: string; url: string } | null> {
+  if (!sourceId) return null;
+  switch (sourceType) {
+    case "note":
+    case "journal": {
+      const note = await queryOne<{ id: string; title: string; slug: string }>(
+        "SELECT id, title, slug FROM notes WHERE id = ? AND user_id = ?",
+        [sourceId, userId]
+      );
+      return note ? { id: note.id, type: "note", title: note.title, url: `/notes/${note.id}` } : null;
+    }
+    case "task": {
+      const linked = await queryOne<{ id: string; title: string | null; content: string | null }>(
+        "SELECT id, title, content FROM tasks WHERE id = ? AND user_id = ?",
+        [sourceId, userId]
+      );
+      return linked
+        ? { id: linked.id, type: "task", title: linked.title || linked.content || "Task", url: `/tasks?task=${linked.id}` }
+        : null;
+    }
+    case "capture":
+    case "thought": {
+      const capture = await queryOne<{ id: string; content: string }>(
+        "SELECT id, content FROM captures WHERE id = ? AND user_id = ?",
+        [sourceId, userId]
+      );
+      return capture ? { id: capture.id, type: sourceType, title: capture.content.slice(0, 60), url: `/` } : null;
+    }
+    case "reminder": {
+      const reminder = await queryOne<{ id: string; title: string }>(
+        "SELECT id, title FROM reminders WHERE id = ? AND user_id = ?",
+        [sourceId, userId]
+      );
+      return reminder ? { id: reminder.id, type: "reminder", title: reminder.title, url: `/` } : null;
+    }
+    case "project": {
+      const project = await queryOne<{ id: string; name: string; slug: string }>(
+        "SELECT id, name, slug FROM projects WHERE id = ? AND user_id = ?",
+        [sourceId, userId]
+      );
+      return project ? { id: project.id, type: "project", title: project.name, url: `/projects/${project.slug}` } : null;
+    }
+    case "contact": {
+      const contact = await queryOne<{ id: string; canonical_name: string }>(
+        "SELECT id, canonical_name FROM entities WHERE id = ? AND user_id = ?",
+        [sourceId, userId]
+      );
+      return contact ? { id: contact.id, type: "contact", title: contact.canonical_name, url: `/crm/${contact.id}` } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+// DELETE /api/agent-tasks/[id] - Delete task
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -118,13 +219,18 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  const task = await queryOne<AgentTask>(
-    "SELECT * FROM agent_tasks WHERE id = ? AND user_id = ?",
-    [id, user.id]
-  );
+  const task = await getTaskForUser(id, user.id);
 
   if (!task) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  // Deleting the record would not stop the runtime. Stop it first, then delete.
+  if (isTaskState(task.runtime_state) && isActive(task.runtime_state)) {
+    return NextResponse.json(
+      { error: "This task is still running. Cancel it first, then delete it." },
+      { status: 409 }
+    );
   }
 
   // Clean up related data before deleting
@@ -136,14 +242,18 @@ export async function DELETE(
     sql: "DELETE FROM agent_task_outputs WHERE agent_task_id = ?",
     args: [id],
   });
+  if (task.runtime_state) {
+    await db.execute({ sql: "DELETE FROM agent_task_events WHERE agent_task_id = ?", args: [id] });
+    await db.execute({ sql: "DELETE FROM agent_task_runs WHERE agent_task_id = ?", args: [id] });
+  }
   // Clear the reference from the linked task
   await db.execute({
-    sql: "UPDATE tasks SET agent_task_id = NULL, delegated_to = NULL WHERE agent_task_id = ?",
-    args: [id],
+    sql: "UPDATE tasks SET agent_task_id = NULL, delegated_to = NULL WHERE agent_task_id = ? AND user_id = ?",
+    args: [id, user.id],
   });
   await db.execute({
-    sql: "DELETE FROM agent_tasks WHERE id = ?",
-    args: [id],
+    sql: "DELETE FROM agent_tasks WHERE id = ? AND user_id = ?",
+    args: [id, user.id],
   });
 
   return NextResponse.json({ success: true });

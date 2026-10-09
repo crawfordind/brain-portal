@@ -25,6 +25,9 @@ export type DiagnosisCode =
   | "AI_TIMEOUT"
   | "AI_UPSTREAM_ERROR"
   | "AGENT_NOT_CONFIGURED"
+  | "AGENT_RUNTIME_NOT_CONFIGURED"
+  | "HERMES_UNREACHABLE"
+  | "AGENT_RUN_FAILED"
   | "WORKER_NOT_RUNNING"
   | "STORAGE_UNAVAILABLE"
   | "DATABASE_ERROR"
@@ -57,6 +60,13 @@ interface Rule {
  * mentions "quota", and an invalid key often arrives as a generic 401.
  */
 const RULES: Rule[] = [
+  // Messages written by the delegated-task runtime (src/lib/agents/runtime).
+  // Matched first, so a Hermes failure is never mistaken for an OpenRouter one
+  // by the generic status-code rules below. OpenRouter runtime failures carry
+  // the provider's own text and fall through to those rules on purpose.
+  { code: "AGENT_RUNTIME_NOT_CONFIGURED", match: /Delegated tasks are (turned off|not configured)|AGENT_RUNTIME (must|is hermes)|HERMES_(URL|API_KEY|EDGE_CLIENT)/i },
+  { code: "HERMES_UNREACHABLE", match: /Hermes agent (could not be reached|unreachable|did not answer|rejected Brain Portal's credentials)|Hermes server returned|connection to the Hermes agent dropped/i },
+  { code: "AGENT_RUN_FAILED", match: /^The agent\b|Hermes gateway shut down|no longer has a record of this run/i },
   { code: "AGENT_NOT_CONFIGURED", match: /agent (config|configuration) not found|no agent_configs|unknown agent type/i },
   { code: "AI_KEY_MISSING", match: /no auth credentials|api key.*(not|missing|unset|undefined)|missing api key|apikey.*required|OPENROUTER_API_KEY/i },
   { code: "AI_KEY_INVALID", match: /\b401\b|unauthorized|invalid api key|authentication (failed|error)|user not found/i },
@@ -150,6 +160,33 @@ const CATALOG: Record<DiagnosisCode, Omit<Diagnosis, "code">> = {
       "The agent_configs table is missing a row for this agent type. Run the agent seed/migration scripts (e.g. scripts/migrate-add-new-agents.ts).",
     userRetryable: false,
     severity: "error",
+  },
+  AGENT_RUNTIME_NOT_CONFIGURED: {
+    title: "Delegated tasks are not set up",
+    explanation:
+      "The server has no working runtime for delegated tasks, so they are kept, marked \"Not sent\", and nothing runs until it is configured.",
+    adminHint:
+      "Set AGENT_RUNTIME to openrouter (needs OPENROUTER_API_KEY) or hermes (needs HERMES_URL and HERMES_API_KEY) in the deployment environment and redeploy. See docs/operations/agent-runtime.md.",
+    userRetryable: false,
+    severity: "warning",
+  },
+  HERMES_UNREACHABLE: {
+    title: "The Hermes agent cannot be reached",
+    explanation:
+      "Brain Portal cannot talk to the agent right now, so it cannot hand over new tasks or see how running ones are doing. Nothing has been lost; tasks keep their state until the agent answers again.",
+    adminHint:
+      "Check that the Hermes gateway is running (`hermes gateway`), that the tunnel or proxy in front of it is up, and that HERMES_API_KEY matches the profile's API_SERVER_KEY. GET /api/agent-runtime/status?check=true runs a live connection test.",
+    userRetryable: true,
+    severity: "error",
+  },
+  AGENT_RUN_FAILED: {
+    title: "The agent could not finish a task",
+    explanation:
+      "The agent started the work but did not produce an answer. The task says why; it may have done part of the work, so check before retrying.",
+    adminHint:
+      "Open the task's Hermes session (brain-portal-task-<id>) to see the transcript and tool calls.",
+    userRetryable: true,
+    severity: "warning",
   },
   WORKER_NOT_RUNNING: {
     title: "Background work is not being picked up",
