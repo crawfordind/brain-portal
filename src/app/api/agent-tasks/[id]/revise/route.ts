@@ -1,16 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { requestJackRevision } from "@/lib/agents/jack/dispatcher";
-import { INPUT_LIMITS } from "@/lib/agents/jack/guard";
-import { actionErrorResponse, rateLimited, readJsonBody } from "@/lib/agents/jack/http";
+import { requestRevision } from "@/lib/agents/runtime/dispatcher";
+import { INPUT_LIMITS } from "@/lib/agents/runtime/guard";
+import { actionErrorResponse, rateLimited, readJsonBody } from "@/lib/agents/runtime/http";
 import { isErrorResponse } from "@/lib/api/validation";
 
 /**
- * POST /api/agent-tasks/[id]/revise — Daniel's reply to an output.
+ * POST /api/agent-tasks/[id]/revise — the user's reply to an output.
  *
- * Records the feedback and sends it to Jack as the next turn of the task's own
- * Hermes session. A historical OpenRouter task becomes a Jack task here; it
- * is never re-run on OpenRouter.
+ * Records the feedback and queues a new version on the configured runtime:
+ * on Hermes, the next turn of the task's own session; on OpenRouter, a new
+ * completion carrying the previous version and the feedback. The work runs
+ * after the response.
  */
 export async function POST(
   request: NextRequest,
@@ -42,7 +43,7 @@ export async function POST(
 
   const { id } = await params;
   try {
-    const outcome = await requestJackRevision(id, user.id, feedback);
+    const outcome = await requestRevision(id, user.id, feedback, { schedule: after });
     return NextResponse.json({ success: true, dispatch: outcome });
   } catch (error) {
     return actionErrorResponse(error, "revise");

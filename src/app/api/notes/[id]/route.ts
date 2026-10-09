@@ -62,7 +62,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     canEditNote = canEdit(access);
   }
 
-  // isOwner: some actions (e.g. Send to Jack) are owner-only, not editor-level.
+  // isOwner: some actions (e.g. sending to the agent) are owner-only, not editor-level.
   return NextResponse.json({ note, canEdit: canEditNote, isOwner: note.user_id === user.id });
 }
 

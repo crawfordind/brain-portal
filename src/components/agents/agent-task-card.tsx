@@ -16,7 +16,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { parseUTCDate } from '@/lib/utils/date';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { JackStateBadge } from './jack-state-badge';
+import { TaskStateBadge } from './agent-state-badge';
+import { useAgentRuntime } from '@/hooks/use-agent-runtime';
 
 interface AgentTaskCardProps {
   task: {
@@ -31,7 +32,7 @@ interface AgentTaskCardProps {
     note_slug?: string;
     latest_summary?: string | null;
     runtime?: string | null;
-    jack_state?: string | null;
+    runtime_state?: string | null;
     last_error?: string | null;
     created_at: string;
     updated_at: string;
@@ -50,7 +51,8 @@ const priorityColors: Record<string, string> = {
 const ATTENTION = ['needs_dispatch', 'needs_review', 'failed', 'running'];
 
 export function AgentTaskCard({ task, onView }: AgentTaskCardProps) {
-  const isJack = task.runtime === 'jack';
+  const managed = !!task.runtime_state;
+  const { displayName } = useAgentRuntime();
   const timeAgo = formatDistanceToNow(parseUTCDate(task.updated_at), { addSuffix: true });
   const queryClient = useQueryClient();
   const confirm = useConfirm();
@@ -77,14 +79,14 @@ export function AgentTaskCard({ task, onView }: AgentTaskCardProps) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
-            {!isJack && <span className="text-lg">{task.agent_icon || '🤖'}</span>}
-            <JackStateBadge task={task} />
+            {!managed && <span className="text-lg">{task.agent_icon || '🤖'}</span>}
+            <TaskStateBadge task={task} />
             <Badge variant="outline" className={priorityColors[task.priority]}>
               {task.priority}
             </Badge>
           </div>
           <h3 className="font-medium mb-1 truncate">{task.title}</h3>
-          {isJack && task.last_error && ATTENTION.includes(task.jack_state ?? '') && (
+          {managed && task.last_error && ATTENTION.includes(task.runtime_state ?? '') && (
             <p className="text-xs text-amber-700 dark:text-amber-400 line-clamp-2 mb-1">{task.last_error}</p>
           )}
           {task.latest_summary && (
@@ -92,7 +94,7 @@ export function AgentTaskCard({ task, onView }: AgentTaskCardProps) {
           )}
           <div className="space-y-1">
             <p className="text-sm text-muted-foreground">
-              {isJack ? 'Jack' : task.agent_name} • {timeAgo}
+              {managed ? displayName : task.agent_name} • {timeAgo}
             </p>
             <div className="flex flex-wrap items-center gap-1.5 text-xs">
               {task.note_title && task.note_slug && (
@@ -116,7 +118,7 @@ export function AgentTaskCard({ task, onView }: AgentTaskCardProps) {
           </div>
         </div>
         <div className="flex gap-2">
-          {task.jack_state === 'awaiting_approval' ? (
+          {task.runtime_state === 'awaiting_approval' ? (
             <Button size="sm">Decide</Button>
           ) : task.status === 'awaiting_review' ? (
             <Button size="sm">Review</Button>

@@ -3,7 +3,7 @@ import { db, queryOne } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { AgentTask } from "@/lib/db/schema";
 import { syncTaskStatusFromAgentTask } from "@/lib/agents/status-sync";
-import { recordReviewDecision } from "@/lib/agents/jack/dispatcher";
+import { recordReviewDecision } from "@/lib/agents/runtime/dispatcher";
 
 // POST /api/agent-tasks/[id]/approve - Approve current output
 export async function POST(

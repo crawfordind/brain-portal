@@ -2,15 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, queryOne, queryAll } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { AgentTaskOutput, AgentTaskFeedback } from "@/lib/db/schema";
-import { getTaskForUser, reconcileJackTask, type RunRow } from "@/lib/agents/jack/dispatcher";
-import { publicJackStatus } from "@/lib/agents/jack/config";
-import { checkJackRateLimit } from "@/lib/agents/jack/guard";
-import { isActive, isJackState, POLLED_STATES, type PendingApproval } from "@/lib/agents/jack/types";
+import { getTaskForUser, reconcileTask, type RunRow } from "@/lib/agents/runtime/dispatcher";
+import { publicRuntimeStatus } from "@/lib/agents/runtime/config";
+import { checkRuntimeRateLimit } from "@/lib/agents/runtime/guard";
+import { isActive, isTaskState, POLLED_STATES, type PendingApproval } from "@/lib/agents/runtime/types";
 
-/** UI-triggered polls: short timeout so a slow Jack never stalls the page, and throttled. */
+/** UI-triggered polls: short timeout so a slow agent never stalls the page, and throttled. */
 const UI_POLL = { timeoutMs: 4_000, minIntervalMs: 3_000 };
 
-// GET /api/agent-tasks/[id] - Get task with outputs, feedback, Jack runs and audit trail
+// GET /api/agent-tasks/[id] - Get task with outputs, feedback, runs and audit trail
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -26,19 +26,19 @@ export async function GET(
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
-  // Ask Jack for fresh status while someone is looking, so the page does not
+  // Ask a Hermes agent for fresh status while someone is looking, so the page does not
   // wait for the next cron pass. The cron keeps doing this when nobody is.
   if (
-    task.runtime === "jack" &&
-    isJackState(task.jack_state) &&
-    POLLED_STATES.includes(task.jack_state) &&
-    checkJackRateLimit(user.id, "poll").allowed
+    task.runtime === "hermes" &&
+    isTaskState(task.runtime_state) &&
+    POLLED_STATES.includes(task.runtime_state) &&
+    checkRuntimeRateLimit(user.id, "poll").allowed
   ) {
     try {
-      await reconcileJackTask(id, { timeoutMs: UI_POLL.timeoutMs }, { minIntervalMs: UI_POLL.minIntervalMs });
+      await reconcileTask(id, { timeoutMs: UI_POLL.timeoutMs }, { minIntervalMs: UI_POLL.minIntervalMs });
       task = (await getTaskForUser(id, user.id)) ?? task;
     } catch (error) {
-      console.error("[API] on-demand Jack poll failed:", error instanceof Error ? error.message : error);
+      console.error("[API] on-demand agent poll failed:", error instanceof Error ? error.message : error);
     }
   }
 
@@ -70,7 +70,7 @@ export async function GET(
     );
   }
 
-  // Auto-retrieved notes (historical OpenRouter tasks only; Jack reads live over MCP)
+  // Auto-retrieved notes (historical tasks only; the current runtimes use pinned context)
   let contextUsed: Array<{ id: string; title: string; similarity: number }> = [];
   try {
     const parsed = JSON.parse(task.context_used || "[]");
@@ -81,15 +81,15 @@ export async function GET(
 
   const sourceEntity = await resolveSourceEntity(user.id, task.source_type || "task", task.source_id || task.task_id);
 
-  // Jack runs and the audit trail. Only reference ids and outcomes leave the
+  // Runs and the audit trail. Only reference ids and outcomes leave the
   // server: never the request body, tool arguments or credentials.
-  const runs = task.runtime === "jack"
+  const runs = task.runtime_state
     ? await queryAll<RunRow>(
         "SELECT * FROM agent_task_runs WHERE agent_task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 20",
         [id]
       )
     : [];
-  const events = task.runtime === "jack"
+  const events = task.runtime_state
     ? await queryAll<{ id: string; actor: string; kind: string; detail: string | null; run_id: string | null; created_at: string }>(
         "SELECT id, actor, kind, detail, run_id, created_at FROM agent_task_events WHERE agent_task_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 200",
         [id]
@@ -98,7 +98,7 @@ export async function GET(
 
   let approval: PendingApproval | null = null;
   const pendingRun = runs.find((r) => r.state === "awaiting_approval" && r.approval);
-  if (task.jack_state === "awaiting_approval" && pendingRun?.approval) {
+  if (task.runtime_state === "awaiting_approval" && pendingRun?.approval) {
     try {
       approval = JSON.parse(pendingRun.approval) as PendingApproval;
     } catch {
@@ -113,16 +113,16 @@ export async function GET(
     contextNotes,
     contextUsed,
     sourceEntity,
-    jack: {
-      ...publicJackStatus(),
+    agent: {
+      ...publicRuntimeStatus(),
       approval,
       unreachableSince: runs[0]?.unreachable_since ?? null,
       runs: runs.map((r) => ({
         id: r.id,
         kind: r.kind,
         state: r.state,
-        hermesRunId: r.hermes_run_id,
-        hermesSessionId: r.hermes_session_id,
+        externalRunId: r.external_run_id,
+        sessionId: r.session_id,
         outputVersion: r.output_version,
         model: r.runtime_model,
         createdAt: r.created_at,
@@ -225,10 +225,10 @@ export async function DELETE(
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
-  // Deleting the record would not stop Jack. Stop it first, then delete.
-  if (task.runtime === "jack" && isJackState(task.jack_state) && isActive(task.jack_state)) {
+  // Deleting the record would not stop the runtime. Stop it first, then delete.
+  if (isTaskState(task.runtime_state) && isActive(task.runtime_state)) {
     return NextResponse.json(
-      { error: "Jack is still working on this task. Cancel it first, then delete it." },
+      { error: "This task is still running. Cancel it first, then delete it." },
       { status: 409 }
     );
   }
@@ -242,7 +242,7 @@ export async function DELETE(
     sql: "DELETE FROM agent_task_outputs WHERE agent_task_id = ?",
     args: [id],
   });
-  if (task.runtime === "jack") {
+  if (task.runtime_state) {
     await db.execute({ sql: "DELETE FROM agent_task_events WHERE agent_task_id = ?", args: [id] });
     await db.execute({ sql: "DELETE FROM agent_task_runs WHERE agent_task_id = ?", args: [id] });
   }

@@ -3,8 +3,8 @@ import { db, queryOne } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { AgentTask } from "@/lib/db/schema";
 import { syncTaskStatusFromAgentTask } from "@/lib/agents/status-sync";
-import { recordReviewDecision } from "@/lib/agents/jack/dispatcher";
-import { isActive, isJackState } from "@/lib/agents/jack/types";
+import { recordReviewDecision } from "@/lib/agents/runtime/dispatcher";
+import { isActive, isTaskState } from "@/lib/agents/runtime/types";
 
 // POST /api/agent-tasks/[id]/reject - Reject and close task
 export async function POST(
@@ -29,11 +29,11 @@ export async function POST(
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
-  // Rejecting the record would not stop Jack. Cancel first, so the history
+  // Rejecting the record would not stop the runtime. Cancel first, so the history
   // never shows "rejected" over a run that is still doing things.
-  if (isJackState(task.jack_state) && isActive(task.jack_state)) {
+  if (isTaskState(task.runtime_state) && isActive(task.runtime_state)) {
     return NextResponse.json(
-      { error: "Jack is still working on this task. Cancel it first." },
+      { error: "This task is still running. Cancel it first." },
       { status: 409 }
     );
   }

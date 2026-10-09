@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { queryAll, queryOne } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { AgentTask } from "@/lib/db/schema";
-import { createJackTask } from "@/lib/agents/jack/dispatcher";
-import { publicJackStatus } from "@/lib/agents/jack/config";
+import { createDelegatedTask } from "@/lib/agents/runtime/dispatcher";
+import { publicRuntimeStatus } from "@/lib/agents/runtime/config";
 import {
   AGENT_TYPES,
   INPUT_LIMITS,
@@ -15,16 +15,16 @@ import {
   ownedNoteIds,
   ownsRecord,
   resolveOwnedSource,
-} from "@/lib/agents/jack/guard";
-import { readJsonBody, rateLimited } from "@/lib/agents/jack/http";
+} from "@/lib/agents/runtime/guard";
+import { readJsonBody, rateLimited } from "@/lib/agents/runtime/http";
 import { isErrorResponse } from "@/lib/api/validation";
 
 /**
- * "Needs you": work that is waiting on Daniel rather than on Jack. Output to
- * review, a decision Jack is paused on, and parked or unmappable work.
+ * "Needs you": work that is waiting on the user rather than on the runtime.
+ * Output to review, a decision an agent is paused on, and parked or unmappable work.
  */
 const NEEDS_YOU_SQL = `(at.status = 'awaiting_review'
-  OR at.jack_state IN ('awaiting_approval', 'awaiting_input', 'needs_dispatch', 'needs_review'))`;
+  OR at.runtime_state IN ('awaiting_approval', 'awaiting_input', 'needs_dispatch', 'needs_review'))`;
 
 // GET /api/agent-tasks - List user's agent tasks
 export async function GET(request: NextRequest) {
@@ -103,10 +103,10 @@ export async function GET(request: NextRequest) {
     }
   >(query, args);
 
-  return NextResponse.json({ tasks, jack: publicJackStatus() });
+  return NextResponse.json({ tasks, agent: publicRuntimeStatus() });
 }
 
-// POST /api/agent-tasks - Delegate work to Jack
+// POST /api/agent-tasks - Delegate work to the configured runtime
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
   if (!user) {
@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Jack is the only runtime. The agent type survives as a label for the job.
+  // The agent type picks the persona on OpenRouter and labels the job on Hermes.
   const assignedAgent = body.assignedAgent ?? "general";
   const agentType = assignedAgent === "auto" ? "general" : assignedAgent;
   if (typeof agentType !== "string" || !(AGENT_TYPES as readonly string[]).includes(agentType)) {
@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { task, outcome } = await createJackTask({
+    const { task, outcome } = await createDelegatedTask({
       userId: user.id,
       title,
       description,
@@ -200,8 +200,8 @@ export async function POST(request: NextRequest) {
       sourceType,
       sourceId,
       linkTaskId: sourceType === "task" ? sourceId : null,
-    });
-    return NextResponse.json({ task, dispatch: outcome, jack: publicJackStatus() }, { status: 201 });
+    }, { schedule: after });
+    return NextResponse.json({ task, dispatch: outcome, agent: publicRuntimeStatus() }, { status: 201 });
   } catch (error) {
     console.error("[API] POST /api/agent-tasks failed:", error instanceof Error ? error.message : error);
     return NextResponse.json({ error: "Failed to create task" }, { status: 500 });

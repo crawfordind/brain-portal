@@ -8,19 +8,19 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AgentTaskCard } from './agent-task-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { shouldPoll } from './jack-state-badge';
+import { shouldPoll } from './agent-state-badge';
 
 interface QueueTask {
   status: string;
   runtime?: string | null;
-  jack_state?: string | null;
+  runtime_state?: string | null;
 }
 
 /** Mirrors the server's "Needs you" filter in /api/agent-tasks. */
 function needsYou(t: QueueTask): boolean {
   return (
     t.status === 'awaiting_review' ||
-    ['awaiting_approval', 'awaiting_input', 'needs_dispatch', 'needs_review'].includes(t.jack_state ?? '')
+    ['awaiting_approval', 'awaiting_input', 'needs_dispatch', 'needs_review'].includes(t.runtime_state ?? '')
   );
 }
 
@@ -60,7 +60,8 @@ export function AgentQueue({ onTaskClick, onCreateTask }: AgentQueueProps) {
     needs_you: tasks.filter((t: QueueTask) => needsYou(t)).length,
     processing: tasks.filter((t: QueueTask) => t.status === 'processing').length,
   };
-  const jack: { state: string; message: string } | undefined = data?.jack;
+  const agent: { state: string; message: string; displayName: string } | undefined = data?.agent;
+  const agentName = agent?.displayName ?? 'the agent';
 
   return (
     <div className="space-y-4">
@@ -87,10 +88,10 @@ export function AgentQueue({ onTaskClick, onCreateTask }: AgentQueueProps) {
         </TabsList>
       </Tabs>
 
-      {jack && jack.state !== 'ready' && (
+      {agent && agent.state !== 'ready' && (
         <div role="status" className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
           <PlugZap className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" aria-hidden />
-          <p>{jack.message} Delegated work is kept as <strong>Not sent</strong> and nothing is sent anywhere.</p>
+          <p>{agent.message} Delegated work is kept as <strong>Not sent</strong> and nothing is sent anywhere.</p>
         </div>
       )}
 
@@ -103,9 +104,9 @@ export function AgentQueue({ onTaskClick, onCreateTask }: AgentQueueProps) {
               <Bot className="h-8 w-8 text-muted-foreground" />
             </div>
             <div className="space-y-1">
-              <h3 className="font-semibold text-lg">{filter === 'needs_you' ? 'Nothing needs you' : 'Nothing sent to Jack yet'}</h3>
+              <h3 className="font-semibold text-lg">{filter === 'needs_you' ? 'Nothing needs you' : `Nothing sent to ${agentName} yet`}</h3>
               <p className="text-sm text-muted-foreground max-w-xs">
-                Use &ldquo;Send to Jack&rdquo; on any task, note or capture. Jack does the work with its own tools and reports back here.
+                Use &ldquo;Send to {agentName}&rdquo; on any task, note or capture. The result comes back here for you to review.
               </p>
             </div>
             {onCreateTask ? (

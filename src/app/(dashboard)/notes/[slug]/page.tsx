@@ -56,13 +56,14 @@ import { useAutoSave } from "@/hooks/use-auto-save";
 import { useProjects } from "@/hooks/use-projects";
 import { useMobile } from "@/hooks/use-mobile";
 import { useAskAbout } from "@/hooks/use-ask-about";
-import { useSendToJack } from "@/hooks/use-send-to-jack";
+import { useSendToAgent } from "@/hooks/use-send-to-agent";
 import { AgentReviewFocusPanel } from "@/components/agents/agent-review-focus-panel";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { NoteLenses } from "@/components/lenses/note-lenses";
 import { useNoteLenses } from "@/hooks/use-note-lenses";
 import { setTaskChecked } from "@/lib/lenses/blocks";
 import { parseDbTimestamp } from "@/lib/stream/grouping";
+import { SendToAgentLabel } from "@/components/agents/send-to-agent-label";
 
 interface Note {
   id: string;
@@ -98,7 +99,7 @@ export default function NoteDetailPage() {
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
   const { askAbout } = useAskAbout();
-  const { sendToJack } = useSendToJack();
+  const { sendToAgent } = useSendToAgent();
   const [reviewingTaskId, setReviewingTaskId] = useState<string | null>(null);
 
   const { data: projects } = useProjects();
@@ -486,11 +487,11 @@ export default function NoteDetailPage() {
                     {isOwner && (
                       <DropdownMenuItem
                         onClick={() =>
-                          sendToJack({ id: note.id, type: "note", title: note.title, projectId: note.project_id })
+                          sendToAgent({ id: note.id, type: "note", title: note.title, projectId: note.project_id })
                         }
                       >
                         <Send className="h-4 w-4 mr-2" />
-                        Send to Jack
+                        <SendToAgentLabel />
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuSeparator />

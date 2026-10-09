@@ -28,32 +28,33 @@ import {
   TooltipContent,
 } from '@/components/ui/tooltip';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { JackStateBadge, shouldPoll } from './jack-state-badge';
-import { isActive, isJackState, SENDABLE_STATES, type PendingApproval } from '@/lib/agents/jack/types';
+import { TaskStateBadge, shouldPoll } from './agent-state-badge';
+import { isActive, isTaskState, SENDABLE_STATES, type PendingApproval } from '@/lib/agents/runtime/types';
+import { useAgentRuntime } from '@/hooks/use-agent-runtime';
 
 
-interface JackEvent {
+interface AgentEvent {
   id: string;
-  actor: 'user' | 'jack' | 'system';
+  actor: 'user' | 'agent' | 'system';
   kind: string;
   createdAt: string;
   detail: Record<string, unknown> | null;
 }
 
-interface JackDetail {
+interface AgentDetail {
   state: 'ready' | 'disabled' | 'misconfigured';
   message: string;
   approval: PendingApproval | null;
   unreachableSince: string | null;
-  runs: Array<{ id: string; kind: string; state: string; hermesRunId: string | null; hermesSessionId: string | null; outputVersion: number | null }>;
-  events: JackEvent[];
+  runs: Array<{ id: string; kind: string; state: string; externalRunId: string | null; sessionId: string | null; outputVersion: number | null }>;
+  events: AgentEvent[];
 }
 
 const EVENT_LABELS: Record<string, string> = {
   created: 'Task created',
-  sent_to_jack: 'Sent to Jack',
-  dispatched: 'Jack accepted the task',
-  approval_requested: 'Jack asked for approval',
+  sent_to_agent: 'Sent',
+  dispatched: 'Work started',
+  approval_requested: 'Asked for approval',
   approval_decided: 'Approval decided',
   output_ready: 'Output ready for review',
   revision_requested: 'You replied',
@@ -66,7 +67,7 @@ const EVENT_LABELS: Record<string, string> = {
   needs_review: 'Flagged for your review',
 };
 
-function describeEvent(e: JackEvent): string {
+function describeEvent(e: AgentEvent): string {
   const base = EVENT_LABELS[e.kind] ?? e.kind.replace(/_/g, ' ');
   const d = e.detail ?? {};
   if (e.kind === 'approval_decided') return `${base}: ${d.choice === 'once' ? 'approved once' : 'denied'}${d.description ? ` (${String(d.description)})` : ''}`;
@@ -90,6 +91,8 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const router = useRouter();
+  const runtime = useAgentRuntime();
+  const name = runtime.displayName;
 
   const { data, isLoading } = useQuery({
     queryKey: ['agent-task', taskId],
@@ -99,7 +102,7 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
       return res.json();
     },
     enabled: open && !!taskId,
-    // While Jack may be working, ask again; the server polls Jack on each read.
+    // While the agent may be working, ask again; on Hermes the server polls the run on each read.
     refetchInterval: (q) => (shouldPoll((q.state.data as { task?: { status: string } } | undefined)?.task) ? 4000 : false),
   });
 
@@ -108,7 +111,7 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
   const contextNotes: Array<{ id: string; title: string; slug: string }> = data?.contextNotes || [];
   const contextUsed: Array<{ id: string; title: string; similarity: number }> = data?.contextUsed || [];
   const sourceEntity: { id: string; type: string; title: string; url: string } | null = data?.sourceEntity || null;
-  const jack: JackDetail | null = data?.jack ?? null;
+  const agent: AgentDetail | null = data?.agent ?? null;
   const [showActivity, setShowActivity] = useState(false);
   const [isActing, setIsActing] = useState(false);
   const currentOutput = outputs[0];
@@ -131,7 +134,7 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
       });
       const result = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(result.error || 'Failed to request revision');
-      toast.success(result.dispatch === 'not_configured' ? 'Saved. Jack is not connected, so it was not sent.' : 'Sent to Jack');
+      toast.success(result.dispatch === 'not_configured' ? `Saved. ${name} is not connected, so it was not sent.` : `Sent to ${name}`);
       setFeedback('');
       queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
       queryClient.invalidateQueries({ queryKey: ['agent-task', taskId] });
@@ -210,7 +213,7 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
     queryClient.invalidateQueries({ queryKey: ['agent-task', taskId] });
   };
 
-  /** POST to one of the task's Jack actions; the server re-checks ownership and state. */
+  /** POST to one of the task's runtime actions; the server re-checks ownership and state. */
   const act = async (path: 'send' | 'cancel' | 'approval', body?: unknown, success?: string) => {
     setIsActing(true);
     try {
@@ -233,7 +236,7 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
   const handleCancel = async () => {
     const ok = await confirm({
       title: 'Stop this task?',
-      description: 'If Jack is working, it is asked to stop at the next safe point. Anything it already did stays done.',
+      description: `If ${name} is working, it is asked to stop at the next safe point. Anything it already did stays done.`,
       destructive: true,
       confirmLabel: 'Stop',
     });
@@ -271,13 +274,20 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
   if (!open || isLoading || !task) return null;
 
   const canRevise = task.current_version < task.max_revisions;
-  const isJack = task.runtime === 'jack' && isJackState(task.jack_state);
-  const jackState = isJack ? task.jack_state : null;
-  const working = !!jackState && isActive(jackState);
+  // Rows on the current lifecycle carry a precise state; older rows are history.
+  const managed = isTaskState(task.runtime_state);
+  const state = managed ? task.runtime_state : null;
+  const working = !!state && isActive(state);
   const showActions = !working && (task.status === 'awaiting_review' || task.status === 'revision_requested');
-  const canSend = (!!jackState && SENDABLE_STATES.includes(jackState)) || (!isJack && task.status === 'failed');
-  const canCancel = !!jackState && ['needs_dispatch', 'needs_review', 'queued', 'running', 'awaiting_approval', 'awaiting_input'].includes(jackState);
-  const hermesSession = jack?.runs.find((r) => r.hermesSessionId)?.hermesSessionId ?? null;
+  const canSend = (!!state && SENDABLE_STATES.includes(state)) || (!managed && task.status === 'failed');
+  // A synchronous model call cannot be interrupted, so a running OpenRouter
+  // task offers no Stop; waiting work can always be cancelled.
+  const remoteStop = task.runtime === 'hermes';
+  const canCancel = !!state && (
+    ['needs_dispatch', 'needs_review', 'queued'].includes(state) ||
+    (remoteStop && ['running', 'awaiting_approval', 'awaiting_input'].includes(state))
+  );
+  const hermesSession = task.runtime === 'hermes' ? agent?.runs.find((r) => r.sessionId)?.sessionId ?? null : null;
 
   return (
     <>
@@ -288,8 +298,8 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
           <div className="flex-shrink-0 border-b px-3 sm:px-6 py-3 sm:py-4">
             <ModalHeader title={task.title} onClose={onClose} showClose />
             <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <JackStateBadge task={task} className="text-xs" />
-              {!isJack && (
+              <TaskStateBadge task={task} className="text-xs" />
+              {!managed && (
                 <span className="text-xs text-muted-foreground">Earlier runtime (read-only history)</span>
               )}
               {displayVersion && (
@@ -318,32 +328,32 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
 
           {/* Scrollable Content Area */}
           <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-            {isJack && (
+            {managed && (
               <div className="px-3 sm:px-6 pt-3 sm:pt-4 space-y-3">
-                {jackState === 'awaiting_approval' && (
-                  <section aria-labelledby="jack-approval-title" className="rounded-lg border border-orange-500/50 bg-orange-500/5 p-4 space-y-3">
+                {state === 'awaiting_approval' && (
+                  <section aria-labelledby="agent-approval-title" className="rounded-lg border border-orange-500/50 bg-orange-500/5 p-4 space-y-3">
                     <div className="flex items-start gap-2">
                       <ShieldAlert className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" aria-hidden />
                       <div className="min-w-0 space-y-1">
-                        <h3 id="jack-approval-title" className="font-medium text-sm">Jack is waiting for your approval</h3>
-                        {jack?.approval?.description && <p className="text-sm">{jack.approval.description}</p>}
-                        {jack?.approval?.tool && <p className="text-xs text-muted-foreground">Tool: {jack.approval.tool}</p>}
+                        <h3 id="agent-approval-title" className="font-medium text-sm">{name} is waiting for your approval</h3>
+                        {agent?.approval?.description && <p className="text-sm">{agent.approval.description}</p>}
+                        {agent?.approval?.tool && <p className="text-xs text-muted-foreground">Tool: {agent.approval.tool}</p>}
                       </div>
                     </div>
-                    {jack?.approval?.command && (
-                      <pre className="text-xs bg-background border rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">{jack.approval.command}</pre>
+                    {agent?.approval?.command && (
+                      <pre className="text-xs bg-background border rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">{agent.approval.command}</pre>
                     )}
-                    {!jack?.approval && (
-                      <p className="text-sm text-muted-foreground">Jack has paused for a decision. Loading the details…</p>
+                    {!agent?.approval && (
+                      <p className="text-sm text-muted-foreground">{name} has paused for a decision. Loading the details…</p>
                     )}
                     <p className="text-xs text-muted-foreground">
-                      Approving lets Jack do this one thing, once. Brain Portal never grants standing permission.
+                      Approving lets {name} do this one thing, once. Brain Portal never grants standing permission.
                     </p>
                     <div className="flex flex-col sm:flex-row gap-2">
                       <Button
                         className="flex-1 h-11 sm:h-10"
-                        disabled={isActing || !jack?.approval}
-                        onClick={() => act('approval', { choice: 'once', requestId: jack?.approval?.requestId ?? null }, 'Approved once')}
+                        disabled={isActing || !agent?.approval}
+                        onClick={() => act('approval', { choice: 'once', requestId: agent?.approval?.requestId ?? null }, 'Approved once')}
                       >
                         <Check className="h-4 w-4 mr-2" />
                         Approve once
@@ -351,8 +361,8 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
                       <Button
                         variant="outline"
                         className="flex-1 h-11 sm:h-10"
-                        disabled={isActing || !jack?.approval}
-                        onClick={() => act('approval', { choice: 'deny', requestId: jack?.approval?.requestId ?? null }, 'Denied')}
+                        disabled={isActing || !agent?.approval}
+                        onClick={() => act('approval', { choice: 'deny', requestId: agent?.approval?.requestId ?? null }, 'Denied')}
                       >
                         <X className="h-4 w-4 mr-2" />
                         Deny
@@ -361,24 +371,24 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
                   </section>
                 )}
 
-                {(jackState === 'running' || jackState === 'dispatching' || jackState === 'queued' || jackState === 'cancelling') && (
+                {(state === 'running' || state === 'dispatching' || state === 'queued' || state === 'cancelling') && (
                   <div role="status" className="flex items-center gap-3 rounded-lg border bg-muted/40 p-3 text-sm">
                     <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden />
                     <span className="flex-1">
-                      {jackState === 'cancelling'
-                        ? 'Asking Jack to stop. This updates once Jack confirms.'
-                        : jackState === 'running'
-                          ? 'Jack is working on this. You can close this and come back; it keeps going.'
-                          : 'Handing this to Jack…'}
+                      {state === 'cancelling'
+                        ? `Asking ${name} to stop. This updates once it confirms.`
+                        : state === 'running'
+                          ? `${name} is working on this. You can close this and come back; it keeps going.`
+                          : `Handing this to ${name}…`}
                     </span>
                   </div>
                 )}
 
-                {task.last_error && jackState !== 'awaiting_approval' && (
+                {task.last_error && state !== 'awaiting_approval' && (
                   <div
                     role="status"
                     className={`flex gap-2 rounded-lg border p-3 text-sm ${
-                      jackState === 'failed' ? 'border-red-500/40 bg-red-500/5' : 'border-amber-500/40 bg-amber-500/5'
+                      state === 'failed' ? 'border-red-500/40 bg-red-500/5' : 'border-amber-500/40 bg-amber-500/5'
                     }`}
                   >
                     <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
@@ -389,9 +399,9 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
                 {(canSend || canCancel) && (
                   <div className="flex flex-wrap gap-2">
                     {canSend && (
-                      <Button className="h-11 sm:h-9" disabled={isActing} onClick={() => act('send', undefined, 'Sent to Jack')}>
+                      <Button className="h-11 sm:h-9" disabled={isActing} onClick={() => act('send', undefined, `Sent to ${name}`)}>
                         <Send className="h-4 w-4 mr-2" />
-                        {jackState === 'needs_dispatch' ? 'Send to Jack' : 'Retry with Jack'}
+                        {state === 'needs_dispatch' ? `Send to ${name}` : 'Retry'}
                       </Button>
                     )}
                     {canCancel && (
@@ -403,7 +413,7 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
                   </div>
                 )}
 
-                {jack && jack.events.length > 0 && (
+                {agent && agent.events.length > 0 && (
                   <div>
                     <button
                       type="button"
@@ -412,22 +422,22 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
                       aria-expanded={showActivity}
                     >
                       <ListChecks className="h-3 w-3" aria-hidden />
-                      Activity ({jack.events.length})
+                      Activity ({agent.events.length})
                       {showActivity ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                     </button>
                     {showActivity && (
                       <ol className="mt-2 space-y-1 text-xs border-l pl-3">
-                        {jack.events.map((e) => (
+                        {agent.events.map((e) => (
                           <li key={e.id} className="flex gap-2">
                             <time className="text-muted-foreground shrink-0 tabular-nums">{e.createdAt.slice(5, 16)}</time>
                             <span>
-                              <span className="text-muted-foreground">{e.actor === 'user' ? 'You' : e.actor === 'jack' ? 'Jack' : 'System'}:</span>{' '}
+                              <span className="text-muted-foreground">{e.actor === 'user' ? 'You' : e.actor === 'agent' ? name : 'System'}:</span>{' '}
                               {describeEvent(e)}
                             </span>
                           </li>
                         ))}
                         {hermesSession && (
-                          <li className="text-muted-foreground">Jack session: <code>{hermesSession}</code></li>
+                          <li className="text-muted-foreground">Hermes session: <code>{hermesSession}</code></li>
                         )}
                       </ol>
                     )}
@@ -449,7 +459,7 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
                   ) : (
                     <ChevronDown className="h-3 w-3" />
                   )}
-                  {isJack ? 'Context sent to Jack' : 'Context used by agent'}
+                  {managed ? `Context sent to ${name}` : 'Context used by agent'}
                 </button>
 
                 {showPrompt && (
@@ -532,7 +542,7 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
                 <MarkdownRenderer content={displayVersion.content} className="text-sm sm:text-base" />
               ) : (
                 <div className="flex items-center justify-center min-h-[200px] text-muted-foreground text-sm">
-                  {working ? 'Jack has not produced an answer yet.' : task.status === 'processing' ? 'Processing...' : 'No output yet'}
+                  {working ? `${name} has not produced an answer yet.` : task.status === 'processing' ? 'Processing...' : 'No output yet'}
                 </div>
               )}
             </div>
@@ -545,7 +555,7 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
                 <Textarea
                   value={feedback}
                   onChange={(e) => setFeedback(e.target.value)}
-                  placeholder="Reply to Jack: feedback, questions or changes…"
+                  placeholder={`Reply to ${name}: feedback, questions or changes…`}
                   rows={2}
                   disabled={!canRevise}
                   className="resize-none text-sm max-h-[200px] overflow-y-auto"
@@ -561,13 +571,13 @@ export function AgentReviewFocusPanel({ taskId, open, onClose }: AgentReviewFocu
                         className="flex-1 h-11 sm:h-10"
                       >
                         <Edit className="h-4 w-4 mr-2" />
-                        <span className="hidden sm:inline">Reply to Jack ({task.current_version}/{task.max_revisions})</span>
+                        <span className="hidden sm:inline">Reply to {name} ({task.current_version}/{task.max_revisions})</span>
                         <span className="sm:hidden">Reply ({task.current_version}/{task.max_revisions})</span>
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
                       {canRevise
-                        ? <>Send your reply to Jack in the same conversation <kbd className="ml-1 text-[10px] opacity-60">⌘↵</kbd></>
+                        ? <>Send your reply to {name} in the same conversation <kbd className="ml-1 text-[10px] opacity-60">⌘↵</kbd></>
                         : `Maximum ${task.max_revisions} revisions reached`}
                     </TooltipContent>
                   </Tooltip>

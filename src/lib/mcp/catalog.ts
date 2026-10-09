@@ -360,7 +360,7 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "delegate_to_agent",
     description:
-      "Queue background work for Jack (the user's Hermes agent). The output lands in the review queue. The agent type labels the job; 'auto' means general.",
+      "Queue background work for the server's configured agent runtime (OpenRouter or a Hermes agent). The output lands in the review queue. The agent type picks the persona or labels the job; 'auto' means general.",
     scope: "ai:delegate",
     category: "ai",
     inputSchema: z.object({

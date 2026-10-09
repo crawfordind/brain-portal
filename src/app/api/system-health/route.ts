@@ -9,12 +9,12 @@
  * configuration (never values).
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { queryAll } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { getSystemHealth } from "@/lib/system-health";
-import { sendToJack, JackActionError } from "@/lib/agents/jack/dispatcher";
-import { getJackConfig } from "@/lib/agents/jack/config";
+import { sendTask, RuntimeActionError } from "@/lib/agents/runtime/dispatcher";
+import { getRuntimeConfig } from "@/lib/agents/runtime/config";
 import { safeParseJson, isErrorResponse } from "@/lib/api/validation";
 
 export async function GET() {
@@ -76,11 +76,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ requeued: 0, message: "Nothing to retry" });
     }
 
-    // Retrying means sending to Jack. There is no other runtime to retry on.
-    const config = getJackConfig();
+    // Retrying means sending to the configured runtime, and only that one.
+    const config = getRuntimeConfig();
     if (config.state !== "ready") {
       return NextResponse.json(
-        { requeued: 0, message: config.reason ?? "Jack connection not configured." },
+        { requeued: 0, message: config.reason ?? "Delegated tasks are not configured on this server." },
         { status: 503 }
       );
     }
@@ -88,12 +88,12 @@ export async function POST(request: NextRequest) {
     let requeued = 0;
     for (const candidate of candidates) {
       try {
-        await sendToJack(candidate.id, user.id, { config });
+        await sendTask(candidate.id, user.id, { config, schedule: after });
         requeued++;
       } catch (error) {
         // A task that is not retryable as it stands (e.g. an earlier version is
         // still reviewable) is skipped, not failed.
-        if (!(error instanceof JackActionError)) throw error;
+        if (!(error instanceof RuntimeActionError)) throw error;
       }
     }
 

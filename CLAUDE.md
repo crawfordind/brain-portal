@@ -2,6 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Open Source: No Personal Context
+
+Brain Portal is public (AGPL) and self-hosted by many people. Everything
+committed must work for, and read correctly to, any of them.
+
+- **No personal names, agents, businesses or paths** in code, prompts, UI
+  text, comments, tests, fixtures or docs. Prompts and copy say "the user";
+  fixtures use neutral data (`owner@example.com`, "Northwind"). A name a
+  deployment wants shown is configuration (e.g. `AGENT_DISPLAY_NAME`), never a
+  literal. Copyright and `package.json` author lines are normal attribution
+  and stay.
+- **No machine-specific paths** (`/home/<someone>/...`). Use repo-relative
+  paths and placeholders (`<profile>`, `<your-domain>`, `<your-app>`).
+- **Integrations are optional layers, not replacements.** A feature that
+  depends on one operator's infrastructure (a private agent, a tunnel, a paid
+  service) ships behind configuration, with the existing path as the default
+  and an honest "not configured" state. Never remove a path other self-hosters
+  rely on to suit one deployment, and never fall back silently from a provider
+  an operator chose to one they did not.
+- **Seed data ships empty.** Personal lists live in gitignored files with a
+  committed `*.example.json` (see `ventures.seed.json`).
+
 ## Build & Development Commands
 
 ```bash
@@ -13,7 +35,7 @@ npm run db:migrate   # Run database migrations (tsx scripts/migrate.ts)
 npm run user:create  # Create an account (signups are closed by default)
 npm run migrate:chat-item-context  # Allow 'item' as a chat context type
 npm run migrate:provenance         # Record who wrote each row, and which run
-npm run migrate:jack-runtime       # Jack task runtime (also runs in db:migrate)
+npm run migrate:agent-runtime      # Delegated-task runtime (also runs in db:migrate)
 
 # MCP Server
 npm run mcp:start    # Start MCP server (requires env vars)
@@ -301,17 +323,19 @@ Required for development (see `.env.example`):
   Links Out of the App*. `EMAIL_ACTION_SECRET` - optional, signs email buttons.
 - `CRON_SECRET` - **Required in production.** Guards every `/api/cron/*` route.
   Unset, `verifyCronSecret` 401s every scheduled request, so delegated work is
-  never handed to Jack and sits in `queued` with no error to show for it. See *Background Failure Visibility* below.
+  never handed to the runtime and sits in `queued` with no error to show for it. See *Background Failure Visibility* below.
 - `SIGNUP_MODE` / `ALLOWED_EMAILS` - who may have an account created. Defaults
   to `closed`. See *Who Can Sign Up*.
 - `ADMIN_EMAILS` - comma-separated. Fails closed: unset means nobody is admin.
 - `TRUST_PROXY_HEADERS` - set `false` when Node is directly internet-facing.
 - `BRAIN_SERVICE_TOKEN` / `BRAIN_SERVICE_EMAIL` - both required to enable
   `/api/brain`, which is otherwise 503. There is **no default account**.
-- `JACK_ENABLED`, `JACK_HERMES_URL`, `JACK_HERMES_API_KEY`, `JACK_PROFILE`,
-  `JACK_EDGE_CLIENT_ID`, `JACK_EDGE_CLIENT_SECRET` - the Jack runtime for
-  delegated tasks. Server-only; off unless `JACK_ENABLED=true`. See *Delegated
-  Tasks Run on Jack* and `docs/operations/jack-runtime.md`.
+- `AGENT_RUNTIME` (`openrouter` default, `hermes`, `off`) and
+  `AGENT_DISPLAY_NAME` - which runtime runs delegated tasks and what the UI
+  calls it. For `hermes`: `HERMES_URL`, `HERMES_API_KEY`, optional
+  `HERMES_PROFILE`, `HERMES_EDGE_CLIENT_ID`, `HERMES_EDGE_CLIENT_SECRET`.
+  Server-only. See *Delegated Tasks: Pluggable Runtime* and
+  `docs/operations/agent-runtime.md`.
 
 ## Who Can Sign Up
 
@@ -527,103 +551,139 @@ Stream card (quick action + menu), stream detail panel, note page menu, task
 list row, task detail, kanban and calendar. The calendar and kanban hooks were
 previously `// TODO` / `console.log` stubs and now work.
 
-## Delegated Tasks Run on Jack
+## Delegated Tasks: Pluggable Runtime
 
-Every delegated task (`agent_tasks`) is executed by **Jack**, an existing Hermes
-Agent profile, through the Hermes API server's Runs API. Brain Portal owns the
-records (task, versions, feedback, audit trail); Jack executes with its own
-tools, memory, skills and MCP access to Brain Portal. **There is no OpenRouter
-path for delegated work and no fallback to one**: the old executor
-(`executor.ts`, `context.ts`) is deleted, and `tests/lib/agents/jack/boundaries.test.ts`
-fails if anything on the task path imports the OpenRouter client, embeddings or
-the model resolver. Design: `docs/plans/2026-10-08-jack-task-runtime-design.md`.
-Operator setup, live test, key rotation, rollback: `docs/operations/jack-runtime.md`.
+Delegated work (`agent_tasks`) runs on whichever runtime the server's
+`AGENT_RUNTIME` names. Brain Portal owns the records (task, versions, feedback,
+audit trail) and one lifecycle; a runtime adapter only executes.
 
-Ways in: **Send to Jack** (`useSendToJack` → `SendToJackDialog`, on tasks, stream
-items, notes, projects and contacts), heartbeat `delegate_to_agent`, the
+| `AGENT_RUNTIME` | What runs the task | Needs |
+|-----------------|--------------------|-------|
+| `openrouter` (**default**) | one model call, no tools (`runtime/openrouter.ts`) | `OPENROUTER_API_KEY` |
+| `hermes` | a Hermes Agent profile via its Runs API, with its own tools, memory and approvals | `HERMES_URL`, `HERMES_API_KEY` |
+| `off` | nothing; tasks are kept as "Not sent" | — |
+
+**There is no fallback between runtimes, in either direction.** A Hermes
+deployment never spends OpenRouter credits on delegated work however
+unreachable Hermes is, and an OpenRouter deployment never calls a Hermes
+endpoint. `tests/lib/agents/runtime/boundaries.test.ts` fails if anything on the
+task path other than `runtime/openrouter.ts` imports OpenRouter code, and the
+dispatcher tests assert no-fallback both ways. Design:
+`docs/plans/2026-10-08-agent-runtime-design.md`. Operator setup, live test, key
+rotation, rollback: `docs/operations/agent-runtime.md`.
+
+`AGENT_DISPLAY_NAME` (default "Agent") is what the UI calls it: "Send to
+<name>", notification titles, the review panel. Nothing in the code or the
+prompts names a particular person or agent.
+
+Ways in: **Send to <name>** (`useSendToAgent` → `SendToAgentDialog`, on tasks,
+stream items, notes, projects and contacts), heartbeat `delegate_to_agent`, the
 `delegate_to_agent` skill and MCP tool. "Ask about this" stays the quick chat.
 Output lands in `/review` (`ReviewView` → `AgentQueue` → `AgentReviewFocusPanel`).
 
-### Off by default, honest when off
+### Honest when not configured
 
-`getJackConfig` (`src/lib/agents/jack/config.ts`) is `ready` only with
-`JACK_ENABLED=true`, an https `JACK_HERMES_URL` and a ≥16-char
-`JACK_HERMES_API_KEY`. Otherwise new work is stored as `needs_dispatch` ("Not
-sent") with the reason, the cron makes **no network call at all**, and System
-Health reports it. `publicJackStatus` is the only view a browser gets: words,
-never the URL or key.
+`getRuntimeConfig` (`src/lib/agents/runtime/config.ts`, pure over its `env`)
+reports `ready`, `disabled` (`off`) or `misconfigured` with a reason that names
+variables, never values. Not ready means new work is stored as `needs_dispatch`
+("Not sent"), the cron makes **no network call at all**, and System Health
+reports it. `publicRuntimeStatus` is the only view a browser gets: runtime,
+display name, a message and `capabilities` (approvals, stop, live status and a
+connection test are Hermes-only), never a URL or key. The UI reads it through
+`useAgentRuntime`, so it never offers a control the runtime cannot honour; the
+model picker shows the "agent" slot only on `openrouter`.
 
-### Lifecycle: `jack_state` precise, `status` coarse
+### Lifecycle: `runtime_state` precise, `status` coarse
 
 `agent_tasks.status` has a CHECK constraint and two tables cascade from the
-table, so it is not rebuilt. Nullable `runtime` (`NULL` = historical OpenRouter
-row, read-only history; `'jack'`) and `jack_state` were added; `status` is the
+table, so it is not rebuilt. Nullable `runtime` (stamped at claim time with
+what actually ran it; `NULL` before then) and `runtime_state` (`NULL` = a row
+from before the lifecycle, read-only history) were added; `status` is the
 projection every existing reader understands (`coarseStatus` in
-`src/lib/agents/jack/types.ts`, which imports nothing).
+`src/lib/agents/runtime/types.ts`, which imports nothing).
 
 `needs_dispatch` · `needs_review` · `queued` · `dispatching` · `running` ·
 `awaiting_approval` · `awaiting_input` (reserved) · `cancelling` ·
 `awaiting_review` · `completed` · `rejected` · `failed` · `cancelled`.
 A failed or cancelled *revision* leaves the earlier version reviewable.
 
-### Integrity (`src/lib/agents/jack/dispatcher.ts`)
+### Integrity (`src/lib/agents/runtime/dispatcher.ts`)
 
 - **Atomic claim** `queued → dispatching`; `rowsAffected = 0` means stand down.
-- **Idempotent submit.** The exact request body and a random `Idempotency-Key`
-  are written to `agent_task_runs` before `POST /v1/runs`; retries replay those
-  bytes under that key, so Hermes returns the original run instead of starting a
-  second one. Bounded (6) with backoff, only for outcomes where Hermes did not
-  start work. After that the run is `abandoned` and **Retry** reuses its key.
-- **No automatic retry after a run started** (`failed`, `interrupted`): it may
-  have done things. Daniel retries explicitly.
+- **The run is recorded before the call**: request body and a random key go to
+  `agent_task_runs` first.
 - **Exactly-once output**: one `db.batch` claims the run, inserts the next
   version only if the run has none, records it, advances the task. Note the
   guard sits *outside* the `MAX()` aggregate, which always yields a row.
+- **Adoption**: MCP, heartbeat and skills insert `status='queued'` with
+  `runtime_state IS NULL`; the cron adopts those (`adoptNewTasks`).
+
+**OpenRouter** runs synchronously. Route handlers defer the call with Next's
+`after()` (`deps.schedule`), so a request never waits on a model. A model call
+has no side effects, so a failure is retried automatically after a 5-minute
+backoff while `retry_count < max_retries`; a run with no answer after 10
+minutes died with its worker and is re-queued. An empty answer is retried once
+with a doubled budget, then fails rather than storing a blank version. The
+agent type's `agent_configs` persona and pinned model are used when present.
+
+**Hermes** runs asynchronously:
+
+- **Idempotent submit.** Retries replay the recorded bytes under the recorded
+  `Idempotency-Key`, so Hermes returns the original run instead of starting a
+  second one. Bounded (6) with backoff, only for outcomes where Hermes did not
+  start work. After that the run is `abandoned` and **Retry** reuses its key.
+- **No automatic retry after a run started** (`failed`, `interrupted`): it may
+  have done things. The user retries explicitly.
 - **Polling, not SSE**: the cron (every minute) and the task detail route
   (throttled, 4s timeout) read `GET /v1/runs/{id}`, which carries the pending
-  approval. Unreachable leaves the state alone and says "Jack unreachable since
-  …"; a run Hermes forgot becomes `failed` (`lost`), never a made-up output.
+  approval. Unreachable leaves the state alone and says "Hermes agent
+  unreachable since …"; a run Hermes forgot becomes `failed` (`lost`), never a
+  made-up output.
 - **One Hermes session per task** (`brain-portal-task-<id>`): a revision is the
   next turn of the same conversation, and still carries the previous version.
-- **Adoption**: MCP, heartbeat and skills insert `status='queued'` with
-  `runtime IS NULL`; the cron adopts those (`adoptNewTasks`). The migration
-  parked every legacy pending row first, so such a row is new by construction.
 
 ### Context and the confirmation boundary
 
 The envelope (`envelope.ts`, pure) carries the source record and its id, pinned
-notes (≤5), note highlights, the project, URLs and guardrails, fenced in
-`<brain_portal_context>` and escaped with `escapePromptContent`
-(`src/lib/agents/prompt.ts`). Dropped versus the old executor: embedding
-auto-retrieval, other active tasks, recent captures. Every read is scoped to the
-owner. `JACK_TASK_RULES` tells Jack to propose record changes rather than make
-them and never to send, post, publish, buy, trade, change credentials or delete.
+notes (≤5), note highlights, the project, URLs, the user's guardrails and a
+per-source `Approach:` line, fenced in `<brain_portal_context>` and escaped
+with `escapePromptContent` (`src/lib/agents/prompt.ts`). Every read is scoped
+to the owner. `taskRules(runtime)` addresses "the user" and tells the model to
+propose record changes rather than make them; the OpenRouter rules add that it
+has no tools, the Hermes rules that it must never send, post, publish, buy,
+trade, change credentials or delete.
 
-The enforced gate is Hermes: Brain Portal's MCP server configured
-`trust: untrusted` in Jack makes every tool without `readOnlyHint: true` wait for
-approval. `registerAllTools` marks read-only tools from the catalog
+On Hermes the enforced gate is the host: Brain Portal's MCP server configured
+`trust: untrusted` in the profile makes every tool without `readOnlyHint: true`
+wait for approval. `registerAllTools` marks read-only tools from the catalog
 (`isReadOnlyTool`), so reads flow and writes pause. Review shows the redacted
-request (`parsePendingApproval` + `redactJackText`) with **Approve once** /
+request (`parsePendingApproval` + `redactAgentText`) with **Approve once** /
 **Deny** only; Hermes's `session`/`always` are never offered.
 
 ### Tables and routes
 
-- `agent_task_runs` — one row per submission: idempotency key, request body,
-  Hermes run/session ids, state, approval, usage, `unreachable_since`.
-- `agent_task_events` — audit trail: actor (`user`/`jack`/`system`), kind, run.
-- `GET/POST /api/agent-tasks` (`?needsYou=true` = waiting on Daniel),
+- `agent_task_runs` — one row per attempt: runtime, idempotency key, request
+  body, external run/session ids (Hermes), state, approval, usage,
+  `unreachable_since`.
+- `agent_task_events` — audit trail: actor (`user`/`agent`/`system`), kind, run.
+- `GET/POST /api/agent-tasks` (`?needsYou=true` = waiting on the user),
   `GET/DELETE /api/agent-tasks/[id]`, `POST …/[id]/send|cancel|approval|revise|approve|reject`,
-  `GET /api/jack/status` (`?check=true` = live `/v1/capabilities` test).
-  Every browser-supplied id is checked against the session user
-  (`src/lib/agents/jack/guard.ts`); per-user rate limits; 64 KB body cap.
-- `/api/cron/process-agent-queue` runs `runJackQueuePass` and nothing else.
+  `GET /api/agent-runtime/status` (`?check=true` = live `/v1/capabilities`
+  test, Hermes only). Every browser-supplied id is checked against the session
+  user (`src/lib/agents/runtime/guard.ts`); per-user rate limits; 64 KB body cap.
+- `/api/cron/process-agent-queue` runs `runQueuePass` and nothing else.
 
-**Migration**: `applyJackRuntimeMigration` (`src/lib/agents/jack/schema.ts`), run
-by `npm run db:migrate` and `npm run migrate:jack-runtime`. On its first
-application only, legacy `queued`/`revision_requested` → `needs_dispatch`,
-`processing` or missing source → `needs_review`, in a coarse status the
-outgoing deployment's cron never selects (it runs in `prebuild` while the old
-build is live). History is untouched.
+**Migration**: `applyAgentRuntimeMigration` (`src/lib/agents/runtime/schema.ts`),
+run by `npm run db:migrate` (with the build's `AGENT_RUNTIME`) and
+`npm run migrate:agent-runtime`. On its first application only: on
+`openrouter`, pending work keeps running as before (queued rows are adopted,
+pending revisions queued); on `hermes` or `off`, legacy `queued`/
+`revision_requested` → `needs_dispatch`, in a coarse status the outgoing
+deployment's cron never selects (it runs in `prebuild` while the old build is
+live). On any runtime, `processing` or a missing source → `needs_review`.
+History is untouched. A database that ran the early draft of this feature
+(runtime-specific column names) is renamed onto the generic schema, keeping
+every row.
 
 ### Supported source types
 
@@ -637,9 +697,10 @@ free) and status sync applies:
 
 ### Agent types
 
-The 17 types survive as a *label* for the job (`assigned_agent`, default
-`general`; `auto` means `general`). They no longer need an `agent_configs` row:
-Jack runs everything.
+The 17 types are a label for the job (`assigned_agent`, default `general`;
+`auto` means `general`). On OpenRouter an active `agent_configs` row for the
+type supplies its persona and pinned model; without one the generalist runs.
+On Hermes the type is a label only.
 
 ### Nothing fires behind the user's back
 
@@ -655,8 +716,8 @@ subsystem quietly not working, and the fix was a code change and a redeploy.
 
 - **Slots** (`src/lib/ai/models/slots.ts`): jobs, not models — `fast`
   (summaries, tags, capture triage, task parsing, agent routing), `deep`
-  (insights, weekly reviews, project health), `agent` (**retired**: delegated
-  work runs on Jack; kept so saved preferences parse, hidden in Settings),
+  (insights, weekly reviews, project health), `agent` (delegated tasks on
+  the OpenRouter runtime; shown in Settings only when `AGENT_RUNTIME=openrouter`),
   `vision` (handwriting, image and audio), `embedding` (search index). Each
   carries an ordered candidate list, a recommendation reason, and whether the
   Auto Router may stand in for it.
@@ -690,8 +751,9 @@ subsystem quietly not working, and the fix was a code change and a redeploy.
   breaks, and lists live models with context window, per-million pricing, and
   image support, recommended first.
 - **Storage**: `users.preferences` JSON under a `models` key. No migration.
-- **Agent overrides**: `agent_configs.model_id` is no longer read; delegated
-  tasks run on Jack (see *Delegated Tasks Run on Jack*).
+- **Agent overrides**: on the OpenRouter runtime an active `agent_configs`
+  row's `model_id` goes to the head of the `agent` slot's chain (see
+  *Delegated Tasks: Pluggable Runtime*). Hermes brings its own model.
 
 ## Provenance & Run Collapsing
 
@@ -1239,7 +1301,7 @@ The 9 Operations tools are listed under *Operations Control Center*.
 | `create_capture` | Quick capture a thought/idea/reference |
 | `semantic_search` | AI-powered similarity search via embeddings |
 | `generate_insights` | Generate AI insights from notes/captures |
-| `delegate_to_agent` | Queue background work for Jack (lands in `/review`) |
+| `delegate_to_agent` | Queue background work for the configured runtime (lands in `/review`) |
 | `get_agent_task` | Check agent task status and output |
 | `list_agent_tasks` | List delegated agent tasks |
 | `search` | Full-text search across all entity types |

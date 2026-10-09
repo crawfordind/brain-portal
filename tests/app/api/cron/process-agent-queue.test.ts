@@ -3,27 +3,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/api/validation', () => ({
   verifyCronSecret: vi.fn().mockReturnValue(null),
 }));
-vi.mock('@/lib/agents/jack/dispatcher', () => ({
-  runJackQueuePass: vi.fn(),
-}));
-// If anything on this route's import graph reached for OpenRouter, these
-// would record it. The worker must never call them.
-vi.mock('@/lib/ai/client', () => ({
-  complete: vi.fn(() => { throw new Error('OpenRouter must not be called by the task worker'); }),
-  completeWithMeta: vi.fn(() => { throw new Error('OpenRouter must not be called by the task worker'); }),
+vi.mock('@/lib/agents/runtime/dispatcher', () => ({
+  runQueuePass: vi.fn(),
 }));
 
 import { GET } from '@/app/api/cron/process-agent-queue/route';
-import { runJackQueuePass } from '@/lib/agents/jack/dispatcher';
+import { runQueuePass } from '@/lib/agents/runtime/dispatcher';
 import { verifyCronSecret } from '@/lib/api/validation';
-import { complete, completeWithMeta } from '@/lib/ai/client';
 import { NextRequest, NextResponse } from 'next/server';
 
 const makeRequest = () =>
   new NextRequest('http://localhost/api/cron/process-agent-queue', { method: 'GET' });
 
+// Which runtime runs (and that there is no fallback between them) is the
+// dispatcher's business, covered in dispatcher.integration.test.ts. The
+// route's job is auth, the time budget and an honest report.
 const REPORT = {
+  runtime: 'hermes' as const,
   configured: true,
+  requeued: 0,
   adopted: 1,
   dispatched: 2,
   retried: 0,
@@ -38,26 +36,20 @@ describe('GET /api/cron/process-agent-queue', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(verifyCronSecret).mockReturnValue(null);
-    vi.mocked(runJackQueuePass).mockResolvedValue(REPORT);
+    vi.mocked(runQueuePass).mockResolvedValue(REPORT);
   });
 
-  it('runs one Jack queue pass and reports its counts', async () => {
+  it('runs one queue pass and reports its counts', async () => {
     const response = await GET(makeRequest());
     const body = await response.json();
 
-    expect(runJackQueuePass).toHaveBeenCalledTimes(1);
-    expect(body).toMatchObject({ success: true, runtime: 'jack', ...REPORT });
-  });
-
-  it('never calls OpenRouter', async () => {
-    await GET(makeRequest());
-    expect(complete).not.toHaveBeenCalled();
-    expect(completeWithMeta).not.toHaveBeenCalled();
+    expect(runQueuePass).toHaveBeenCalledTimes(1);
+    expect(body).toMatchObject({ success: true, ...REPORT });
   });
 
   it('keeps the pass inside the function ceiling', async () => {
     await GET(makeRequest());
-    const [, options] = vi.mocked(runJackQueuePass).mock.calls[0];
+    const [, options] = vi.mocked(runQueuePass).mock.calls[0];
     expect(options?.budgetMs).toBeLessThan(300_000);
   });
 
@@ -67,11 +59,11 @@ describe('GET /api/cron/process-agent-queue', () => {
     );
     const response = await GET(makeRequest());
     expect(response.status).toBe(401);
-    expect(runJackQueuePass).not.toHaveBeenCalled();
+    expect(runQueuePass).not.toHaveBeenCalled();
   });
 
   it('answers 500 without leaking the underlying error', async () => {
-    vi.mocked(runJackQueuePass).mockRejectedValue(new Error('SQLITE_BUSY at libsql://secret-host'));
+    vi.mocked(runQueuePass).mockRejectedValue(new Error('SQLITE_BUSY at libsql://secret-host'));
     const response = await GET(makeRequest());
     const body = await response.json();
     expect(response.status).toBe(500);

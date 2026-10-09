@@ -12,8 +12,8 @@ import type { SkillHandler, SkillDefinition } from "./registry";
 import { createNotification } from "@/lib/notifications/engine";
 import { db, mutate, queryAll, queryOne } from "@/lib/db/client";
 import { complete, completeJSON } from "@/lib/ai/client";
-import { adoptAndDispatch } from "@/lib/agents/jack/dispatcher";
-import { AGENT_TYPES } from "@/lib/agents/jack/guard";
+import { adoptAndDispatch } from "@/lib/agents/runtime/dispatcher";
+import { AGENT_TYPES } from "@/lib/agents/runtime/guard";
 import type { DelegationSourceType } from "@/lib/db/schema";
 import { manageTableDef, manageTableHandler } from "./table";
 
@@ -157,8 +157,8 @@ const delegateToAgentHandler: SkillHandler = async (params, context) => {
     agentType = "general";
   }
 
-  // Every delegated task runs on Jack; the agent type is only a label for the
-  // job, so it no longer needs an agent_configs row to exist.
+  // The agent type picks the OpenRouter persona when one is configured and
+  // labels the job otherwise, so it no longer needs an agent_configs row.
   if (!(AGENT_TYPES as readonly string[]).includes(agentType)) {
     agentType = "general";
   }
@@ -191,10 +191,10 @@ const delegateToAgentHandler: SkillHandler = async (params, context) => {
 
   // Execute immediately if requested
   if (autoExecute) {
-    // Hand it to Jack now (or park it, if Jack is not configured). Without
+    // Hand it to the configured runtime now (or park it if delegation is off). Without
     // this the cron adopts it on its next pass.
     adoptAndDispatch(agentTask.id).catch((err) => {
-      console.error(`[Skill:delegate_to_agent] Jack dispatch failed:`, err instanceof Error ? err.message : err);
+      console.error(`[Skill:delegate_to_agent] dispatch failed:`, err instanceof Error ? err.message : err);
     });
   }
 
@@ -988,9 +988,9 @@ const autoTriageCapturesHandler: SkillHandler = async (params, context) => {
             result.agentDelegated = true;
             delegated++;
 
-            // Hand it to Jack now (or park it, if Jack is not configured).
+            // Hand it to the configured runtime now (or park it if delegation is off).
             adoptAndDispatch(agentTaskId).catch((err) => {
-              console.error(`[Skill:auto_triage] Jack dispatch failed for ${agentTaskId}:`, err instanceof Error ? err.message : err);
+              console.error(`[Skill:auto_triage] dispatch failed for ${agentTaskId}:`, err instanceof Error ? err.message : err);
             });
           } catch (delegateErr) {
             console.warn(`[Skill:auto_triage] Delegation failed for capture ${capture.id}:`, delegateErr);

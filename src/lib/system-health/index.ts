@@ -25,7 +25,7 @@ import {
   type DiagnosisCode,
 } from "./diagnose";
 import type { SystemHealth, SystemIssue } from "./types";
-import { getJackConfig } from "@/lib/agents/jack/config";
+import { getRuntimeConfig } from "@/lib/agents/runtime/config";
 
 export type { Diagnosis, DiagnosisCode } from "./diagnose";
 export type { IssueKind, SystemHealth, SystemIssue } from "./types";
@@ -81,7 +81,7 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
       `SELECT id, title, assigned_agent, status, last_error, retry_count, max_retries, updated_at
          FROM agent_tasks
         WHERE user_id = ? AND status = 'failed'
-          AND (runtime IS NULL OR jack_state = 'failed')
+          AND (runtime_state IS NULL OR runtime_state = 'failed')
           AND updated_at > datetime('now', ?)
         ORDER BY updated_at DESC
         LIMIT 50`,
@@ -105,7 +105,7 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     issues.push({
       signature: issueSignature(["agent_task", code, latest.updated_at]),
       kind: "agent_task",
-      subsystem: "Jack (delegated tasks)",
+      subsystem: "Delegated tasks",
       subject:
         rows.length > 1
           ? `${rows.length} delegated tasks failed, including "${latest.title}"`
@@ -121,13 +121,13 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     });
   }
 
-  // Stalled: accepted for Jack but never handed over. `needs_dispatch` is not
+  // Stalled: accepted but never handed to the runtime. `needs_dispatch` is not
   // in here: that is work deliberately parked, reported below.
   const stalled = await probe(() =>
     queryAll<{ n: number; oldest: string; sample: string }>(
       `SELECT COUNT(*) as n, MIN(updated_at) as oldest, MIN(title) as sample
          FROM agent_tasks
-        WHERE user_id = ? AND runtime = 'jack' AND jack_state IN ('queued', 'dispatching')
+        WHERE user_id = ? AND runtime_state IN ('queued', 'dispatching')
           AND updated_at < datetime('now', ?)`,
       [userId, `-${STALL_MINUTES} minutes`]
     )
@@ -137,11 +137,11 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     issues.push({
       signature: issueSignature(["agent_stalled", row.oldest]),
       kind: "agent_task",
-      subsystem: "Jack (delegated tasks)",
+      subsystem: "Delegated tasks",
       subject:
         row.n > 1
-          ? `${row.n} delegated tasks have been waiting over ${STALL_MINUTES} minutes to reach Jack`
-          : `"${row.sample}" has been waiting over ${STALL_MINUTES} minutes to reach Jack`,
+          ? `${row.n} delegated tasks have been waiting over ${STALL_MINUTES} minutes to start`
+          : `"${row.sample}" has been waiting over ${STALL_MINUTES} minutes to start`,
       diagnosis: diagnosisFor("WORKER_NOT_RUNNING"),
       rawError: "",
       occurredAt: row.oldest,
@@ -150,34 +150,34 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     });
   }
 
-  // Parked: not sent because Jack is not connected (or legacy work awaiting a
-  // decision). Only an issue while Jack is unavailable; otherwise it is simply
-  // in the "Needs you" list.
-  const jack = getJackConfig();
-  if (jack.state !== "ready") {
+  // Parked: not sent because delegation is off or misconfigured (or legacy
+  // work awaiting a decision). Only an issue while no runtime is available;
+  // otherwise it is simply in the "Needs you" list.
+  const runtime = getRuntimeConfig();
+  if (runtime.state !== "ready") {
     const parked = await probe(() =>
       queryAll<{ n: number; oldest: string; sample: string }>(
         `SELECT COUNT(*) as n, MIN(updated_at) as oldest, MIN(title) as sample
            FROM agent_tasks
-          WHERE user_id = ? AND runtime = 'jack' AND jack_state = 'needs_dispatch'`,
+          WHERE user_id = ? AND runtime_state = 'needs_dispatch'`,
         [userId]
       )
     );
     if (parked[0]?.n > 0) {
       const row = parked[0];
       issues.push({
-        signature: issueSignature(["jack_parked", jack.state]),
+        signature: issueSignature(["agent_parked", runtime.state]),
         kind: "agent_task",
-        subsystem: "Jack (delegated tasks)",
+        subsystem: "Delegated tasks",
         subject:
           row.n > 1
-            ? `${row.n} delegated tasks are waiting because Jack is not connected`
-            : `"${row.sample}" is waiting because Jack is not connected`,
+            ? `${row.n} delegated tasks are waiting because delegation is not configured`
+            : `"${row.sample}" is waiting because delegation is not configured`,
         diagnosis: {
-          ...diagnosisFor("JACK_NOT_CONFIGURED"),
-          severity: jack.state === "misconfigured" ? "error" : "warning",
+          ...diagnosisFor("AGENT_RUNTIME_NOT_CONFIGURED"),
+          severity: runtime.state === "misconfigured" ? "error" : "warning",
         },
-        rawError: jack.reason ?? "",
+        rawError: runtime.reason ?? "",
         occurredAt: row.oldest,
         count: row.n,
         actionUrl: "/review",
@@ -185,14 +185,14 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     }
   }
 
-  // Unreachable: Jack has runs in flight that Brain Portal cannot see.
+  // Unreachable: a Hermes agent has runs in flight that Brain Portal cannot see.
   const unreachable = await probe(() =>
     queryAll<{ n: number; oldest: string; sample: string }>(
       `SELECT COUNT(*) as n, MIN(r.unreachable_since) as oldest, MIN(at.title) as sample
          FROM agent_task_runs r
          JOIN agent_tasks at ON at.id = r.agent_task_id
         WHERE at.user_id = ? AND r.unreachable_since IS NOT NULL
-          AND at.jack_state IN ('running', 'awaiting_approval', 'awaiting_input', 'cancelling')
+          AND at.runtime_state IN ('running', 'awaiting_approval', 'awaiting_input', 'cancelling')
           AND r.unreachable_since < datetime('now', ?)`,
       [userId, `-${STUCK_MINUTES} minutes`]
     )
@@ -200,14 +200,14 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
   if (unreachable[0]?.n > 0) {
     const row = unreachable[0];
     issues.push({
-      signature: issueSignature(["jack_unreachable", row.oldest]),
+      signature: issueSignature(["agent_unreachable", row.oldest]),
       kind: "agent_task",
-      subsystem: "Jack (delegated tasks)",
+      subsystem: "Delegated tasks",
       subject:
         row.n > 1
-          ? `${row.n} tasks Jack is working on cannot be checked`
+          ? `${row.n} tasks the agent is working on cannot be checked`
           : `"${row.sample}" cannot be checked`,
-      diagnosis: diagnosisFor("JACK_UNREACHABLE"),
+      diagnosis: diagnosisFor("HERMES_UNREACHABLE"),
       rawError: "",
       occurredAt: row.oldest,
       count: row.n,
@@ -215,8 +215,9 @@ async function checkAgentTasks(userId: string): Promise<SystemIssue[]> {
     });
   }
 
-  // A long-running Jack task is not a fault: Jack does real work and the
-  // poller is still in touch with it. Only "never accepted" (above) and
+  // A long-running Hermes task is not a fault: the agent does real work and
+  // the poller is still in touch with it. (A stuck OpenRouter call is
+  // re-queued by the queue pass after ten minutes.) Only "never accepted" (above) and
   // "cannot be reached" are.
 
   return issues;
@@ -399,17 +400,17 @@ async function checkConfiguration(): Promise<SystemIssue[]> {
     });
   }
 
-  // agent_configs rows are no longer needed to run delegated work (Jack runs
-  // it), so their absence is not reported. A misconfigured Jack connection is.
-  const jack = getJackConfig();
-  if (jack.state === "misconfigured") {
+  // agent_configs rows only supply optional personas now, so their absence is
+  // not reported. A misconfigured agent runtime is.
+  const runtime = getRuntimeConfig();
+  if (runtime.state === "misconfigured") {
     issues.push({
-      signature: "config:JACK_MISCONFIGURED",
+      signature: "config:AGENT_RUNTIME_MISCONFIGURED",
       kind: "configuration",
       subsystem: "Server configuration",
-      subject: "Jack is enabled but its connection settings are invalid",
-      diagnosis: { ...diagnosisFor("JACK_NOT_CONFIGURED"), severity: "error" },
-      rawError: jack.reason ?? "",
+      subject: "The delegated-task runtime is selected but its settings are invalid",
+      diagnosis: { ...diagnosisFor("AGENT_RUNTIME_NOT_CONFIGURED"), severity: "error" },
+      rawError: runtime.reason ?? "",
       occurredAt: now,
       count: 1,
     });

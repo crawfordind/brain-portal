@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 /**
  * Number of delegated tasks waiting on the user: output to review, an
- * approval Jack is paused on, or work parked as "not sent" / "needs review".
+ * approval an agent is paused on, or work parked as "not sent" / "needs review".
  *
  * Shared by every surface that advertises the Review queue (sidebar, mobile
  * "More" sheet, the Work command bar) so they can never disagree about how

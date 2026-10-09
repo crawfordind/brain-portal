@@ -270,7 +270,7 @@ export function registerAITools(server: McpServer, ctx: ToolContext) {
   // ─── Delegate to Agent ─────────────────────────────────
   server.tool(
     "delegate_to_agent",
-    "Queue background work for Jack, the user's Hermes agent. Brain Portal hands it to Jack on its next queue pass (or keeps it as 'not sent' if Jack is not connected); the output lands in the user's review queue rather than coming back here. The agent type is only a label for the job: code, copy, research, marketing, analyst, general, ux, legal, finance, hr, product, sales, operations, security, data_eng, educator, strategy.",
+    "Queue background work for the server's configured agent runtime (OpenRouter or a Hermes agent). Brain Portal runs it on its next queue pass (or keeps it as 'not sent' if delegation is off); the output lands in the user's review queue rather than coming back here. Agent types: code, copy, research, marketing, analyst, general, ux, legal, finance, hr, product, sales, operations, security, data_eng, educator, strategy.",
     {
       title: z.string().min(1).describe("Task title for the agent"),
       description: z

@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { cancelJackTask } from "@/lib/agents/jack/dispatcher";
-import { actionErrorResponse, rateLimited } from "@/lib/agents/jack/http";
+import { cancelTask } from "@/lib/agents/runtime/dispatcher";
+import { actionErrorResponse, rateLimited } from "@/lib/agents/runtime/http";
 
 /**
  * POST /api/agent-tasks/[id]/cancel
  *
- * Work Jack never had is cancelled here and now. Work Jack is doing gets a
- * stop request; the task reads "Stopping" until Jack confirms, because saying
- * "Cancelled" before Jack has actually stopped would be a lie.
+ * Work the runtime never had is cancelled here and now. Work a Hermes agent
+ * is doing gets a stop request; the task reads "Stopping" until the agent
+ * confirms, because saying "Cancelled" before it has actually stopped would be
+ * a lie. An OpenRouter call in flight cannot be stopped and is answered 409.
  */
 export async function POST(
   _request: NextRequest,
@@ -21,7 +22,7 @@ export async function POST(
 
   const { id } = await params;
   try {
-    const state = await cancelJackTask(id, user.id);
+    const state = await cancelTask(id, user.id);
     return NextResponse.json({ success: true, state });
   } catch (error) {
     return actionErrorResponse(error, "cancel");

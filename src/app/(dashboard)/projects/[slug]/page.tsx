@@ -28,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useSendToJack } from "@/hooks/use-send-to-jack";
+import { useSendToAgent } from "@/hooks/use-send-to-agent";
 import {
   Send,
   ArrowLeft,
@@ -69,6 +69,7 @@ import { ProjectHealthCard } from "@/components/projects/project-health-card";
 import { CollaboratorsCard } from "@/components/projects/collaborators-card";
 import { useInView } from 'react-intersection-observer';
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { SendToAgentLabel } from "@/components/agents/send-to-agent-label";
 
 interface Project {
   id: string;
@@ -123,7 +124,7 @@ export default function ProjectDetailPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const confirm = useConfirm();
-  const { sendToJack } = useSendToJack();
+  const { sendToAgent } = useSendToAgent();
   const slug = params.slug as string;
 
   const [isEditing, setIsEditing] = useState(false);
@@ -541,10 +542,10 @@ export default function ProjectDetailPage() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
-                      onClick={() => sendToJack({ id: project.id, type: "project", title: project.name, projectId: project.id })}
+                      onClick={() => sendToAgent({ id: project.id, type: "project", title: project.name, projectId: project.id })}
                     >
                       <Send className="h-4 w-4 mr-2" />
-                      Send to Jack
+                      <SendToAgentLabel />
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem

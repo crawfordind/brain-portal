@@ -1,8 +1,8 @@
 /**
  * Read-only tools must say so over the wire. Hermes, with Brain Portal's MCP
- * server configured `trust: untrusted`, asks Daniel before every tool that is
+ * server configured `trust: untrusted`, asks the user before every tool that is
  * *not* annotated `readOnlyHint: true`. Without the hint every search and
- * every get_note would stop Jack for approval; with a wrong hint a write would
+ * every get_note would stop the agent for approval; with a wrong hint a write would
  * slip through unapproved. Both directions are checked here, over a real MCP
  * client/server pair.
  */
@@ -50,7 +50,7 @@ describe("readOnlyHint annotations", () => {
     }
   });
 
-  it("covers the reads Jack makes most", () => {
+  it("covers the reads an agent makes most", () => {
     for (const name of ["search", "semantic_search", "get_note", "list_tasks", "get_contact_brief", "operations_overview"]) {
       expect(isReadOnlyTool(TOOLS.find((t) => t.name === name)!), name).toBe(true);
     }
