@@ -152,6 +152,9 @@ export function CaptureCreateDialog({
     }
   };
 
+  // Called as a function, not rendered as <CaptureForm />: a component
+  // defined during render is a new type every render, so React would
+  // remount the form, dropping focus, on every keystroke.
   const CaptureForm = () => (
     <>
       <div className="space-y-4 py-2">
@@ -333,7 +336,7 @@ export function CaptureCreateDialog({
               />
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              <CaptureForm />
+              {CaptureForm()}
             </div>
           </div>
         </SheetContent>
@@ -347,7 +350,7 @@ export function CaptureCreateDialog({
       <DialogContent size="compact">
         <DialogTitle className="sr-only">Quick Capture</DialogTitle>
         <ModalHeader title="Quick Capture" onClose={handleClose} showClose={false} />
-        <CaptureForm />
+        {CaptureForm()}
       </DialogContent>
     </Dialog>
   );

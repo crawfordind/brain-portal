@@ -71,18 +71,6 @@ export function AnalysisModal({
   const [saveTitle, setSaveTitle] = useState("");
   const [showSaveInput, setShowSaveInput] = useState(false);
 
-  // Reset state when modal opens
-  useEffect(() => {
-    if (open) {
-      setResult(null);
-      setError(null);
-      setActiveTab("overview");
-      setShowSaveInput(false);
-      setSaveTitle("");
-      analyzeNote();
-    }
-  }, [open]);
-
   const analyzeNote = async () => {
     setAnalyzing(true);
     setError(null);
@@ -108,6 +96,18 @@ export function AnalysisModal({
       setAnalyzing(false);
     }
   };
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (open) {
+      setResult(null);
+      setError(null);
+      setActiveTab("overview");
+      setShowSaveInput(false);
+      setSaveTitle("");
+      analyzeNote();
+    }
+  }, [open]);
 
   const formatAsMarkdown = useCallback((): string => {
     if (!result) return "";

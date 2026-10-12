@@ -103,6 +103,9 @@ export function AttachmentPicker({
 
   const recentAttachments = attachments.slice(0, 10);
 
+  // Called as a function, not rendered as <PickerContent />: a component
+  // defined during render is a new type every render, so React would
+  // remount it (and drop focus and state) on each update.
   const PickerContent = () => (
     <>
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'upload' | 'browse' | 'recent')}>
@@ -233,7 +236,7 @@ export function AttachmentPicker({
               />
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              <PickerContent />
+              {PickerContent()}
             </div>
           </div>
         </SheetContent>
@@ -247,7 +250,7 @@ export function AttachmentPicker({
       <DialogContent size="standard">
         <DialogTitle className="sr-only">Add Attachment</DialogTitle>
         <ModalHeader title="Add Attachment" onClose={onClose} showClose={false} />
-        <PickerContent />
+        {PickerContent()}
       </DialogContent>
     </Dialog>
   );

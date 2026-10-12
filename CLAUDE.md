@@ -471,7 +471,10 @@ npx vitest run tests/lib/ai/embeddings.test.ts
 ## CI
 
 `.github/workflows/ci.yml` runs lint, typecheck, test and build on every PR,
-plus a `--audit-level=high` dependency audit. It needs **no secrets**:
+plus a dependency audit that fails on high or critical advisories in the
+**production** tree (`--omit=dev`). Dev-only tooling is audited too but only
+reported: some of its advisories (e.g. `braces` under `eslint-config-next`)
+have no patched release, and it never reaches a deployment. It needs **no secrets**:
 `scripts/migrate.ts` skips itself when `CI=true` or `SKIP_MIGRATIONS=true`
 rather than failing the `prebuild` for want of a database.
 
