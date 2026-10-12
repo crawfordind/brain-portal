@@ -360,7 +360,7 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "delegate_to_agent",
     description:
-      "Delegate work to one of 17 specialist AI agents. Use 'auto' to let the router pick the best agent.",
+      "Queue background work for the server's configured agent runtime (OpenRouter or a Hermes agent). The output lands in the review queue. The agent type picks the persona or labels the job; 'auto' means general.",
     scope: "ai:delegate",
     category: "ai",
     inputSchema: z.object({
@@ -874,6 +874,20 @@ export const PROMPTS: PromptSpec[] = [
 ];
 
 // ─── Convenience accessors ────────────────────────────────────────────
+
+/**
+ * Tools that only read. Declared to clients as `readOnlyHint: true`.
+ *
+ * This is what lets an agent host gate writes without gating reads: Hermes,
+ * with this server configured `trust: untrusted`, asks the user before every
+ * tool *not* marked read-only. Derived from the scope, so a new `*:read` tool
+ * is covered automatically; the two `ai:delegate` lookups are listed by name.
+ */
+const READ_ONLY_BY_NAME = new Set(["get_agent_task", "list_agent_tasks"]);
+
+export function isReadOnlyTool(spec: Pick<ToolSpec, "name" | "scope">): boolean {
+  return spec.scope.endsWith(":read") || spec.scope === "ai:search" || READ_ONLY_BY_NAME.has(spec.name);
+}
 
 export function findTool(name: string): ToolSpec | undefined {
   return TOOLS.find((t) => t.name === name);

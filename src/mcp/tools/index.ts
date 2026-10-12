@@ -14,6 +14,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../guard";
+import { findTool, isReadOnlyTool } from "@/lib/mcp/catalog";
 
 import { registerNoteTools } from "./notes";
 import { registerTaskTools } from "./tasks";
@@ -36,7 +37,30 @@ export const TOOL_MODULES = [
 ] as const;
 
 export function registerAllTools(server: McpServer, ctx: ToolContext): void {
+  const annotating = withReadOnlyHints(server);
   for (const { register } of TOOL_MODULES) {
-    register(server, ctx);
+    register(annotating, ctx);
   }
+}
+
+/**
+ * Mark every read-only tool `readOnlyHint: true` as it is registered, from the
+ * catalog, so no module has to remember to. An agent host that gates
+ * write-capable tools (Hermes `trust: untrusted`) then asks the user before
+ * writes and lets reads through. The hint never grants access; scopes do.
+ */
+function withReadOnlyHints(server: McpServer): McpServer {
+  return new Proxy(server, {
+    get(target, prop, receiver) {
+      if (prop !== "tool") return Reflect.get(target, prop, receiver);
+      return (...args: unknown[]) => {
+        const registered = (target.tool as (...a: unknown[]) => unknown).apply(target, args) as
+          | { update?: (u: { annotations: { readOnlyHint: boolean } }) => void }
+          | undefined;
+        const spec = typeof args[0] === "string" ? findTool(args[0]) : undefined;
+        if (spec && isReadOnlyTool(spec)) registered?.update?.({ annotations: { readOnlyHint: true } });
+        return registered;
+      };
+    },
+  });
 }

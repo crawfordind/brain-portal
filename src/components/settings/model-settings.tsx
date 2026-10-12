@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useAgentRuntime } from "@/hooks/use-agent-runtime";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +56,7 @@ interface ModelsResponse {
 
 export function ModelSettingsPanel() {
   const queryClient = useQueryClient();
+  const agentRuntime = useAgentRuntime();
   const [openSlot, setOpenSlot] = useState<ModelSlot | null>(null);
 
   const { data, isLoading, isFetching } = useQuery({
@@ -154,7 +156,10 @@ export function ModelSettingsPanel() {
       </div>
 
       <div className="space-y-2">
-        {data.slots.map((slotView) => (
+        {/* The "agent" slot picks the model for delegated tasks, which only
+            means something when they run through OpenRouter. On Hermes the
+            agent brings its own model, so the slot is not offered. */}
+        {data.slots.filter((slotView) => slotView.slot !== "agent" || agentRuntime.runtime === "openrouter").map((slotView) => (
           <SlotRow
             key={slotView.slot}
             view={slotView}
@@ -169,6 +174,13 @@ export function ModelSettingsPanel() {
             isSaving={saveMutation.isPending}
           />
         ))}
+        {agentRuntime.loaded && agentRuntime.runtime !== "openrouter" && (
+          <p className="px-1 pt-1 text-xs text-muted-foreground">
+            {agentRuntime.runtime === "hermes"
+              ? `Delegated tasks run on ${agentRuntime.displayName}, a Hermes agent with its own model, and do not use these settings or OpenRouter credits.`
+              : "Delegated tasks are not running on this instance, so they use none of these models."}
+          </p>
+        )}
       </div>
     </div>
   );

@@ -31,6 +31,7 @@ import {
   FileText,
   FolderOpen,
   Repeat,
+  Send,
   Sparkles,
   Trash2,
   User,
@@ -52,11 +53,13 @@ import {
 import { RecurrencePicker } from "@/components/tasks/recurrence-picker";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useMobile } from "@/hooks/use-mobile";
+import { useSendToAgent } from "@/hooks/use-send-to-agent";
 import { useNLTaskParser } from "@/lib/hooks/use-nl-task-parser";
 import { addToQueue } from "@/lib/offline/simple-queue";
 import { rruleToText } from "@/lib/tasks/recurrence";
 import { cn } from "@/lib/utils";
 import type { Task } from "@/types/task";
+import { SendToAgentLabel } from "@/components/agents/send-to-agent-label";
 
 interface Project {
   id: string;
@@ -155,6 +158,7 @@ export function TaskPanel({
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const router = useRouter();
+  const { sendToAgent } = useSendToAgent();
   const titleRef = useRef<HTMLInputElement>(null);
 
   const [draft, setDraft] = useState<Draft>(() => draftFromTask(task));
@@ -546,6 +550,16 @@ export function TaskPanel({
               <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Ask about this
             </Button>
           )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              sendToAgent({ id: task.id, type: "task", title: task.title || task.content, projectId: task.project_id });
+              close();
+            }}
+          >
+            <Send className="mr-1.5 h-3.5 w-3.5" /> <SendToAgentLabel />
+          </Button>
           {task.agent_task_id && onReview && (
             <Button
               variant="ghost"

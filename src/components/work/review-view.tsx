@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Terminal, Bot } from "lucide-react";
+import { PlugZap, Bot } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { AgentQueue } from "@/components/agents/agent-queue";
+import { useAgentRuntime } from "@/hooks/use-agent-runtime";
 
 interface ReviewViewProps {
   onTaskClick: (agentTaskId: string) => void;
@@ -17,14 +18,13 @@ interface ReviewViewProps {
 }
 
 /**
- * The Review workspace — background agent output waiting on a decision.
+ * The Review workspace: everything delegated to the configured agent, and
+ * what it needs from you.
  *
- * Interactive AI help now happens in the chat ("Ask about this"), where the
- * answer streams back and the follow-up is the next message. What still lands
- * here is work nobody was sitting in front of: heartbeat jobs, MCP delegation
- * and skill runs. That is a much smaller queue, so the stats dashboard that
- * used to sit beside it — activity chart, per-agent breakdown, four stat
- * cards — measured a system the user no longer drives by hand and is gone.
+ * Quick questions happen in the chat ("Ask about this"). What lands here is
+ * background work: things sent with "Send to …", plus heartbeat jobs, MCP
+ * delegation and skill runs. Each task shows its state, pauses here when a
+ * runtime that supports approvals needs one, and keeps every version.
  */
 export function ReviewView({
   onTaskClick,
@@ -33,33 +33,43 @@ export function ReviewView({
   showHeading = true,
 }: ReviewViewProps) {
   const queryClient = useQueryClient();
+  const runtime = useAgentRuntime();
+  const name = runtime.displayName;
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleProcessQueue = async () => {
+  /**
+   * A live round trip to the agent through the server
+   * (`/api/agent-runtime/status?check=true`). Offered only by runtimes that
+   * have something to check; an OpenRouter key is checked in Settings.
+   */
+  const handleCheckConnection = async () => {
     setIsProcessing(true);
     try {
-      const response = await fetch("/api/cron/process-agent-queue", { method: "POST" });
+      const response = await fetch("/api/agent-runtime/status?check=true");
       const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `Could not check ${name}`);
 
-      if (!result.success) throw new Error(result.error || "Failed to process queue");
-
-      const messages = [];
-      if (result.stuck_reset > 0) messages.push(`${result.stuck_reset} stuck task(s) reset`);
-      if (result.processed > 0) messages.push(`${result.processed} task(s) processed`);
-      if (result.failed > 0) messages.push(`${result.failed} failed`);
-      toast.success(messages.length > 0 ? messages.join(", ") : "Queue processed");
-
-      if (result.errors?.length > 0) {
-        result.errors.forEach((err: string) => toast.error(err, { duration: 8000 }));
+      if (result.state !== "ready") {
+        toast.warning(`${name} is not connected`, { description: result.message, duration: 10000 });
+      } else if (result.check?.ok) {
+        toast.success(`${name} is connected`);
+      } else if (result.check?.reachable === false) {
+        toast.error(`${name} cannot be reached`, { description: result.check.error, duration: 10000 });
+      } else if (result.check && !result.check.profileMatches) {
+        toast.error("Connected to the wrong Hermes profile", {
+          description: `Expected "${result.check.expectedProfile}", the server reports "${result.check.reportedProfile ?? "unknown"}".`,
+          duration: 10000,
+        });
+      } else {
+        toast.error("The agent server is missing features Brain Portal needs", {
+          description: (result.check?.missingFeatures ?? []).join(", "),
+          duration: 10000,
+        });
       }
-
       queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["agent-tasks-count"] });
-      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["agent-runtime-status"] });
     } catch (error) {
-      toast.error(
-        `Failed to process queue: ${error instanceof Error ? error.message : "Unknown error"}`
-      );
+      toast.error(error instanceof Error ? error.message : `Could not check ${name}`);
     } finally {
       setIsProcessing(false);
     }
@@ -71,27 +81,29 @@ export function ReviewView({
         {showHeading ? (
           <div className="flex items-center gap-2 min-w-0">
             <Bot className="h-4 w-4 shrink-0 text-purple-600 dark:text-purple-400" />
-            <h2 className="text-sm font-semibold">Agent review</h2>
+            <h2 className="text-sm font-semibold">{name}</h2>
             <p className="hidden sm:block text-xs text-muted-foreground truncate">
               {reviewCount > 0
                 ? `${reviewCount} output${reviewCount === 1 ? "" : "s"} waiting on your decision`
-                : "Nothing waiting — background agent work lands here when it's done"}
+                : `Nothing waiting. Work you send to ${name} lands here.`}
             </p>
           </div>
         ) : (
           <div />
         )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleProcessQueue}
-          disabled={isProcessing}
-          className="h-8 shrink-0 text-xs"
-        >
-          <Terminal className="mr-1.5 h-3.5 w-3.5" />
-          {isProcessing ? "Processing…" : "Process queue"}
-        </Button>
+        {runtime.capabilities.connectionTest && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCheckConnection}
+            disabled={isProcessing}
+            className="h-8 shrink-0 text-xs"
+          >
+            <PlugZap className="mr-1.5 h-3.5 w-3.5" />
+            {isProcessing ? "Checking…" : `Test ${name} connection`}
+          </Button>
+        )}
       </div>
 
       <AgentQueue onTaskClick={onTaskClick} onCreateTask={onCreateTask} />

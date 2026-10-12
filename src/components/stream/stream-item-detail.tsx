@@ -24,13 +24,16 @@ import {
   BookOpen,
   Loader2,
   AlertCircle,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAskAbout, toChatItemType } from "@/hooks/use-ask-about";
+import { useSendToAgent, toAgentSourceType } from "@/hooks/use-send-to-agent";
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import type { StreamItemType } from "@/lib/stream/types";
+import { SendToAgentLabel } from "@/components/agents/send-to-agent-label";
 
 const TYPE_CONFIG: Record<
   StreamItemType,
@@ -74,6 +77,7 @@ export function StreamItemDetail() {
   const [isArchiving, setIsArchiving] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const { askAbout } = useAskAbout();
+  const { sendToAgent } = useSendToAgent();
 
   const fetchItem = useCallback(async (id: string) => {
     setIsLoading(true);
@@ -366,6 +370,19 @@ export function StreamItemDetail() {
                   >
                     <Sparkles className="h-3.5 w-3.5 mr-1.5" />
                     Ask about this
+                  </Button>
+                )}
+                {item.type !== "agent_output" && toAgentSourceType(item.type) !== null && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs flex-1 min-w-[100px]"
+                    onClick={() =>
+                      sendToAgent({ id: item.id, type: item.type, title: item.title, content: item.content })
+                    }
+                  >
+                    <Send className="h-3.5 w-3.5 mr-1.5" />
+                    <SendToAgentLabel />
                   </Button>
                 )}
                 <Button variant="outline" size="sm" className="text-xs flex-1 min-w-[100px]" onClick={handleOpenFull}>

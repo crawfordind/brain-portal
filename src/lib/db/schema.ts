@@ -1494,6 +1494,11 @@ export interface AgentTask {
   last_error: string | null;
   context_used: string; // JSON array of { id, title, similarity }
   routed_by: 'user' | 'auto_llm' | 'auto_rule' | 'heartbeat';
+  /** The runtime that ran the work ('openrouter' | 'hermes'), stamped at claim time. */
+  runtime?: string | null;
+  /** Precise lifecycle (src/lib/agents/runtime/types.ts); NULL on historical rows. `status` is its coarse projection. */
+  runtime_state?: string | null;
+  runtime_session_id?: string | null;
   created_at: string;
   updated_at: string;
 }

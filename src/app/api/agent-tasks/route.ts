@@ -1,8 +1,30 @@
-import { NextRequest, NextResponse } from "next/server";
-import { db, mutate, queryAll, queryOne } from "@/lib/db/client";
+import { NextRequest, NextResponse, after } from "next/server";
+import { queryAll, queryOne } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { AgentTask } from "@/lib/db/schema";
-import { executeAgentTask } from "@/lib/agents/executor";
+import { createDelegatedTask } from "@/lib/agents/runtime/dispatcher";
+import { publicRuntimeStatus } from "@/lib/agents/runtime/config";
+import {
+  AGENT_TYPES,
+  INPUT_LIMITS,
+  OUTPUT_FORMATS,
+  PRIORITIES,
+  cleanIdList,
+  cleanUrls,
+  isSourceType,
+  ownedNoteIds,
+  ownsRecord,
+  resolveOwnedSource,
+} from "@/lib/agents/runtime/guard";
+import { readJsonBody, rateLimited } from "@/lib/agents/runtime/http";
+import { isErrorResponse } from "@/lib/api/validation";
+
+/**
+ * "Needs you": work that is waiting on the user rather than on the runtime.
+ * Output to review, a decision an agent is paused on, and parked or unmappable work.
+ */
+const NEEDS_YOU_SQL = `(at.status = 'awaiting_review'
+  OR at.runtime_state IN ('awaiting_approval', 'awaiting_input', 'needs_dispatch', 'needs_review'))`;
 
 // GET /api/agent-tasks - List user's agent tasks
 export async function GET(request: NextRequest) {
@@ -14,6 +36,7 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const status = searchParams.get("status");
   const countOnly = searchParams.get("countOnly") === "true";
+  const needsYou = searchParams.get("needsYou") === "true";
   // Filters for "what background work exists against this entity?", which is
   // what the note page asks. This used to be GET /api/delegate; that endpoint
   // went with the delegation UI, but the question outlived it.
@@ -22,12 +45,13 @@ export async function GET(request: NextRequest) {
 
   // Fast path: return only the count without JOINs or subqueries
   if (countOnly) {
-    let countSql = "SELECT COUNT(*) as count FROM agent_tasks WHERE user_id = ?";
+    let countSql = "SELECT COUNT(*) as count FROM agent_tasks at WHERE at.user_id = ?";
     const countArgs: string[] = [user.id];
     if (status) {
-      countSql += " AND status = ?";
+      countSql += " AND at.status = ?";
       countArgs.push(status);
     }
+    if (needsYou) countSql += ` AND ${NEEDS_YOU_SQL}`;
     const result = await queryOne<{ count: number }>(countSql, countArgs);
     return NextResponse.json({ count: result?.count || 0 });
   }
@@ -43,10 +67,10 @@ export async function GET(request: NextRequest) {
       n.slug as note_slug,
       latest_out.summary as latest_summary
     FROM agent_tasks at
-    LEFT JOIN projects p ON at.project_id = p.id
+    LEFT JOIN projects p ON at.project_id = p.id AND p.user_id = at.user_id
     LEFT JOIN agent_configs ac ON at.assigned_agent = ac.agent_type
-    LEFT JOIN tasks t ON at.task_id = t.id
-    LEFT JOIN notes n ON t.note_id = n.id
+    LEFT JOIN tasks t ON at.task_id = t.id AND t.user_id = at.user_id
+    LEFT JOIN notes n ON t.note_id = n.id AND n.user_id = at.user_id
     LEFT JOIN agent_task_outputs latest_out
       ON latest_out.agent_task_id = at.id
       AND latest_out.version_number = at.current_version
@@ -58,6 +82,7 @@ export async function GET(request: NextRequest) {
     query += " AND at.status = ?";
     args.push(status);
   }
+  if (needsYou) query += ` AND ${NEEDS_YOU_SQL}`;
 
   if (sourceType && sourceId) {
     query += " AND at.source_type = ? AND at.source_id = ?";
@@ -78,89 +103,107 @@ export async function GET(request: NextRequest) {
     }
   >(query, args);
 
-  return NextResponse.json({ tasks });
+  return NextResponse.json({ tasks, agent: publicRuntimeStatus() });
 }
 
-// POST /api/agent-tasks - Create new agent task
+// POST /api/agent-tasks - Delegate work to the configured runtime
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const limited = rateLimited(user.id, "create");
+  if (limited) return limited;
 
-  const body = await request.json();
-  const {
-    title,
-    description,
-    taskType,
-    assignedAgent,
-    priority = "medium",
-    outputFormat = "markdown",
-    contextNoteIds = [],
-    contextUrls = [],
-    projectId = null,
-    autoExecute = true,
-  } = body;
+  const body = await readJsonBody(request);
+  if (isErrorResponse(body)) return body;
 
-  if (!title?.trim() || !description?.trim()) {
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+  const description = typeof body.description === "string" ? body.description.trim() : "";
+  if (!title || !description) {
+    return NextResponse.json({ error: "Title and description required" }, { status: 400 });
+  }
+  if (title.length > INPUT_LIMITS.title || description.length > INPUT_LIMITS.description) {
     return NextResponse.json(
-      { error: "Title and description required" },
+      { error: `Title is limited to ${INPUT_LIMITS.title} characters and the instruction to ${INPUT_LIMITS.description}.` },
       { status: 400 }
     );
   }
 
-  if (!assignedAgent) {
-    return NextResponse.json(
-      { error: "Agent must be assigned" },
-      { status: 400 }
-    );
+  // The agent type picks the persona on OpenRouter and labels the job on Hermes.
+  const assignedAgent = body.assignedAgent ?? "general";
+  const agentType = assignedAgent === "auto" ? "general" : assignedAgent;
+  if (typeof agentType !== "string" || !(AGENT_TYPES as readonly string[]).includes(agentType)) {
+    return NextResponse.json({ error: `Unknown agent type: ${String(agentType)}` }, { status: 400 });
+  }
+  const taskType = typeof body.taskType === "string" && (AGENT_TYPES as readonly string[]).includes(body.taskType)
+    ? body.taskType
+    : agentType;
+  const priority = body.priority ?? "medium";
+  if (!(PRIORITIES as readonly unknown[]).includes(priority)) {
+    return NextResponse.json({ error: "Invalid priority" }, { status: 400 });
+  }
+  const outputFormat = body.outputFormat ?? "markdown";
+  if (!(OUTPUT_FORMATS as readonly unknown[]).includes(outputFormat)) {
+    return NextResponse.json({ error: "Invalid output format" }, { status: 400 });
   }
 
-  // Validate agent config exists
-  const agentConfig = await queryOne<{ agent_type: string }>(
-    "SELECT agent_type FROM agent_configs WHERE agent_type = ? AND is_active = TRUE",
-    [assignedAgent]
-  );
-  if (!agentConfig) {
-    return NextResponse.json(
-      { error: `Unknown or inactive agent type: ${assignedAgent}` },
-      { status: 400 }
-    );
+  const contextNoteIds = cleanIdList(body.contextNoteIds, INPUT_LIMITS.contextNotes);
+  if (!contextNoteIds) {
+    return NextResponse.json({ error: `Pin at most ${INPUT_LIMITS.contextNotes} notes` }, { status: 400 });
+  }
+  const contextUrls = cleanUrls(body.contextUrls);
+  if (!contextUrls) {
+    return NextResponse.json({ error: `At most ${INPUT_LIMITS.urls} http(s) URLs` }, { status: 400 });
   }
 
-  // Create task — use RETURNING to avoid the race of SELECT ORDER BY created_at
-  const task = await mutate<AgentTask>(
-    `INSERT INTO agent_tasks
-      (user_id, title, description, task_type, assigned_agent, priority, output_format, context_note_ids, context_urls, project_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      RETURNING *`,
-    [
-      user.id,
-      title.trim(),
-      description.trim(),
-      taskType || assignedAgent,
-      assignedAgent,
-      priority,
-      outputFormat,
-      JSON.stringify(contextNoteIds),
-      JSON.stringify(contextUrls),
+  // Every id the browser sends is checked against the signed-in user.
+  const ownedNotes = await ownedNoteIds(user.id, contextNoteIds);
+  if (ownedNotes.length !== contextNoteIds.length) {
+    return NextResponse.json({ error: "One or more pinned notes were not found" }, { status: 404 });
+  }
+
+  let projectId: string | null = null;
+  if (body.projectId !== undefined && body.projectId !== null) {
+    if (typeof body.projectId !== "string" || !(await ownsRecord(user.id, "project", body.projectId))) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    }
+    projectId = body.projectId;
+  }
+
+  let sourceType = "task";
+  let sourceId: string | null = null;
+  if (body.sourceType !== undefined || body.sourceId !== undefined) {
+    if (!isSourceType(body.sourceType) || typeof body.sourceId !== "string" || !body.sourceId) {
+      return NextResponse.json({ error: "Invalid source" }, { status: 400 });
+    }
+    const resolved = await resolveOwnedSource(user.id, body.sourceType, body.sourceId);
+    if (!resolved) {
+      return NextResponse.json({ error: "Source not found" }, { status: 404 });
+    }
+    sourceType = resolved;
+    sourceId = body.sourceId;
+  }
+
+  try {
+    const { task, outcome } = await createDelegatedTask({
+      userId: user.id,
+      title,
+      description,
+      taskType,
+      assignedAgent: agentType,
+      priority: priority as string,
+      outputFormat: outputFormat as string,
+      contextNoteIds: ownedNotes,
+      contextUrls,
       projectId,
-    ]
-  );
-
-  if (!task) {
-    return NextResponse.json(
-      { error: "Failed to create task" },
-      { status: 500 }
-    );
+      sourceType,
+      sourceId,
+      linkTaskId: sourceType === "task" ? sourceId : null,
+    }, { schedule: after });
+    return NextResponse.json({ task, dispatch: outcome, agent: publicRuntimeStatus() }, { status: 201 });
+  } catch (error) {
+    console.error("[API] POST /api/agent-tasks failed:", error instanceof Error ? error.message : error);
+    return NextResponse.json({ error: "Failed to create task" }, { status: 500 });
   }
-
-  // Auto-execute if requested
-  if (autoExecute) {
-    executeAgentTask(task.id).catch((error) => {
-      console.error("Error executing agent task:", error);
-    });
-  }
-
-  return NextResponse.json({ task }, { status: 201 });
 }

@@ -1,11 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
-import { db, queryOne } from "@/lib/db/client";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { AgentTask } from "@/lib/db/schema";
-import { executeAgentTask } from "@/lib/agents/executor";
-import { syncTaskStatusFromAgentTask } from "@/lib/agents/status-sync";
+import { requestRevision } from "@/lib/agents/runtime/dispatcher";
+import { INPUT_LIMITS } from "@/lib/agents/runtime/guard";
+import { actionErrorResponse, rateLimited, readJsonBody } from "@/lib/agents/runtime/http";
+import { isErrorResponse } from "@/lib/api/validation";
 
-// POST /api/agent-tasks/[id]/revise - Request revision
+/**
+ * POST /api/agent-tasks/[id]/revise — the user's reply to an output.
+ *
+ * Records the feedback and queues a new version on the configured runtime:
+ * on Hermes, the next turn of the task's own session; on OpenRouter, a new
+ * completion carrying the previous version and the feedback. The work runs
+ * after the response.
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -14,63 +21,31 @@ export async function POST(
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const limited = rateLimited(user.id, "revise");
+  if (limited) return limited;
 
-  const { id } = await params;
-  const body = await request.json();
-  const { feedback } = body;
+  const body = await readJsonBody(request);
+  if (isErrorResponse(body)) return body;
+  const feedback = typeof body.feedback === "string" ? body.feedback.trim() : "";
 
-  if (!feedback?.trim()) {
+  if (!feedback) {
     return NextResponse.json(
       { error: "Feedback is required for revisions" },
       { status: 400 }
     );
   }
-
-  const task = await queryOne<AgentTask>(
-    "SELECT * FROM agent_tasks WHERE id = ? AND user_id = ?",
-    [id, user.id]
-  );
-
-  if (!task) {
-    return NextResponse.json({ error: "Task not found" }, { status: 404 });
-  }
-
-  if (task.status !== "awaiting_review" && task.status !== "revision_requested") {
+  if (feedback.length > INPUT_LIMITS.feedback) {
     return NextResponse.json(
-      { error: "Task not available for revision" },
+      { error: `Feedback is limited to ${INPUT_LIMITS.feedback} characters` },
       { status: 400 }
     );
   }
 
-  if (task.current_version >= task.max_revisions) {
-    return NextResponse.json(
-      { error: "Maximum revisions reached" },
-      { status: 400 }
-    );
+  const { id } = await params;
+  try {
+    const outcome = await requestRevision(id, user.id, feedback, { schedule: after });
+    return NextResponse.json({ success: true, dispatch: outcome });
+  } catch (error) {
+    return actionErrorResponse(error, "revise");
   }
-
-  // Record feedback
-  await db.execute({
-    sql: `
-      INSERT INTO agent_task_feedback (agent_task_id, output_version, feedback_type, feedback_text)
-      VALUES (?, ?, 'request_edit', ?)
-    `,
-    args: [id, task.current_version, feedback.trim()],
-  });
-
-  // Update task status
-  await db.execute({
-    sql: "UPDATE agent_tasks SET status = 'revision_requested', updated_at = datetime('now') WHERE id = ?",
-    args: [id],
-  });
-
-  // Sync task status
-  await syncTaskStatusFromAgentTask(id, 'revision_requested');
-
-  // Execute revision
-  executeAgentTask(id).catch((error) => {
-    console.error("Error executing revision:", error);
-  });
-
-  return NextResponse.json({ success: true });
 }
