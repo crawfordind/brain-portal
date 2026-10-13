@@ -100,3 +100,42 @@ export function assessMagicLink(
   if (!expiresAt || expiresAt.getTime() <= now.getTime()) return { ok: false, reason: "expired" };
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// Sign-in codes
+//
+// The same email carries a six-digit code next to the link, so the email can
+// be read on a phone and the code typed on a laptop (or the other way round),
+// and an in-app mail browser that would keep the session to itself is never
+// involved. The link stays for one-tap sign-in on the same device.
+// ---------------------------------------------------------------------------
+
+export const SIGN_IN_CODE_LENGTH = 6;
+
+/**
+ * Wrong guesses one link's code tolerates before it stops accepting codes.
+ * The link itself keeps working: someone guessing at an address cannot lock
+ * its owner out of the email they were sent. With at most
+ * `MAX_ACTIVE_LINKS_PER_EMAIL` links, a guesser gets 25 tries at a million.
+ */
+export const MAX_CODE_ATTEMPTS = 5;
+
+/** Digits only, so "123 456", "123-456" and a pasted " 123456\n" all match. */
+export function normalizeSignInCode(input: string): string {
+  return input.replace(/\D/g, "");
+}
+
+/** "123 456": easier to read off one screen and type into another. */
+export function formatSignInCode(code: string): string {
+  return code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code;
+}
+
+export type SignInCodeFailure =
+  /** Not the right code for any of this address's live links. */
+  | "wrong_code"
+  /** Too many wrong codes; the email's link still works. */
+  | "locked"
+  /** No live code for this address: expired, already used, or never sent. */
+  | "expired"
+  /** The code was right, but this server does not create accounts for that address. */
+  | "not_allowed";

@@ -4,10 +4,16 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Brain, Mail, Loader2, ExternalLink, RotateCw } from "lucide-react";
+import { Brain, Mail, Loader2, ExternalLink, RotateCw, LogIn } from "lucide-react";
 
-/** Seconds before "Send another link" is offered: long enough for most mail to land. */
+/** Seconds before "Send another code" is offered: long enough for most mail to land. */
 const RESEND_COOLDOWN_SECONDS = 30;
+
+/** Where to land after signing in: the page the middleware bounced here from. */
+function redirectTarget(): string {
+  if (typeof window === "undefined") return "/";
+  return new URLSearchParams(window.location.search).get("redirect") || "/";
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -15,8 +21,16 @@ export default function LoginPage() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
   const [devLink, setDevLink] = useState("");
+  const [devCode, setDevCode] = useState("");
   const [cooldown, setCooldown] = useState(0);
   const [resent, setResent] = useState(false);
+  // Assume a code was sent unless the server says the database cannot store
+  // one. Unknown addresses get the same response as known ones, so they also
+  // see the code box; that is deliberate (no account enumeration).
+  const [hasCode, setHasCode] = useState(true);
+  const [code, setCode] = useState("");
+  const [codeError, setCodeError] = useState("");
+  const [isVerifying, setIsVerifying] = useState(false);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -33,6 +47,7 @@ export default function LoginPage() {
     setIsLoading(true);
     setError("");
     setDevLink("");
+    setDevCode("");
 
     try {
       const response = await fetch("/api/auth/login", {
@@ -50,10 +65,15 @@ export default function LoginPage() {
       setSuccess(true);
       setResent(isResend);
       setCooldown(RESEND_COOLDOWN_SECONDS);
+      setHasCode(data.hasCode !== false);
+      setCodeError("");
 
-      // In development, show the magic link
+      // In development, show the magic link and code
       if (data.magicLink) {
         setDevLink(data.magicLink);
+      }
+      if (data.code) {
+        setDevCode(data.code);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -61,6 +81,38 @@ export default function LoginPage() {
       setIsLoading(false);
     }
   };
+
+  const verifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsVerifying(true);
+    setCodeError("");
+
+    try {
+      const response = await fetch("/api/auth/verify-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code, redirect: redirectTarget() }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        const left =
+          data.reason === "wrong_code" && typeof data.attemptsLeft === "number"
+            ? ` ${data.attemptsLeft} ${data.attemptsLeft === 1 ? "try" : "tries"} left.`
+            : "";
+        throw new Error(`${data.error || "That code didn't work."}${left}`);
+      }
+
+      // A full navigation, so the new session cookie is sent with every
+      // request from here on and the app loads signed in.
+      window.location.assign(data.redirect || "/");
+    } catch (err) {
+      setCodeError(err instanceof Error ? err.message : "Something went wrong");
+      setIsVerifying(false);
+    }
+  };
+
+  const digits = code.replace(/\D/g, "");
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -83,25 +135,68 @@ export default function LoginPage() {
               <div>
                 <h3 className="font-medium">Check your email</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {resent ? "We sent another sign-in link to" : "We sent a sign-in link to"} {email.trim()}
-                </p>
-                <p className="text-xs text-muted-foreground mt-3">
-                  Email can take a few minutes. Check spam too. If you ask for another link, the
-                  earlier ones keep working, so open whichever arrives first.
+                  {resent ? "We sent another email to" : "We sent an email to"} {email.trim()}
                 </p>
               </div>
+
+              {hasCode && (
+                <form onSubmit={verifyCode} className="space-y-3 text-left">
+                  <label htmlFor="code" className="text-sm font-medium block text-center">
+                    Enter the 6-digit code from the email
+                  </label>
+                  <Input
+                    id="code"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9 ]*"
+                    maxLength={9}
+                    placeholder="123 456"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    disabled={isVerifying}
+                    className="h-14 text-center text-2xl font-mono tracking-[0.3em]"
+                    aria-describedby="code-help"
+                  />
+                  {codeError && <p className="text-sm text-destructive text-center">{codeError}</p>}
+                  <Button type="submit" className="w-full min-h-11" disabled={isVerifying || digits.length !== 6}>
+                    {isVerifying ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <LogIn className="mr-2 h-4 w-4" />
+                    )}
+                    Sign in
+                  </Button>
+                  <p id="code-help" className="text-xs text-muted-foreground text-center">
+                    Reading email on another device? Type the code here. Or tap the
+                    link in the email to sign in on the device that has it open.
+                  </p>
+                </form>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                Email can take a few minutes. Check spam too. If you ask for another email, the
+                earlier ones keep working, so use whichever arrives first.
+              </p>
               {error && <p className="text-sm text-destructive">{error}</p>}
-              {devLink && (
+              {(devLink || devCode) && (
                 <div className="mt-4 p-3 bg-muted rounded-lg">
                   <p className="text-xs text-muted-foreground mb-2">
-                    Development mode - click to sign in:
+                    Development mode - no email was sent:
                   </p>
-                  <a
-                    href={devLink}
-                    className="text-sm text-primary hover:underline flex items-center justify-center gap-1"
-                  >
-                    Sign in now <ExternalLink className="h-3 w-3" />
-                  </a>
+                  {devCode && (
+                    <p className="font-mono text-lg mb-2" aria-label="Development sign-in code">
+                      {devCode}
+                    </p>
+                  )}
+                  {devLink && (
+                    <a
+                      href={devLink}
+                      className="text-sm text-primary hover:underline flex items-center justify-center gap-1"
+                    >
+                      Sign in now <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
                 </div>
               )}
               <div className="flex flex-col gap-2 pt-2">
@@ -116,7 +211,7 @@ export default function LoginPage() {
                   ) : (
                     <RotateCw className="mr-2 h-4 w-4" />
                   )}
-                  {cooldown > 0 ? `Send another link (${cooldown}s)` : "Send another link"}
+                  {cooldown > 0 ? `Send another email (${cooldown}s)` : "Send another email"}
                 </Button>
                 <Button
                   variant="ghost"
@@ -125,6 +220,8 @@ export default function LoginPage() {
                     setSuccess(false);
                     setEmail("");
                     setError("");
+                    setCode("");
+                    setCodeError("");
                     setCooldown(0);
                   }}
                 >
@@ -160,7 +257,7 @@ export default function LoginPage() {
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Sending link...
+                    Sending...
                   </>
                 ) : (
                   <>
@@ -170,7 +267,7 @@ export default function LoginPage() {
                 )}
               </Button>
               <p className="text-xs text-center text-muted-foreground">
-                We&apos;ll send you a magic link to sign in.
+                We&apos;ll email you a sign-in code and link.
                 <br />
                 No password needed.
               </p>

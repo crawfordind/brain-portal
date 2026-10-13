@@ -425,7 +425,7 @@ user can always sign in, whatever the mode.
 cannot be used as a relay to arbitrary addresses, and returns the identical
 "check your email" response either way so it cannot enumerate accounts.
 
-### Sign-in links survive slow mail and scanners
+### Sign-in links and codes survive slow mail and scanners
 
 A sign-in link used to fail before the user reached it in four ways. Code:
 `src/lib/auth/magic-link.ts` (pure, unit-tested), `src/lib/auth/index.ts`,
@@ -451,6 +451,19 @@ A sign-in link used to fail before the user reached it in four ways. Code:
   until expiry so the error page can say *expired* vs *already used* vs
   *invalid*. A second click from a browser already signed in as that address
   goes straight into the app.
+- **A six-digit code rides with every sign-in link** so the email can be
+  read on one device and typed on another (a link signs in whichever browser
+  opened it, including a mail app's in-app browser). `createSignIn` returns
+  `{ url, code }`; `POST /api/auth/verify-code` takes `{ email, code }`. Stored
+  as `magic_links.code_hash`, salted with the link's token hash, never in
+  clear. Each guess is charged *before* it is compared (`UPDATE … SET
+  code_attempts = code_attempts + 1 … RETURNING`), so parallel guesses cannot
+  get extra tries; after 5 wrong codes that code stops working but its link
+  does not, so a guesser cannot lock the owner out. Code and link are one
+  login: spending either spends both. Project invites (`createMagicLink`) get
+  no code, since they live for days. A database without the column (migration
+  not run) still sends link-only emails rather than failing sign-in. Columns
+  are added by `npm run db:migrate`.
 - **Rate limits have buckets** (`checkRateLimit({ bucket })`). The key used to be
   the IP alone, so chat, link requests and link clicks shared one counter.
 

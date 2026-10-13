@@ -62,6 +62,8 @@ async function migrate() {
       token TEXT UNIQUE NOT NULL,
       expires_at TEXT NOT NULL,
       used INTEGER DEFAULT 0,
+      code_hash TEXT,
+      code_attempts INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     )`,
 
@@ -934,6 +936,9 @@ async function migrate() {
 
   // Additional ALTER statements for adding columns to existing tables
   const alterStatements = [
+    // Sign-in codes: typed on whichever device is signing in.
+    `ALTER TABLE magic_links ADD COLUMN code_hash TEXT`,
+    `ALTER TABLE magic_links ADD COLUMN code_attempts INTEGER DEFAULT 0`,
     // Add new columns to notes table
     `ALTER TABLE notes ADD COLUMN summary TEXT`,
     `ALTER TABLE notes ADD COLUMN auto_tags TEXT DEFAULT '[]'`,

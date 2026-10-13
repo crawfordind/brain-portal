@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createMagicLink } from "@/lib/auth";
+import { createSignIn } from "@/lib/auth";
+import { renderSignInEmail } from "@/lib/auth/sign-in-email";
 import { sendEmail, isEmailConfigured } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { mayCreateAccount } from "@/lib/auth/signup-policy";
@@ -64,35 +65,20 @@ export async function POST(request: NextRequest) {
     // The request origin is only a fallback for local development.
     const baseUrl = getAppUrl({ requestOrigin: request.nextUrl.origin });
 
-    const magicLink = await createMagicLink(normalizedEmail, baseUrl);
-    const lifetime = describeMinutes(magicLinkTtlMinutes());
+    const signIn = await createSignIn(normalizedEmail, { baseUrl });
+    const signInEmail = renderSignInEmail({
+      url: signIn.url,
+      code: signIn.code,
+      lifetime: describeMinutes(magicLinkTtlMinutes()),
+    });
 
     // Send email if SMTP is configured
     if (isEmailConfigured()) {
-
       const sent = await sendEmail({
         to: normalizedEmail,
-        subject: "Sign in to Brain Portal",
-        html: `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h2 style="color: #1a1a1a; margin-bottom: 24px;">Sign in to Brain Portal</h2>
-            <p style="color: #4a4a4a; font-size: 16px; line-height: 1.5;">Click the button below to sign in to your account:</p>
-            <a href="${magicLink}" style="display: inline-block; margin: 24px 0; padding: 14px 28px; background-color: #0d9488; color: white; text-decoration: none; border-radius: 8px; font-weight: 500;">
-              Sign In
-            </a>
-            <p style="color: #666; font-size: 14px; margin-top: 24px;">
-              This link works once and expires in ${lifetime}. If you asked for more than one, any of them will work.
-            </p>
-            <p style="color: #666; font-size: 14px;">
-              If you didn&apos;t request this email, you can safely ignore it.
-            </p>
-            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;">
-            <p style="color: #999; font-size: 12px;">
-              Brain Portal — Think clearly. Connect everything.
-            </p>
-          </div>
-        `,
-        text: `Sign in to Brain Portal\n\nClick this link to sign in: ${magicLink}\n\nThis link works once and expires in ${lifetime}.\n\nIf you didn't request this email, you can safely ignore it.`,
+        subject: signInEmail.subject,
+        html: signInEmail.html,
+        text: signInEmail.text,
       });
 
       const totalDuration = Date.now() - requestStartTime;
@@ -101,7 +87,8 @@ export async function POST(request: NextRequest) {
         console.log(`[AUTH] ✓ Sign-in link sent (${totalDuration}ms)`);
         return NextResponse.json({
           success: true,
-          message: "Check your email for a sign-in link"
+          message: "Check your email for a sign-in link",
+          hasCode: signIn.code !== null,
         });
       } else {
         console.log(`[AUTH] ✗ Email send failed (${totalDuration}ms)`);
@@ -117,7 +104,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         message: "Development mode - use the link below",
-        magicLink,
+        magicLink: signIn.url,
+        code: signIn.code,
+        hasCode: signIn.code !== null,
       });
     }
 
