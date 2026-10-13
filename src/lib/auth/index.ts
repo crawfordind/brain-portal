@@ -4,10 +4,17 @@ import type { User, Session, MagicLink } from "@/lib/db/schema";
 import { randomBytes, createHash } from "crypto";
 import { mayCreateAccount } from "./signup-policy";
 import { getAppUrl } from "@/lib/app-url";
+import {
+  assessMagicLink,
+  magicLinkTtlMinutes,
+  normalizeEmail,
+  MAX_ACTIVE_LINKS_PER_EMAIL,
+  type MagicLinkFailure,
+  type StoredMagicLink,
+} from "./magic-link";
 
 const SESSION_COOKIE = "brain_session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
-const MAGIC_LINK_EXPIRY = 60 * 15; // 15 minutes
 
 // Generate secure random token
 function generateToken(): string {
@@ -21,70 +28,98 @@ function hashToken(token: string): string {
 
 // Create a magic link for email login
 export async function createMagicLink(email: string, baseUrl?: string, expirySeconds?: number): Promise<string> {
+  const address = normalizeEmail(email);
   const token = generateToken();
   const hashedToken = hashToken(token);
-  const expiry = expirySeconds ?? MAGIC_LINK_EXPIRY;
+  const expiry = expirySeconds ?? magicLinkTtlMinutes() * 60;
   const expiresAt = new Date(Date.now() + expiry * 1000).toISOString();
 
-  // Delete any existing magic links for this email
-  await db.execute({
-    sql: "DELETE FROM magic_links WHERE email = ?",
-    args: [email],
-  });
-
-  // Create new magic link
-  await db.execute({
-    sql: "INSERT INTO magic_links (email, token, expires_at) VALUES (?, ?, ?)",
-    args: [email, hashedToken, expiresAt],
-  });
-
-  const appUrl = (baseUrl || getAppUrl()).replace(/\/$/, "");
-  return `${appUrl}/auth/verify?token=${token}&email=${encodeURIComponent(email)}`;
-}
-
-// Verify magic link and create session
-export async function verifyMagicLink(
-  email: string,
-  token: string
-): Promise<{ user: User; sessionToken: string } | null> {
-  const hashedToken = hashToken(token);
-
-  // Find valid magic link
-  const magicLink = await queryOne<MagicLink>(
-    `SELECT * FROM magic_links
-     WHERE email = ? AND token = ? AND used = FALSE AND expires_at > datetime('now')`,
-    [email, hashedToken]
+  // Earlier links for this address stay valid. This used to delete every one
+  // of them, so pressing "send again" while the first email sat in a queue
+  // killed the link that then arrived. Only spent links are cleared, plus the
+  // oldest beyond a small cap so one address cannot pile them up.
+  await db.batch(
+    [
+      {
+        sql: `DELETE FROM magic_links
+              WHERE lower(email) = ?
+                AND (used = TRUE OR julianday(expires_at) <= julianday('now'))`,
+        args: [address],
+      },
+      {
+        sql: `DELETE FROM magic_links
+              WHERE lower(email) = ?
+                AND id NOT IN (
+                  SELECT id FROM magic_links WHERE lower(email) = ?
+                  ORDER BY julianday(expires_at) DESC, rowid DESC
+                  LIMIT ?
+                )`,
+        args: [address, address, MAX_ACTIVE_LINKS_PER_EMAIL - 1],
+      },
+      {
+        sql: "INSERT INTO magic_links (email, token, expires_at) VALUES (?, ?, ?)",
+        args: [address, hashedToken, expiresAt],
+      },
+    ],
+    "write"
   );
 
-  if (!magicLink) {
-    return null;
+  const appUrl = (baseUrl || getAppUrl()).replace(/\/$/, "");
+  return `${appUrl}/auth/verify?token=${token}&email=${encodeURIComponent(address)}`;
+}
+
+export type VerifyMagicLinkResult =
+  | { ok: true; user: User; sessionToken: string }
+  | { ok: false; reason: MagicLinkFailure };
+
+// Verify magic link and create session
+export async function verifyMagicLink(email: string, token: string): Promise<VerifyMagicLinkResult> {
+  const address = normalizeEmail(email);
+  const hashedToken = hashToken(token);
+
+  // Looked up by token alone (256 random bits, UNIQUE) so the failure can be
+  // named: "already used" and "expired" need different advice from "invalid".
+  const magicLink = await queryOne<MagicLink & StoredMagicLink>(
+    "SELECT * FROM magic_links WHERE token = ?",
+    [hashedToken]
+  );
+
+  const assessment = assessMagicLink(magicLink, address);
+  if (!assessment.ok || !magicLink) {
+    return { ok: false, reason: assessment.ok ? "invalid" : assessment.reason };
   }
 
-  // Delete magic link after use to prevent replay attacks and reduce data exposure
-  await db.execute({
-    sql: "DELETE FROM magic_links WHERE id = ?",
+  // Spend it atomically: two clicks racing each other (or a click racing a
+  // scanner) get one session between them, never two.
+  const spent = await db.execute({
+    sql: "UPDATE magic_links SET used = TRUE WHERE id = ? AND used = FALSE",
     args: [magicLink.id],
   });
+  if (spent.rowsAffected === 0) {
+    return { ok: false, reason: "used" };
+  }
 
   // Get the user, creating one only if this deployment's signup policy allows
   // it. Without this gate any address that can receive mail gets an account,
   // an AI budget on the operator's key, and a seat in the database.
-  let user = await queryOne<User>("SELECT * FROM users WHERE email = ?", [email]);
+  // `lower(email)`: accounts created before addresses were normalised may be
+  // stored with capitals.
+  let user = await queryOne<User>("SELECT * FROM users WHERE lower(email) = ?", [address]);
 
   if (!user) {
-    if (!mayCreateAccount(email)) {
-      return null;
+    if (!mayCreateAccount(address)) {
+      return { ok: false, reason: "not_allowed" };
     }
     // Insert new user
     await db.execute({
       sql: "INSERT INTO users (email) VALUES (?)",
-      args: [email],
+      args: [address],
     });
-    user = await queryOne<User>("SELECT * FROM users WHERE email = ?", [email]);
+    user = await queryOne<User>("SELECT * FROM users WHERE email = ?", [address]);
   }
 
   if (!user) {
-    return null;
+    return { ok: false, reason: "invalid" };
   }
 
   // Create session
@@ -97,7 +132,7 @@ export async function verifyMagicLink(
     args: [user.id, hashedSessionToken, sessionExpiry],
   });
 
-  return { user, sessionToken };
+  return { ok: true, user, sessionToken };
 }
 
 // Set session cookie
@@ -127,7 +162,7 @@ export async function getCurrentUser(): Promise<User | null> {
     const user = await queryOne<User>(
       `SELECT u.* FROM users u
        JOIN sessions s ON u.id = s.user_id
-       WHERE s.token = ? AND s.expires_at > datetime('now')`,
+       WHERE s.token = ? AND julianday(s.expires_at) > julianday('now')`,
       [hashedToken]
     );
 
@@ -150,7 +185,7 @@ export async function getSession(): Promise<Session | null> {
   const hashedToken = hashToken(sessionToken);
 
   return queryOne<Session>(
-    "SELECT * FROM sessions WHERE token = ? AND expires_at > datetime('now')",
+    "SELECT * FROM sessions WHERE token = ? AND julianday(expires_at) > julianday('now')",
     [hashedToken]
   );
 }
@@ -182,6 +217,9 @@ export async function requireAuth(): Promise<User> {
 
 // Clean up expired sessions and magic links
 export async function cleanupExpiredTokens(): Promise<void> {
-  await db.execute("DELETE FROM sessions WHERE expires_at < datetime('now')");
-  await db.execute("DELETE FROM magic_links WHERE expires_at < datetime('now')");
+  // julianday, not text comparison: rows are ISO strings ("…T…Z"), and the
+  // "T" sorts after the space in datetime('now'), which kept expired rows
+  // alive until the following UTC day.
+  await db.execute("DELETE FROM sessions WHERE julianday(expires_at) < julianday('now')");
+  await db.execute("DELETE FROM magic_links WHERE julianday(expires_at) < julianday('now')");
 }

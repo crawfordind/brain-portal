@@ -5,12 +5,15 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { mayCreateAccount } from "@/lib/auth/signup-policy";
 import { queryOne } from "@/lib/db/client";
 import { getAppUrl } from "@/lib/app-url";
+import { describeMinutes, magicLinkTtlMinutes, normalizeEmail } from "@/lib/auth/magic-link";
 
 export async function POST(request: NextRequest) {
   const requestStartTime = Date.now();
 
   // Rate limit: 5 login attempts per 15 minutes per IP
+  // Its own bucket, so chat or link clicks from the same IP cannot use it up.
   const rateLimit = await checkRateLimit({
+    bucket: "auth-login",
     maxRequests: 5,
     windowMs: 15 * 60 * 1000,
   });
@@ -32,7 +35,7 @@ export async function POST(request: NextRequest) {
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(email.trim())) {
       return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
     }
 
@@ -40,9 +43,11 @@ export async function POST(request: NextRequest) {
     // burns SMTP quota on strangers and turns this route into a mail relay.
     // The response is identical either way so it cannot be used to enumerate
     // which addresses have accounts.
-    const normalizedEmail = email.trim().toLowerCase();
+    // lower(email): accounts created before addresses were normalised may be
+    // stored with capitals, and a phone keyboard capitalises the first letter.
+    const normalizedEmail = normalizeEmail(email);
     const existingUser = await queryOne<{ id: string }>(
-      "SELECT id FROM users WHERE email = ?",
+      "SELECT id FROM users WHERE lower(email) = ?",
       [normalizedEmail]
     );
 
@@ -59,13 +64,14 @@ export async function POST(request: NextRequest) {
     // The request origin is only a fallback for local development.
     const baseUrl = getAppUrl({ requestOrigin: request.nextUrl.origin });
 
-    const magicLink = await createMagicLink(email, baseUrl);
+    const magicLink = await createMagicLink(normalizedEmail, baseUrl);
+    const lifetime = describeMinutes(magicLinkTtlMinutes());
 
     // Send email if SMTP is configured
     if (isEmailConfigured()) {
 
       const sent = await sendEmail({
-        to: email,
+        to: normalizedEmail,
         subject: "Sign in to Brain Portal",
         html: `
           <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -75,7 +81,7 @@ export async function POST(request: NextRequest) {
               Sign In
             </a>
             <p style="color: #666; font-size: 14px; margin-top: 24px;">
-              This link expires in 15 minutes.
+              This link works once and expires in ${lifetime}. If you asked for more than one, any of them will work.
             </p>
             <p style="color: #666; font-size: 14px;">
               If you didn&apos;t request this email, you can safely ignore it.
@@ -86,7 +92,7 @@ export async function POST(request: NextRequest) {
             </p>
           </div>
         `,
-        text: `Sign in to Brain Portal\n\nClick this link to sign in: ${magicLink}\n\nThis link expires in 15 minutes.\n\nIf you didn't request this email, you can safely ignore it.`,
+        text: `Sign in to Brain Portal\n\nClick this link to sign in: ${magicLink}\n\nThis link works once and expires in ${lifetime}.\n\nIf you didn't request this email, you can safely ignore it.`,
       });
 
       const totalDuration = Date.now() - requestStartTime;

@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Brain, Mail, Loader2, ExternalLink } from "lucide-react";
+import { Brain, Mail, Loader2, ExternalLink, RotateCw } from "lucide-react";
+
+/** Seconds before "Send another link" is offered: long enough for most mail to land. */
+const RESEND_COOLDOWN_SECONDS = 30;
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -12,9 +15,21 @@ export default function LoginPage() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
   const [devLink, setDevLink] = useState("");
+  const [cooldown, setCooldown] = useState(0);
+  const [resent, setResent] = useState(false);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    await sendLink();
+  };
+
+  const sendLink = async (isResend = false) => {
     setIsLoading(true);
     setError("");
     setDevLink("");
@@ -33,6 +48,8 @@ export default function LoginPage() {
       }
 
       setSuccess(true);
+      setResent(isResend);
+      setCooldown(RESEND_COOLDOWN_SECONDS);
 
       // In development, show the magic link
       if (data.magicLink) {
@@ -66,9 +83,14 @@ export default function LoginPage() {
               <div>
                 <h3 className="font-medium">Check your email</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  We sent a sign-in link to {email}
+                  {resent ? "We sent another sign-in link to" : "We sent a sign-in link to"} {email.trim()}
+                </p>
+                <p className="text-xs text-muted-foreground mt-3">
+                  Email can take a few minutes. Check spam too. If you ask for another link, the
+                  earlier ones keep working, so open whichever arrives first.
                 </p>
               </div>
+              {error && <p className="text-sm text-destructive">{error}</p>}
               {devLink && (
                 <div className="mt-4 p-3 bg-muted rounded-lg">
                   <p className="text-xs text-muted-foreground mb-2">
@@ -82,16 +104,33 @@ export default function LoginPage() {
                   </a>
                 </div>
               )}
-              <Button
-                variant="outline"
-                className="mt-4"
-                onClick={() => {
-                  setSuccess(false);
-                  setEmail("");
-                }}
-              >
-                Use a different email
-              </Button>
+              <div className="flex flex-col gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={isLoading || cooldown > 0}
+                  onClick={() => sendLink(true)}
+                >
+                  {isLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RotateCw className="mr-2 h-4 w-4" />
+                  )}
+                  {cooldown > 0 ? `Send another link (${cooldown}s)` : "Send another link"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="min-h-11"
+                  onClick={() => {
+                    setSuccess(false);
+                    setEmail("");
+                    setError("");
+                    setCooldown(0);
+                  }}
+                >
+                  Use a different email
+                </Button>
+              </div>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -102,6 +141,11 @@ export default function LoginPage() {
                 <Input
                   id="email"
                   type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}

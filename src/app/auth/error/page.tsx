@@ -13,8 +13,27 @@ const errorMessages: Record<string, { title: string; description: string }> = {
     description: "The sign-in link is missing required information. Please request a new one.",
   },
   invalid_token: {
-    title: "Link Expired or Invalid",
-    description: "This sign-in link has expired or has already been used. Please request a new one.",
+    title: "Link Not Recognised",
+    description:
+      "This sign-in link isn't valid. It may have been cut off when it was copied. Open it straight from the email, or request a new one.",
+  },
+  link_expired: {
+    title: "Link Expired",
+    description:
+      "This sign-in link has expired. Request a new one. Earlier links keep working until they expire, so the newest email is the one to use.",
+  },
+  link_used: {
+    title: "Link Already Used",
+    description:
+      "Each sign-in link works once, and this one already has. If that wasn't you in this browser, request a new link here.",
+  },
+  not_allowed: {
+    title: "No Account for This Address",
+    description: "This server only signs in existing accounts. Ask the person who runs it to add your address.",
+  },
+  rate_limited: {
+    title: "Too Many Attempts",
+    description: "Please wait a few minutes before trying again.",
   },
   verification_failed: {
     title: "Verification Failed",

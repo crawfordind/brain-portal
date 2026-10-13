@@ -23,6 +23,13 @@ import { headers } from "next/headers";
 interface RateLimitConfig {
   maxRequests: number;
   windowMs: number;
+  /**
+   * Which counter this limit uses. Limits with different buckets never share
+   * a count. Without one, every caller shared a single counter per IP, so an
+   * hour of chat used up the five sign-in requests, and requesting links used
+   * up the budget for clicking them.
+   */
+  bucket?: string;
 }
 
 const rateLimitStore = new Map<
@@ -55,7 +62,7 @@ export async function checkRateLimit(
   }
 
   const headersList = await headers();
-  const key = `rate-limit:${await getClientKey(headersList)}`;
+  const key = `rate-limit:${config.bucket ?? "default"}:${await getClientKey(headersList)}`;
   const now = Date.now();
 
   let record = rateLimitStore.get(key);

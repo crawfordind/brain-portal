@@ -8,6 +8,7 @@ export async function POST(request: NextRequest) {
   // Unauthenticated, and it sends an email per new address — without a limit
   // this route is a spam relay funded by the operator's SMTP quota.
   const rateLimit = await checkRateLimit({
+    bucket: "waitlist",
     maxRequests: 3,
     windowMs: 60 * 60 * 1000,
   });
