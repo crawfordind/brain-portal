@@ -18,6 +18,7 @@ const publicRoutes = [
   "/auth/error",
   "/api/auth/login",
   "/api/auth/verify",
+  "/api/auth/verify-code",
   "/api/health",
   "/api/mcp/docs",
   "/api/mcp/rpc",

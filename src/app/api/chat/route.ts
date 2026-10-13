@@ -11,6 +11,7 @@ import type OpenAI from "openai";
 
 export async function POST(request: NextRequest) {
   const rateLimit = await checkRateLimit({
+    bucket: "chat",
     maxRequests: 60,
     windowMs: 60 * 60 * 1000, // 60 messages per hour
   });

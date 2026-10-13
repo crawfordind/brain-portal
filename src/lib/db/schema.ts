@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS magic_links (
   token TEXT UNIQUE NOT NULL,
   expires_at TEXT NOT NULL,
   used BOOLEAN DEFAULT FALSE,
+  code_hash TEXT,
+  code_attempts INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -983,6 +985,8 @@ export interface MagicLink {
   token: string;
   expires_at: string;
   used: boolean;
+  code_hash?: string | null;
+  code_attempts?: number | null;
   created_at: string;
 }
 

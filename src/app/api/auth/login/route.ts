@@ -1,16 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createMagicLink } from "@/lib/auth";
+import { createSignIn } from "@/lib/auth";
+import { renderSignInEmail } from "@/lib/auth/sign-in-email";
 import { sendEmail, isEmailConfigured } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { mayCreateAccount } from "@/lib/auth/signup-policy";
 import { queryOne } from "@/lib/db/client";
 import { getAppUrl } from "@/lib/app-url";
+import { describeMinutes, magicLinkTtlMinutes, normalizeEmail } from "@/lib/auth/magic-link";
 
 export async function POST(request: NextRequest) {
   const requestStartTime = Date.now();
 
   // Rate limit: 5 login attempts per 15 minutes per IP
+  // Its own bucket, so chat or link clicks from the same IP cannot use it up.
   const rateLimit = await checkRateLimit({
+    bucket: "auth-login",
     maxRequests: 5,
     windowMs: 15 * 60 * 1000,
   });
@@ -32,7 +36,7 @@ export async function POST(request: NextRequest) {
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(email.trim())) {
       return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
     }
 
@@ -40,9 +44,11 @@ export async function POST(request: NextRequest) {
     // burns SMTP quota on strangers and turns this route into a mail relay.
     // The response is identical either way so it cannot be used to enumerate
     // which addresses have accounts.
-    const normalizedEmail = email.trim().toLowerCase();
+    // lower(email): accounts created before addresses were normalised may be
+    // stored with capitals, and a phone keyboard capitalises the first letter.
+    const normalizedEmail = normalizeEmail(email);
     const existingUser = await queryOne<{ id: string }>(
-      "SELECT id FROM users WHERE email = ?",
+      "SELECT id FROM users WHERE lower(email) = ?",
       [normalizedEmail]
     );
 
@@ -59,34 +65,20 @@ export async function POST(request: NextRequest) {
     // The request origin is only a fallback for local development.
     const baseUrl = getAppUrl({ requestOrigin: request.nextUrl.origin });
 
-    const magicLink = await createMagicLink(email, baseUrl);
+    const signIn = await createSignIn(normalizedEmail, { baseUrl });
+    const signInEmail = renderSignInEmail({
+      url: signIn.url,
+      code: signIn.code,
+      lifetime: describeMinutes(magicLinkTtlMinutes()),
+    });
 
     // Send email if SMTP is configured
     if (isEmailConfigured()) {
-
       const sent = await sendEmail({
-        to: email,
-        subject: "Sign in to Brain Portal",
-        html: `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h2 style="color: #1a1a1a; margin-bottom: 24px;">Sign in to Brain Portal</h2>
-            <p style="color: #4a4a4a; font-size: 16px; line-height: 1.5;">Click the button below to sign in to your account:</p>
-            <a href="${magicLink}" style="display: inline-block; margin: 24px 0; padding: 14px 28px; background-color: #0d9488; color: white; text-decoration: none; border-radius: 8px; font-weight: 500;">
-              Sign In
-            </a>
-            <p style="color: #666; font-size: 14px; margin-top: 24px;">
-              This link expires in 15 minutes.
-            </p>
-            <p style="color: #666; font-size: 14px;">
-              If you didn&apos;t request this email, you can safely ignore it.
-            </p>
-            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;">
-            <p style="color: #999; font-size: 12px;">
-              Brain Portal — Think clearly. Connect everything.
-            </p>
-          </div>
-        `,
-        text: `Sign in to Brain Portal\n\nClick this link to sign in: ${magicLink}\n\nThis link expires in 15 minutes.\n\nIf you didn't request this email, you can safely ignore it.`,
+        to: normalizedEmail,
+        subject: signInEmail.subject,
+        html: signInEmail.html,
+        text: signInEmail.text,
       });
 
       const totalDuration = Date.now() - requestStartTime;
@@ -95,7 +87,8 @@ export async function POST(request: NextRequest) {
         console.log(`[AUTH] ✓ Sign-in link sent (${totalDuration}ms)`);
         return NextResponse.json({
           success: true,
-          message: "Check your email for a sign-in link"
+          message: "Check your email for a sign-in link",
+          hasCode: signIn.code !== null,
         });
       } else {
         console.log(`[AUTH] ✗ Email send failed (${totalDuration}ms)`);
@@ -111,7 +104,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         message: "Development mode - use the link below",
-        magicLink,
+        magicLink: signIn.url,
+        code: signIn.code,
+        hasCode: signIn.code !== null,
       });
     }
 

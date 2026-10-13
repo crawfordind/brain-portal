@@ -320,6 +320,7 @@ Required for development (see `.env.example`):
   any id the live catalog no longer lists is skipped. See *Model Selection*.
 - `SMTP_*` - Email for magic links
 - `NEXT_PUBLIC_APP_URL`, `SESSION_SECRET` - App config
+- `MAGIC_LINK_EXPIRY_MINUTES` - optional sign-in link lifetime (default 30).
 - `APP_URL` - optional runtime override for every emailed link; see *Email &
   Links Out of the App*. `EMAIL_ACTION_SECRET` - optional, signs email buttons.
 - `CRON_SECRET` - **Required in production.** Guards every `/api/cron/*` route.
@@ -423,6 +424,48 @@ user can always sign in, whatever the mode.
 `POST /api/auth/login` checks the policy *before* sending mail, so the route
 cannot be used as a relay to arbitrary addresses, and returns the identical
 "check your email" response either way so it cannot enumerate accounts.
+
+### Sign-in links and codes survive slow mail and scanners
+
+A sign-in link used to fail before the user reached it in four ways. Code:
+`src/lib/auth/magic-link.ts` (pure, unit-tested), `src/lib/auth/index.ts`,
+`/auth/verify`, `/api/auth/verify`.
+
+- **GET never spends a link.** Mail scanners (Safe Links, Defender, corporate
+  gateways) fetch every URL in a message first, and a GET used to sign in, so
+  the user's own click hit "already used". `/auth/verify` renders a form that a
+  real browser auto-posts to `POST /api/auth/verify`; `GET /api/auth/verify`
+  only redirects back to that page. Same trade-off as email actions: a scanner
+  that runs JavaScript could still post.
+- **Asking again doesn't cancel the first link.** `createMagicLink` deletes only
+  spent or expired links, plus the oldest beyond 5 per address. It used to
+  delete them all, so "send again" while the first email was queued killed it.
+- **Lifetime** is `MAGIC_LINK_EXPIRY_MINUTES` (default 30, clamped 5..1440); the
+  email copy is derived from it.
+- **Addresses are normalised** (trim, lower-case) everywhere, and users are
+  looked up by `lower(email)` so accounts stored with capitals still match.
+- **Expiry is compared as time, not text.** Rows are ISO (`…T…Z`); compared with
+  `datetime('now')` as text the `T` sorts after the space, so links and sessions
+  stayed valid until the end of the UTC day. Use `julianday()` on both sides.
+- **Spent atomically** (`UPDATE … WHERE used = FALSE`, `rowsAffected`), and kept
+  until expiry so the error page can say *expired* vs *already used* vs
+  *invalid*. A second click from a browser already signed in as that address
+  goes straight into the app.
+- **A six-digit code rides with every sign-in link** so the email can be
+  read on one device and typed on another (a link signs in whichever browser
+  opened it, including a mail app's in-app browser). `createSignIn` returns
+  `{ url, code }`; `POST /api/auth/verify-code` takes `{ email, code }`. Stored
+  as `magic_links.code_hash`, salted with the link's token hash, never in
+  clear. Each guess is charged *before* it is compared (`UPDATE … SET
+  code_attempts = code_attempts + 1 … RETURNING`), so parallel guesses cannot
+  get extra tries; after 5 wrong codes that code stops working but its link
+  does not, so a guesser cannot lock the owner out. Code and link are one
+  login: spending either spends both. Project invites (`createMagicLink`) get
+  no code, since they live for days. A database without the column (migration
+  not run) still sends link-only emails rather than failing sign-in. Columns
+  are added by `npm run db:migrate`.
+- **Rate limits have buckets** (`checkRateLimit({ bucket })`). The key used to be
+  the IP alone, so chat, link requests and link clicks shared one counter.
 
 ## Email & Links Out of the App
 
