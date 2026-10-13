@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     let redirectPath = "/";
     if (invite) {
       try {
-        const accepted = await acceptProjectInvite(invite, result.user.id);
+        const accepted = await acceptProjectInvite(invite, result.user.id, result.user.email);
         if (accepted) {
           redirectPath = `/projects/${accepted.projectSlug}`;
         }

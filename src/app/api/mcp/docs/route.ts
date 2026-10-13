@@ -159,6 +159,8 @@ function scopeDescription(scope: string): string {
   const map: Record<string, string> = {
     "notes:read": "List, read, and search notes.",
     "notes:write": "Create, update, archive, and delete notes.",
+    "notes:share":
+      "Share notes with other accounts on this instance — only with recipients the user saved in Settings → Sharing.",
     "tasks:read": "List and filter tasks.",
     "tasks:write": "Create, update, and delete tasks.",
     "projects:read": "List and read projects.",
@@ -172,6 +174,8 @@ function scopeDescription(scope: string): string {
       "Delegate work to AI agents and read agent task status.",
     "resources:read": "Read brain://* resources.",
     "prompts:read": "Use templated prompts (summarize_notes, weekly_review, ...).",
+    "crm:read": "Search contacts, ventures and the review queue.",
+    "crm:write": "Create, merge and update contacts, roles and interactions.",
   };
   return map[scope] ?? "";
 }

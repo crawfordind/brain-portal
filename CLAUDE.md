@@ -36,6 +36,7 @@ npm run user:create  # Create an account (signups are closed by default)
 npm run migrate:chat-item-context  # Allow 'item' as a chat context type
 npm run migrate:provenance         # Record who wrote each row, and which run
 npm run migrate:agent-runtime      # Delegated-task runtime (also runs in db:migrate)
+npm run migrate:note-sharing       # Account-to-account note sharing (also runs in db:migrate)
 
 # MCP Server
 npm run mcp:start    # Start MCP server (requires env vars)
@@ -336,6 +337,74 @@ Required for development (see `.env.example`):
   `HERMES_PROFILE`, `HERMES_EDGE_CLIENT_ID`, `HERMES_EDGE_CLIENT_SECRET`.
   Server-only. See *Delegated Tasks: Pluggable Runtime* and
   `docs/operations/agent-runtime.md`.
+
+## Sharing Notes
+
+Two kinds of sharing, deliberately kept apart in code and in the UI (the Share
+dialog has a **People** section and a **Public link** section):
+
+| | Public link | Account share |
+|---|---|---|
+| Who | anyone with the URL | another account on this instance |
+| What they get | read-only page at `/shared/<token>` | the live note, in the app, under Notes → *Shared with me* |
+| Storage | `notes.share_token` | `note_shares` table |
+| Revoke | turn off / new link | remove the person; access ends at once |
+
+Code: `src/lib/sharing/` (`types.ts` imports nothing; `access.ts`, `store.ts`,
+`render.ts`, `schema.ts`), `/api/notes/[id]/shares[/shareId]`,
+`/api/shared-notes[/noteId]`, `/api/sharing/recipients`, MCP module `sharing`.
+
+- **One access check.** `getNoteAccess(idOrSlug, userId)` decides owner /
+  project collaborator / share recipient for `/api/notes/[id]` and MCP
+  `get_note`. The stronger grant wins (a project editor shared view-only still
+  edits). Owned notes win a slug lookup; slugs are only unique per user. A
+  database without `note_shares` still serves owners and collaborators.
+- **Recipients without an account.** A share is keyed by email
+  (`UNIQUE(note_id, recipient_email)`); `recipient_user_id` is bound the first
+  time that account reads its shares. Nothing creates an account: the signup
+  policy still decides that.
+- **Background work belongs to the owner.** An editor's save queues the
+  embedding, summary, connections and task scan under the *owner's* id. Before
+  this, a project editor's edit indexed the owner's note into the editor's own
+  search and could turn it into tasks in the editor's account. Editors change
+  title and text only; move, pin, archive, delete, share and the AI actions
+  are owner-only.
+- **Non-owners never receive `share_token`** (`redactForViewer`), or the owner's
+  other notes via `get_note` connections.
+- **Public pages** render markdown notes (MCP writes markdown) and unwrap
+  semantic-highlight marks, so a highlight's private `data-note` comment is
+  never published. In-app recipients see the note as the owner does.
+- **Toggling a public link leaves `updated_at` alone**, so sharing an old note
+  no longer moves it to the top of the stream.
+
+### "Share this with my work account" (MCP)
+
+1. In the personal account: Settings → **Sharing**, add a recipient, e.g. name
+   `work`, email of the work account.
+2. Give the personal account's MCP key the **`notes:share`** scope (`*` covers
+   it). `notes:write` is not enough on purpose: a key that can edit notes
+   cannot send them anywhere unless it is also granted this.
+3. Tell the assistant "share this note with my work account" → `share_note`
+   with `recipient: "work"` (also matches "my work account", "Work").
+4. In the work account: the note is under Notes → *Shared with me*, with an
+   in-app notification; its MCP key reads it with `list_shared_notes` and
+   `get_note` (`notes:read`).
+
+**The saved list is the security boundary.** `share_note` accepts only saved
+recipients, and only a signed-in browser session can change that list
+(`PUT /api/sharing/recipients`); no MCP tool edits it. A prompt-injected agent
+therefore cannot share notes with an address of an attacker's choosing.
+Revoking (`unshare_note`) accepts any address, because taking access away is
+always safe.
+
+**Not done, deliberately:** shared notes do not appear in the recipient's
+search or embeddings (they are the owner's), the recipient's MCP key cannot
+edit a shared note (the web editor can, with "Can edit"), and no email is sent
+on share, only an in-app notification.
+
+Project collaborators: invite acceptance now requires the signed-in address to
+match the invited one, and the invite email escapes the project and inviter
+names.
 
 ## Who Can Sign Up
 
@@ -1273,19 +1342,21 @@ A full-featured MCP server that exposes Brain Portal's capabilities to Claude Co
 - `src/mcp/server.ts` - Main entry point (stdio transport, auth, registration)
 - `src/mcp/auth.ts` - API key authentication (SHA-256 hashed keys, scoped to users)
 - `src/mcp/db.ts` - Standalone Turso client (runs outside Next.js)
-- `src/mcp/tools/` - MCP tool implementations (47 tools; `index.ts` is the single
+- `src/mcp/tools/` - MCP tool implementations (51 tools; `index.ts` is the single
   registration point both transports and the catalog test use)
 - `src/mcp/resources/` - MCP resource providers (7 resources)
 - `src/mcp/prompts/` - MCP prompt templates (4 prompts)
 
-### Tools (47 total)
+### Tools (51 total)
 
-The 9 Operations tools are listed under *Operations Control Center*.
+The 9 Operations tools are listed under *Operations Control Center*; the 4
+sharing tools (`share_note`, `unshare_note`, `list_note_shares`,
+`list_shared_notes`) under *Sharing Notes*.
 
 | Tool | Description |
 |------|-------------|
 | `list_notes` | List notes with filtering by project, type, search |
-| `get_note` | Get note with full content, tags, connections |
+| `get_note` | Get note with full content, tags, connections (also notes shared with this account) |
 | `create_note` | Create a new note |
 | `update_note` | Update note title, content, metadata |
 | `delete_note` | Delete a note |
@@ -1365,7 +1436,7 @@ Every tool / resource / prompt invocation is guarded by `src/mcp/guard.ts`:
 1. **Scope check** — the key must hold the required scope or `*`. Denied calls do NOT consume a rate-limit token.
 2. **Rate limit** — token-bucket keyed by API-key id (`src/mcp/rate-limit.ts`), refilling continuously at `rate_limit_per_minute / 60000` tokens per ms.
 
-Canonical scopes (`MCP_SCOPES` in `src/lib/mcp/keys.ts`): `notes:read`, `notes:write`, `tasks:read`, `tasks:write`, `projects:read`, `projects:write`, `captures:read`, `captures:write`, `search:read`, `ai:search`, `ai:insights`, `ai:delegate`, `resources:read`, `prompts:read`, `crm:read`, `crm:write`. `*` is wildcard.
+Canonical scopes (`MCP_SCOPES` in `src/lib/mcp/keys.ts`): `notes:read`, `notes:write`, `notes:share`, `tasks:read`, `tasks:write`, `projects:read`, `projects:write`, `captures:read`, `captures:write`, `search:read`, `ai:search`, `ai:insights`, `ai:delegate`, `resources:read`, `prompts:read`, `crm:read`, `crm:write`. `*` is wildcard.
 
 **Read-only hints**: `registerAllTools` annotates every read-only tool
 `readOnlyHint: true` from the catalog (`isReadOnlyTool`: `*:read` scopes,

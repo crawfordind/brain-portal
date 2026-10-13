@@ -16,6 +16,9 @@ import { db, query, queryOne } from "@/lib/db/client";
 export const MCP_SCOPES = [
   "notes:read",
   "notes:write",
+  // Separate from notes:write on purpose: sharing moves a note out of this
+  // account, so a key can edit notes without being able to send them anywhere.
+  "notes:share",
   "tasks:read",
   "tasks:write",
   "projects:read",

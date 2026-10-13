@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from "crypto";
 import { db, queryOne, queryAll } from "@/lib/db/client";
 import { sendEmail, isEmailConfigured } from "@/lib/email/index";
+import { escapeHtml, safeHref } from "@/lib/email/html";
 import { createMagicLink } from "@/lib/auth/index";
 import type { ProjectCollaborator, User, Project } from "@/lib/db/schema";
 
@@ -90,7 +91,8 @@ export async function createProjectInvite(
  */
 export async function acceptProjectInvite(
   inviteToken: string,
-  userId: string
+  userId: string,
+  userEmail: string
 ): Promise<{ projectSlug: string } | null> {
   const hashedToken = hashToken(inviteToken);
 
@@ -102,6 +104,13 @@ export async function acceptProjectInvite(
   );
 
   if (!collab) {
+    return null;
+  }
+
+  // The invite belongs to the address it was sent to. The token rides in a
+  // URL; without this check, anyone it leaked to could append it to their
+  // own sign-in link and join the project as that collaborator.
+  if (collab.email.toLowerCase().trim() !== userEmail.toLowerCase().trim()) {
     return null;
   }
 
@@ -183,15 +192,19 @@ export async function sendInviteEmail(
     return false;
   }
 
+  // Both names are user-authored; neither may become markup in the email.
+  const inviter = escapeHtml(inviterName);
+  const project = escapeHtml(projectName);
+  const href = safeHref(magicLinkUrl);
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 20px;">
       <h2 style="color: #1a1a2e; margin-bottom: 8px;">You're invited to collaborate</h2>
       <p style="color: #555; font-size: 15px; line-height: 1.6;">
-        <strong>${inviterName}</strong> has invited you to collaborate on the project
-        <strong>${projectName}</strong>.
+        <strong>${inviter}</strong> has invited you to collaborate on the project
+        <strong>${project}</strong>.
       </p>
       <div style="margin: 28px 0;">
-        <a href="${magicLinkUrl}"
+        <a href="${href}"
            style="display: inline-block; background: #0d9488; color: #fff; padding: 12px 28px;
                   border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px;">
           Accept Invitation
@@ -205,7 +218,7 @@ export async function sendInviteEmail(
 
   return sendEmail({
     to: email,
-    subject: `${inviterName} invited you to "${projectName}"`,
+    subject: `${inviterName} invited you to "${projectName}"`.replace(/[\r\n]+/g, " "),
     html,
     text: `${inviterName} invited you to collaborate on "${projectName}". Accept the invitation: ${magicLinkUrl}`,
   });
