@@ -1,6 +1,7 @@
 import { createClient } from "@libsql/client";
 import * as dotenv from "dotenv";
 import { applyAgentRuntimeMigration } from "../src/lib/agents/runtime/schema";
+import { applyNoteSharingMigration } from "../src/lib/sharing/schema";
 
 dotenv.config({ path: ".env.local" });
 
@@ -1220,6 +1221,17 @@ async function migrate() {
   } catch (error: unknown) {
     errorCount++;
     console.error(`✗ Agent runtime migration:`, (error as Error).message?.substring(0, 160));
+  }
+
+  // Account-to-account note sharing (note_shares). Additive; see
+  // src/lib/sharing/schema.ts.
+  console.log("\nNote sharing...");
+  try {
+    await applyNoteSharingMigration(db, (m) => console.log(m));
+    successCount++;
+  } catch (error: unknown) {
+    errorCount++;
+    console.error(`✗ Note sharing migration:`, (error as Error).message?.substring(0, 160));
   }
 
   // Backfill existing tasks: content -> title

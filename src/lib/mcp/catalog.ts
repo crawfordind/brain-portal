@@ -28,6 +28,12 @@ import {
   setOperationalStateShape,
   triageCaptureShape,
 } from "@/lib/operations/tool-schemas";
+import {
+  listNoteSharesShape,
+  listSharedNotesShape,
+  shareNoteShape,
+  unshareNoteShape,
+} from "@/lib/sharing/tool-schemas";
 
 // ─── Tools ────────────────────────────────────────────────────────────
 
@@ -73,7 +79,7 @@ export const TOOLS: ToolSpec[] = [
   {
     name: "get_note",
     description:
-      "Get a single note by ID with full content, tags, and connections.",
+      "Get a single note by ID with full content, tags, and connections. Also reads notes shared with this account.",
     scope: "notes:read",
     category: "notes",
     inputSchema: z.object({
@@ -124,6 +130,41 @@ export const TOOLS: ToolSpec[] = [
     inputSchema: z.object({
       note_id: z.string().describe("The note ID to delete"),
     }),
+  },
+  {
+    name: "share_note",
+    description:
+      'Share a note with another account on this instance, e.g. "share this with my work account". Only recipients the user saved in Settings → Sharing are accepted. The recipient sees the live note under "Shared with me".',
+    scope: "notes:share",
+    category: "notes",
+    inputSchema: z.object(shareNoteShape),
+    example: { note_id: "n_abc123", recipient: "work", permission: "view" },
+  },
+  {
+    name: "unshare_note",
+    description: "Stop sharing a note with an account. Access ends immediately; safe to repeat.",
+    scope: "notes:share",
+    category: "notes",
+    inputSchema: z.object(unshareNoteShape),
+    example: { note_id: "n_abc123", recipient: "work" },
+  },
+  {
+    name: "list_note_shares",
+    description:
+      "Who this account has shared notes with (one note or all), plus the saved recipients share_note accepts.",
+    scope: "notes:read",
+    category: "notes",
+    inputSchema: z.object(listNoteSharesShape),
+    example: { note_id: "n_abc123" },
+  },
+  {
+    name: "list_shared_notes",
+    description:
+      "Notes other accounts have shared with this account. Read one with get_note.",
+    scope: "notes:read",
+    category: "notes",
+    inputSchema: z.object(listSharedNotesShape),
+    example: { limit: 20 },
   },
 
   // ─── Tasks ─────────────────────────────────────────────

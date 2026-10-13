@@ -4,6 +4,7 @@ import { queryOne } from "@/lib/db/client";
 import { checkRateLimit } from "@/lib/rate-limit";
 import DOMPurify from "dompurify";
 import { parseHTML } from "linkedom";
+import { prepareSharedHtml, sharedExcerpt } from "@/lib/sharing/render";
 
 const { window: linkedomWindow } = parseHTML("");
 const purify = DOMPurify(linkedomWindow as unknown as Window & typeof globalThis);
@@ -12,6 +13,7 @@ interface SharedNote {
   id: string;
   title: string | null;
   content: string;
+  content_plain: string | null;
   word_count: number | null;
 }
 
@@ -31,7 +33,7 @@ async function getSharedNote(token: string): Promise<SharedNote | null> {
 
   try {
     const row = await queryOne<SharedNote>(
-      `SELECT id, title, content, word_count
+      `SELECT id, title, content, content_plain, word_count
        FROM notes
        WHERE share_token = ? AND share_token IS NOT NULL`,
       [token]
@@ -63,7 +65,7 @@ export async function generateMetadata({
   }
 
   const title = note.title || "Untitled Note";
-  const excerpt = note.content.slice(0, 160).replace(/[#*_`]/g, "");
+  const excerpt = sharedExcerpt(note.content_plain);
 
   return {
     title: `${title} - Shared Note`,
@@ -81,7 +83,9 @@ const ALLOWED_TAGS = [
   "img", "hr", "table", "thead", "tbody", "tr", "th", "td", "mark",
   "sub", "sup", "span", "div",
 ];
-const ALLOWED_ATTR = ["href", "target", "rel", "title", "alt", "src", "class", "data-intent", "data-note"];
+// No data-* attributes: `data-note` is a highlight's private comment to the
+// owner's AI, and annotation marks are unwrapped before this runs anyway.
+const ALLOWED_ATTR = ["href", "target", "rel", "title", "alt", "src", "class"];
 
 function sanitizeHtml(html: string): string {
   return purify.sanitize(html, {
@@ -124,7 +128,7 @@ export default async function SharedNotePage({
   }
 
   const title = note.title || "Untitled Note";
-  const renderedContent = sanitizeHtml(note.content);
+  const renderedContent = sanitizeHtml(prepareSharedHtml(note.content));
 
   return (
     <div

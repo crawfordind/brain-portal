@@ -45,6 +45,8 @@ import {
   Bot,
   ExternalLink,
   Send,
+  Users,
+  X,
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -120,6 +122,28 @@ export default function NoteDetailPage() {
   const canEditNote: boolean = data?.canEdit ?? true;
   // Shared-project editors can edit but not delegate someone else's note.
   const isOwner: boolean = data?.isOwner ?? false;
+  // Set when this note reached the viewer through an account share.
+  const sharedBy = (data?.access?.via === "share" ? data.access.sharedBy : null) as
+    | { email: string; name: string | null }
+    | null;
+
+  const leaveSharedNote = async () => {
+    if (!note) return;
+    const ok = await confirm({
+      title: "Remove this note from Shared with me?",
+      description: "You'll lose access until the owner shares it again.",
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
+    const res = await fetch(`/api/shared-notes/${note.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      toast.error("Couldn't remove the note");
+      return;
+    }
+    queryClient.invalidateQueries({ queryKey: ["shared-notes"] });
+    toast.success("Removed from Shared with me");
+    router.push("/notes");
+  };
 
   // Fetch linked AI agent tasks for this note
   const { data: delegationData } = useQuery({
@@ -425,6 +449,16 @@ export default function NoteDetailPage() {
         {/* Action buttons - MOBILE: Full width row on small screens */}
         <div className="flex items-center gap-2 justify-between sm:justify-end">
           {/* View-only badge for collaborators without edit access */}
+          {sharedBy && (
+            <Badge
+              variant="outline"
+              className="flex items-center gap-1 shrink-0 max-w-[14rem]"
+              title={`Shared with you by ${sharedBy.email}`}
+            >
+              <Users className="h-3 w-3 shrink-0" />
+              <span className="truncate">Shared by {sharedBy.name || sharedBy.email}</span>
+            </Badge>
+          )}
           {!canEditNote && (
             <Badge variant="secondary" className="flex items-center gap-1 shrink-0">
               <Eye className="h-3 w-3" />
@@ -461,7 +495,10 @@ export default function NoteDetailPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {canEditNote && (
+                {/* Owner-only: every action below is served by an owner-only
+                    endpoint, so offering them to a project editor or a share
+                    recipient only produced errors. */}
+                {isOwner && (
                   <>
                     <DropdownMenuItem onClick={() => setShowCleanupModal(true)}>
                       <Sparkles className="h-4 w-4 mr-2" />
@@ -570,11 +607,19 @@ export default function NoteDetailPage() {
                     </DropdownMenuItem>
                   </>
                 )}
-                <DropdownMenuItem onClick={() => setShowShareDialog(true)}>
-                  <Share2 className="h-4 w-4 mr-2" />
-                  Share
-                </DropdownMenuItem>
-                {canEditNote && (
+                {isOwner && (
+                  <DropdownMenuItem onClick={() => setShowShareDialog(true)}>
+                    <Share2 className="h-4 w-4 mr-2" />
+                    Share
+                  </DropdownMenuItem>
+                )}
+                {sharedBy && (
+                  <DropdownMenuItem onClick={() => leaveSharedNote()}>
+                    <X className="h-4 w-4 mr-2" />
+                    Remove from Shared with me
+                  </DropdownMenuItem>
+                )}
+                {isOwner && (
                   <>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
@@ -705,8 +750,6 @@ export default function NoteDetailPage() {
       <ShareDialog
         noteId={note.id}
         slug={slug}
-        isShared={!!note.share_token}
-        shareToken={note.share_token}
         open={showShareDialog}
         onOpenChange={setShowShareDialog}
       />

@@ -8,7 +8,8 @@ import { processLocally } from "@/lib/processing/local";
 import { hashContent, invalidateCache } from "@/lib/processing/cache";
 import { deleteEmbedding } from "@/lib/ai/embeddings";
 import { shouldTriggerAutoScan, updateScanMetadata } from "@/lib/recommendations/auto-scan";
-import { getProjectAccess, canEdit } from "@/lib/permissions";
+import { getNoteAccess, redactForViewer } from "@/lib/sharing/access";
+import { canEditRole } from "@/lib/sharing/types";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -23,47 +24,32 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const { id } = await params;
 
-  // Try to find by id first, then by slug — owned OR in a shared project
-  const collaboratorJoin = `
-    LEFT JOIN project_collaborators pc ON (
-      n.project_id = pc.project_id AND pc.user_id = ? AND pc.status = 'accepted'
-    )`;
-
-  let note = await queryOne<Note & { project_name: string | null; viewer_only: number }>(
-    `SELECT n.*, p.name as project_name,
-            CASE WHEN n.user_id = ? THEN 0 ELSE 1 END as viewer_only
-     FROM notes n
-     LEFT JOIN projects p ON n.project_id = p.id
-     ${collaboratorJoin}
-     WHERE n.id = ? AND (n.user_id = ? OR pc.user_id IS NOT NULL)`,
-    [user.id, user.id, id, user.id]
-  );
-
-  if (!note) {
-    note = await queryOne<Note & { project_name: string | null; viewer_only: number }>(
-      `SELECT n.*, p.name as project_name,
-              CASE WHEN n.user_id = ? THEN 0 ELSE 1 END as viewer_only
-       FROM notes n
-       LEFT JOIN projects p ON n.project_id = p.id
-       ${collaboratorJoin}
-       WHERE n.slug = ? AND (n.user_id = ? OR pc.user_id IS NOT NULL)`,
-      [user.id, user.id, id, user.id]
-    );
-  }
-
-  if (!note) {
+  // Owned, in a shared project, or shared with this account directly — one
+  // check for all three (src/lib/sharing/access.ts).
+  const access = await getNoteAccess(id, user.id);
+  if (!access) {
     return NextResponse.json({ error: "Note not found" }, { status: 404 });
   }
 
-  // Determine edit permission for collaborators
-  let canEditNote = note.user_id === user.id;
-  if (!canEditNote && note.project_id) {
-    const access = await getProjectAccess(note.project_id, user.id);
-    canEditNote = canEdit(access);
-  }
+  const isOwner = access.role === "owner";
+  const note = {
+    ...redactForViewer(access.note, access.role),
+    viewer_only: isOwner ? 0 : 1,
+  };
 
-  // isOwner: some actions (e.g. sending to the agent) are owner-only, not editor-level.
-  return NextResponse.json({ note, canEdit: canEditNote, isOwner: note.user_id === user.id });
+  return NextResponse.json({
+    note,
+    canEdit: canEditRole(access.role),
+    // Some actions (sending to the agent, sharing) are owner-only, not editor-level.
+    isOwner,
+    access: {
+      role: access.role,
+      via: access.via,
+      sharedBy: access.share
+        ? { email: access.share.ownerEmail, name: access.share.ownerName }
+        : null,
+    },
+  });
 }
 
 // PUT /api/notes/[id] - Update note (supports both id and slug)
@@ -75,45 +61,37 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   const { id: idOrSlug } = await params;
 
-  // Find note by id or slug (owned or in a shared project)
-  const collabJoin = `
-    LEFT JOIN project_collaborators pc ON (
-      notes.project_id = pc.project_id AND pc.user_id = ? AND pc.status = 'accepted'
-    )`;
-
-  let existing = await queryOne<Note>(
-    `SELECT notes.* FROM notes ${collabJoin}
-     WHERE notes.id = ? AND (notes.user_id = ? OR pc.user_id IS NOT NULL)`,
-    [user.id, idOrSlug, user.id]
-  );
-
-  if (!existing) {
-    existing = await queryOne<Note>(
-      `SELECT notes.* FROM notes ${collabJoin}
-       WHERE notes.slug = ? AND (notes.user_id = ? OR pc.user_id IS NOT NULL)`,
-      [user.id, idOrSlug, user.id]
-    );
-  }
-
-  if (!existing) {
+  const access = await getNoteAccess(idOrSlug, user.id);
+  if (!access) {
     return NextResponse.json({ error: "Note not found" }, { status: 404 });
   }
-
-  // Check edit permission for collaborators
-  if (existing.user_id !== user.id) {
-    const access = existing.project_id
-      ? await getProjectAccess(existing.project_id, user.id)
-      : null;
-    if (!canEdit(access)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+  if (!canEditRole(access.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  const existing = access.note;
+  const isOwner = access.role === "owner";
+  // Background work on the note (embedding, summary, connections, task scan)
+  // belongs to its owner, whoever typed the edit. Queuing it under an editor's
+  // id put the owner's note into the editor's search index and could turn
+  // its contents into tasks in the editor's account.
+  const ownerId = existing.user_id;
 
   const id = existing.id; // Use the actual id for updates
 
   try {
     const body = await request.json();
     const { title, content, projectId, isPinned, isArchived } = body;
+
+    // Editors change words, not where the note lives. Moving, pinning or
+    // archiving someone else's note would rearrange the owner's workspace,
+    // and moving it out of a shared project would also revoke the editor's
+    // own access mid-edit.
+    if (!isOwner && (projectId !== undefined || isPinned !== undefined || isArchived !== undefined)) {
+      return NextResponse.json(
+        { error: "Only the owner can move, pin or archive this note" },
+        { status: 403 }
+      );
+    }
 
     const updates: string[] = [];
     const values: InValue[] = [];
@@ -186,11 +164,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         await cancelJobs("note", id);
 
         // Invalidate cached insights
-        await invalidateCache(user.id, { entityId: id });
+        await invalidateCache(ownerId, { entityId: id });
 
         // Queue new processing jobs
         await enqueue({
-          userId: user.id,
+          userId: ownerId,
           entityType: "note",
           entityId: id,
           operation: "generate_embedding",
@@ -200,7 +178,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
         if (newWordCount > 50) {
           await enqueue({
-            userId: user.id,
+            userId: ownerId,
             entityType: "note",
             entityId: id,
             operation: "generate_summary",
@@ -212,7 +190,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         // Re-discover connections after content change
         const localResult = processLocally(content!);
         await enqueue({
-          userId: user.id,
+          userId: ownerId,
           entityType: "note",
           entityId: id,
           operation: "find_connections",
@@ -243,18 +221,18 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
           ? (
               await queryOne<{ id: string }>(
                 "SELECT id FROM daily_notes WHERE note_id = ? AND user_id = ?",
-                [id, user.id]
+                [id, ownerId]
               )
             )?.id
           : id;
 
         if (scanTarget) {
           const table = isDaily ? "daily_notes" : "notes";
-          const check = await shouldTriggerAutoScan(scanTarget, user.id, content, table);
+          const check = await shouldTriggerAutoScan(scanTarget, ownerId, content, table);
 
           if (check.shouldScan) {
             await enqueue({
-              userId: user.id,
+              userId: ownerId,
               entityType: isDaily ? "daily_note" : "note",
               entityId: scanTarget,
               operation: "scan_for_tasks",
@@ -273,7 +251,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    return NextResponse.json({ note });
+    return NextResponse.json({ note: note ? redactForViewer(note, access.role) : note });
   } catch (error) {
     console.error("Failed to update note:", error);
     return NextResponse.json({ error: "Failed to update note" }, { status: 500 });
@@ -289,30 +267,17 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
   const { id: idOrSlug } = await params;
 
-  // Only the note owner can delete
-  let note = await queryOne<Note>(
-    "SELECT id, user_id FROM notes WHERE id = ? AND user_id = ?",
-    [idOrSlug, user.id]
-  );
-
-  if (!note) {
-    note = await queryOne<Note>(
-      "SELECT id, user_id FROM notes WHERE slug = ? AND user_id = ?",
-      [idOrSlug, user.id]
-    );
-  }
-
-  if (!note) {
-    // Check if note exists but user doesn't own it (collaborator trying to delete)
-    const sharedNote = await queryOne<Note>(
-      "SELECT id FROM notes WHERE id = ? OR slug = ?",
-      [idOrSlug, idOrSlug]
-    );
-    if (sharedNote) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+  // Only the note owner can delete. Someone who can open the note gets a 403;
+  // anyone else gets the same 404 as for a note that does not exist, so ids
+  // and slugs cannot be probed across accounts.
+  const access = await getNoteAccess(idOrSlug, user.id);
+  if (!access) {
     return NextResponse.json({ error: "Note not found" }, { status: 404 });
   }
+  if (access.role !== "owner") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const note = access.note;
 
   const id = note.id;
 
@@ -328,6 +293,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       sql: "DELETE FROM note_connections WHERE source_note_id = ? OR target_note_id = ?",
       args: [id, id],
     });
+
+    // Account shares cascade with the note; deleted explicitly as well, like
+    // the rows above, for a connection that has foreign keys off.
+    await db
+      .execute({ sql: "DELETE FROM note_shares WHERE note_id = ?", args: [id] })
+      .catch(() => {});
 
     await db.execute({
       sql: "DELETE FROM notes WHERE id = ? AND user_id = ?",

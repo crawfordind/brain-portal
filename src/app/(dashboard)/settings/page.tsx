@@ -29,6 +29,7 @@ import { NotificationPreferencesPanel } from "@/components/notifications/notific
 import { GuardrailsSettingsPanel } from "@/components/settings/guardrails-settings";
 import { ModelSettingsPanel } from "@/components/settings/model-settings";
 import { McpKeysPanel } from "@/components/settings/mcp-keys-panel";
+import { SharingSettingsPanel } from "@/components/settings/sharing-settings";
 import { VaultExportDialog } from "@/components/export/vault-export-dialog";
 export default function SettingsPage() {
   const router = useRouter();
@@ -310,6 +311,19 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent>
           <GuardrailsSettingsPanel />
+        </CardContent>
+      </Card>
+
+      {/* Sharing */}
+      <Card id="sharing" className="scroll-mt-20">
+        <CardHeader>
+          <CardTitle className="text-base md:text-lg">Sharing</CardTitle>
+          <CardDescription className="text-xs md:text-sm">
+            Accounts you share notes with often, by name.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SharingSettingsPanel />
         </CardContent>
       </Card>
 

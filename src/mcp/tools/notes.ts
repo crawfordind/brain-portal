@@ -13,6 +13,7 @@ import {
   stampPlaceholders,
   stampValues,
 } from "@/lib/provenance";
+import { getNoteAccess, redactForViewer } from "@/lib/sharing/access";
 
 export function registerNoteTools(server: McpServer, ctx: ToolContext) {
   // ─── List Notes ────────────────────────────────────────
@@ -99,7 +100,7 @@ export function registerNoteTools(server: McpServer, ctx: ToolContext) {
   // ─── Get Note ──────────────────────────────────────────
   server.tool(
     "get_note",
-    "Get a single note by ID with full content, tags, and connections.",
+    "Get a single note by ID with full content, tags, and connections. Also reads notes another account shared with this one (see list_shared_notes); `access` says how.",
     {
       note_id: z.string().describe("The note ID to retrieve"),
       include_connections: z
@@ -112,31 +113,40 @@ export function registerNoteTools(server: McpServer, ctx: ToolContext) {
       if (!guard.ok) return errorResult(guard);
       const userId = guard.userId;
 
-      const note = await queryOne<Record<string, unknown>>(
-        `SELECT n.*, p.name as project_name
-         FROM notes n
-         LEFT JOIN projects p ON n.project_id = p.id
-         WHERE n.id = ? AND n.user_id = ?`,
-        [params.note_id, userId]
-      );
+      // Owned, in a shared project, or shared with this account directly.
+      const access = await getNoteAccess(params.note_id, userId);
 
-      if (!note) {
+      if (!access) {
         return {
           content: [{ type: "text" as const, text: "Note not found." }],
           isError: true,
         };
       }
+      const isOwner = access.role === "owner";
+      const note = {
+        ...redactForViewer(access.note, access.role),
+        access: {
+          role: access.role,
+          via: access.via,
+          shared_by: access.share
+            ? { email: access.share.ownerEmail, name: access.share.ownerName }
+            : null,
+        },
+      };
+      const noteId = access.note.id;
 
       // Get tags
       const tags = await query<{ name: string; slug: string }>(
         `SELECT t.name, t.slug FROM tags t
          JOIN note_tags nt ON t.id = nt.tag_id
          WHERE nt.note_id = ?`,
-        [params.note_id]
+        [noteId]
       );
 
+      // Connections point at the owner's other notes, which a recipient was
+      // not given; only the owner sees them.
       let connections: Record<string, unknown>[] = [];
-      if (params.include_connections) {
+      if (params.include_connections && isOwner) {
         connections = await query<Record<string, unknown>>(
           `SELECT nc.*, n.title as connected_title, n.slug as connected_slug
            FROM note_connections nc
@@ -145,7 +155,7 @@ export function registerNoteTools(server: McpServer, ctx: ToolContext) {
                   ELSE nc.source_note_id END
            ) = n.id
            WHERE nc.source_note_id = ? OR nc.target_note_id = ?`,
-          [params.note_id, params.note_id, params.note_id]
+          [noteId, noteId, noteId]
         );
       }
 

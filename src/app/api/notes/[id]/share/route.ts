@@ -5,6 +5,10 @@ import { queryOne, mutate } from "@/lib/db/client";
 import type { Note } from "@/lib/db/schema";
 import { getAppUrl } from "@/lib/app-url";
 
+// Toggling a public link deliberately leaves `updated_at` alone: the feed
+// orders by it, so sharing an old note used to move it to the top of the
+// stream as if it had been edited.
+
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
@@ -46,10 +50,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     await mutate(
       `UPDATE notes
        SET share_token = ?,
-           shared_at = datetime('now'),
-           updated_at = datetime('now')
-       WHERE id = ? AND user_id = ?
-       RETURNING *`,
+           shared_at = datetime('now')
+       WHERE id = ? AND user_id = ?`,
       [token, id, user.id]
     );
 
@@ -87,10 +89,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await mutate(
       `UPDATE notes
        SET share_token = NULL,
-           shared_at = NULL,
-           updated_at = datetime('now')
-       WHERE id = ? AND user_id = ?
-       RETURNING *`,
+           shared_at = NULL
+       WHERE id = ? AND user_id = ?`,
       [id, user.id]
     );
 
@@ -132,10 +132,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     await mutate(
       `UPDATE notes
        SET share_token = ?,
-           shared_at = datetime('now'),
-           updated_at = datetime('now')
-       WHERE id = ? AND user_id = ?
-       RETURNING *`,
+           shared_at = datetime('now')
+       WHERE id = ? AND user_id = ?`,
       [token, id, user.id]
     );
 

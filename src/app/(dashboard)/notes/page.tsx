@@ -6,19 +6,35 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, FileText, Mic, Plus, RefreshCw } from "lucide-react";
+import { Calendar, FileText, Mic, Plus, RefreshCw, Users } from "lucide-react";
 import Link from "next/link";
 import { format } from "date-fns";
 import type { Note } from "@/lib/db/schema";
+import type { SharedWithMeNote } from "@/lib/sharing/store";
+import { parseDbTimestamp } from "@/lib/stream/grouping";
 
-type FilterType = "all" | "daily" | "regular" | "voice";
+type FilterType = "all" | "daily" | "regular" | "voice" | "shared";
 
 export default function NotesPage() {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterType>("all");
 
-  const { data: notes, isLoading, isError, refetch } = useQuery({
+  // Notes other accounts shared with this one. Fetched regardless of filter so
+  // the chip appears only when there is something behind it.
+  const sharedQuery = useQuery({
+    queryKey: ["shared-notes"],
+    queryFn: async () => {
+      const response = await fetch("/api/shared-notes");
+      if (!response.ok) throw new Error("Failed to fetch shared notes");
+      const data = await response.json();
+      return data.notes as SharedWithMeNote[];
+    },
+  });
+  const sharedNotes = sharedQuery.data ?? [];
+
+  const ownQuery = useQuery({
     queryKey: ["notes", filter],
+    enabled: filter !== "shared",
     queryFn: async () => {
       let url = "/api/notes?archived=false";
       if (filter === "daily") {
@@ -34,6 +50,10 @@ export default function NotesPage() {
       return data.notes as Note[];
     },
   });
+
+  const showingShared = filter === "shared";
+  const { isLoading, isError, refetch } = showingShared ? sharedQuery : ownQuery;
+  const notes = ownQuery.data;
 
   const [isCreatingDaily, setIsCreatingDaily] = useState(false);
 
@@ -102,7 +122,10 @@ export default function NotesPage() {
           { value: "daily" as const, label: "Daily Notes", icon: Calendar },
           { value: "regular" as const, label: "Regular Notes", icon: FileText },
           { value: "voice" as const, label: "Voice Notes", icon: Mic },
-        ] as const).map(({ value, label, icon: Icon }) => (
+          ...(sharedNotes.length > 0 || showingShared
+            ? [{ value: "shared" as const, label: `Shared with me (${sharedNotes.length})`, icon: Users }]
+            : []),
+        ]).map(({ value, label, icon: Icon }) => (
           <button
             key={value}
             type="button"
@@ -142,6 +165,49 @@ export default function NotesPage() {
             Try again
           </Button>
         </div>
+      ) : showingShared ? (
+        sharedNotes.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 lg:py-12 text-center">
+            <Users className="h-8 w-8 lg:h-12 lg:w-12 text-muted-foreground mb-3 opacity-50" />
+            <h2 className="text-base lg:text-lg font-semibold mb-1">Nothing shared with you</h2>
+            <p className="text-xs lg:text-sm text-muted-foreground mb-3 px-4">
+              Notes another account shares with you will appear here.
+            </p>
+            <Button variant="outline" onClick={() => setFilter("all")} className="h-9 text-xs lg:text-sm">
+              Show all
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-2 lg:space-y-3">
+            {sharedNotes.map((note) => (
+              <Link
+                key={note.share_id}
+                href={`/notes/${note.note_id}`}
+                className="block p-3 lg:p-4 rounded-lg border hover:bg-muted/50 transition-colors"
+              >
+                <div className="flex items-start gap-2 lg:gap-3">
+                  <Users className="h-4 w-4 lg:h-5 lg:w-5 text-primary mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <h3 className="font-medium text-sm lg:text-base line-clamp-2">{note.title}</h3>
+                      <Badge variant="secondary" className="shrink-0 text-[10px] lg:text-xs">
+                        {note.permission === "edit" ? "Can edit" : "View only"}
+                      </Badge>
+                    </div>
+                    {note.excerpt && (
+                      <p className="text-xs lg:text-sm text-muted-foreground line-clamp-2">{note.excerpt}</p>
+                    )}
+                    <p className="text-[10px] lg:text-xs text-muted-foreground mt-1 lg:mt-2 truncate">
+                      From {note.owner_name || note.owner_email}
+                      {" · updated "}
+                      {format(parseDbTimestamp(note.updated_at) ?? new Date(), "MMM d, yyyy 'at' h:mm a")}
+                    </p>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )
       ) : !notes || notes.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-8 lg:py-12 text-center">
           <FileText className="h-8 w-8 lg:h-12 lg:w-12 text-muted-foreground mb-3 opacity-50" />
