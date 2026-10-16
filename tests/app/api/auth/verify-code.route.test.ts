@@ -43,6 +43,21 @@ describe("POST /api/auth/verify-code", () => {
     }
   );
 
+  it.each(["/login", "/Login/", "/signin?x=1", "/auth/login", "/auth/login?redirect=%2Fnotes", "/auth/verify"])(
+    "never sends a signed-in user back to a sign-in page (%s)",
+    async (redirect) => {
+      verifySignInCode.mockResolvedValue({ ok: true, user: { id: "u1" }, sessionToken: "d".repeat(64) });
+      const res = await POST(post({ email: "owner@example.com", code: "123456", redirect }));
+      expect((await res.json()).redirect).toBe("/");
+    }
+  );
+
+  it("keeps an ordinary page whose name merely starts like one", async () => {
+    verifySignInCode.mockResolvedValue({ ok: true, user: { id: "u1" }, sessionToken: "d".repeat(64) });
+    const res = await POST(post({ email: "owner@example.com", code: "123456", redirect: "/notes/login-ideas" }));
+    expect((await res.json()).redirect).toBe("/notes/login-ideas");
+  });
+
   it("explains a wrong code without setting a cookie", async () => {
     verifySignInCode.mockResolvedValue({ ok: false, reason: "wrong_code", attemptsLeft: 3 });
 

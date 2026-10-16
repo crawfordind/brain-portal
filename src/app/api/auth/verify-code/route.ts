@@ -22,9 +22,18 @@ const MESSAGES: Record<SignInCodeFailure, string> = {
   not_allowed: "This server only signs in existing accounts. Ask the person who runs it to add your address.",
 };
 
-/** Same-origin paths only, so the response cannot be used as an open redirect. */
+/**
+ * Same-origin paths only, so the response cannot be used as an open redirect.
+ * Never a sign-in page either: "returning" a user who just signed in to one
+ * shows them the login form again, or a 404 for an address like "/login"
+ * that only ever existed as a typed guess.
+ */
 function safeRedirect(value: unknown): string {
   if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
+    return "/";
+  }
+  const path = value.split(/[?#]/)[0].replace(/\/+$/, "").toLowerCase();
+  if (path === "/auth" || path.startsWith("/auth/") || ["/login", "/signin", "/sign-in"].includes(path)) {
     return "/";
   }
   return value;
