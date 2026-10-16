@@ -36,6 +36,8 @@ function isPublicRoute(pathname: string): boolean {
   );
 }
 
+const LOGIN_ALIASES = new Set(["/login", "/signin", "/sign-in"]);
+
 const SESSION_TOKEN_RE = /^[0-9a-f]{64}$/;
 
 /** File extensions served as static assets, which carry no session. */
@@ -85,6 +87,14 @@ export function middleware(request: NextRequest) {
 
   if (redirects[pathname]) {
     return NextResponse.redirect(new URL(redirects[pathname], request.url));
+  }
+
+  // The addresses people type for a sign-in page. None of them exists, so
+  // without this they fell through to the session check, which bounced them
+  // to "/auth/login?redirect=/login" — and signing in then "returned" them to
+  // a 404. The query string is kept so a redirect target survives.
+  if (LOGIN_ALIASES.has(pathname)) {
+    return NextResponse.redirect(new URL(`/auth/login${search}`, request.url));
   }
 
   if (isPublicRoute(pathname)) {
