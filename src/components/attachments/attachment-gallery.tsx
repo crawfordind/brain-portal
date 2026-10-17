@@ -37,6 +37,25 @@ export function AttachmentGallery({ projectId, noteId, className }: AttachmentGa
   const [sortBy, setSortBy] = useState<SortBy>('created');
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
 
+  const fetchAttachments = async () => {
+    setIsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (projectId) params.set('projectId', projectId);
+      if (noteId) params.set('noteId', noteId);
+
+      const response = await fetch(`/api/attachments?${params.toString()}`);
+      if (!response.ok) throw new Error('Failed to fetch attachments');
+
+      const data = await response.json();
+      setAttachments(data.attachments || []);
+    } catch (error) {
+      console.error('Error fetching attachments:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Fetch attachments
   useEffect(() => {
     fetchAttachments();
@@ -79,25 +98,6 @@ export function AttachmentGallery({ projectId, noteId, className }: AttachmentGa
 
     setFilteredAttachments(filtered);
   }, [attachments, searchQuery, fileTypeFilter, sortBy]);
-
-  const fetchAttachments = async () => {
-    setIsLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (projectId) params.set('projectId', projectId);
-      if (noteId) params.set('noteId', noteId);
-
-      const response = await fetch(`/api/attachments?${params.toString()}`);
-      if (!response.ok) throw new Error('Failed to fetch attachments');
-
-      const data = await response.json();
-      setAttachments(data.attachments || []);
-    } catch (error) {
-      console.error('Error fetching attachments:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleDelete = (id: string) => {
     setAttachments((prev) => prev.filter((att) => att.id !== id));

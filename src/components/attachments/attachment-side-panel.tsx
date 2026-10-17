@@ -26,10 +26,6 @@ export function AttachmentSidePanel({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    fetchAttachments();
-  }, [noteId]);
-
   const fetchAttachments = async () => {
     setIsLoading(true);
     try {
@@ -45,6 +41,10 @@ export function AttachmentSidePanel({
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchAttachments();
+  }, [noteId]);
 
   const handlePin = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();

@@ -36,6 +36,22 @@ interface AttachmentCardProps {
   selected?: boolean;
 }
 
+/** The icon for an attachment's file type. Module-level, so it is one stable component. */
+function FileTypeIcon({ fileType, className }: { fileType: string; className?: string }) {
+  switch (fileType) {
+    case 'image':
+      return <ImageIcon className={className} />;
+    case 'pdf':
+      return <FileText className={className} />;
+    case 'audio':
+      return <Music className={className} />;
+    case 'video':
+      return <Video className={className} />;
+    default:
+      return <File className={className} />;
+  }
+}
+
 export function AttachmentCard({
   attachment,
   onDelete,
@@ -47,21 +63,6 @@ export function AttachmentCard({
   const [isDeleting, setIsDeleting] = useState(false);
   const [thumbnailError, setThumbnailError] = useState(false);
   const confirm = useConfirm();
-
-  const getFileIcon = () => {
-    switch (attachment.file_type) {
-      case 'image':
-        return ImageIcon;
-      case 'pdf':
-        return FileText;
-      case 'audio':
-        return Music;
-      case 'video':
-        return Video;
-      default:
-        return File;
-    }
-  };
 
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 Bytes';
@@ -124,7 +125,6 @@ export function AttachmentCard({
     window.open(attachment.storage_url, '_blank');
   };
 
-  const Icon = getFileIcon();
 
   // Get thumbnail from metadata if available
   const metadata = attachment.metadata ? JSON.parse(attachment.metadata) : {};
@@ -146,7 +146,7 @@ export function AttachmentCard({
           </div>
         )}
         <div className="shrink-0">
-          <Icon className="size-5 text-muted-foreground" />
+          <FileTypeIcon fileType={attachment.file_type} className="size-5 text-muted-foreground" />
         </div>
 
         <div className="flex-1 min-w-0">
@@ -228,7 +228,7 @@ export function AttachmentCard({
             />
           )
         ) : (
-          <Icon className="size-12 text-muted-foreground" />
+          <FileTypeIcon fileType={attachment.file_type} className="size-12 text-muted-foreground" />
         )}
 
         {/* Processing Status */}

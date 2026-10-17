@@ -34,13 +34,6 @@ export function AttachmentBottomSheet({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    if (open) {
-      fetchAttachments();
-      setShowUpload(false);
-    }
-  }, [open, noteId]);
-
   const fetchAttachments = async () => {
     setIsLoading(true);
     try {
@@ -56,6 +49,13 @@ export function AttachmentBottomSheet({
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (open) {
+      fetchAttachments();
+      setShowUpload(false);
+    }
+  }, [open, noteId]);
 
   const handleUploadComplete = (attachment: Attachment) => {
     setAttachments((prev) => [attachment, ...prev]);

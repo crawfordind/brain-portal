@@ -37,13 +37,6 @@ export function CleanupModal({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<string>("all");
 
-  // Auto-analyze when modal opens
-  useEffect(() => {
-    if (open && !result && !analyzing) {
-      analyzeNote();
-    }
-  }, [open]);
-
   const analyzeNote = async () => {
     setAnalyzing(true);
     setError(null);
@@ -79,6 +72,13 @@ export function CleanupModal({
       setAnalyzing(false);
     }
   };
+
+  // Auto-analyze when modal opens
+  useEffect(() => {
+    if (open && !result && !analyzing) {
+      analyzeNote();
+    }
+  }, [open]);
 
   const applySelected = async () => {
     if (selectedIds.size === 0) {

@@ -118,18 +118,6 @@ function JournalPage() {
     yearParam ? parseInt(yearParam) : new Date().getFullYear()
   );
 
-  // Auto-focus and pre-fill entry from URL params
-  useEffect(() => {
-    if (entryParam) {
-      setInput(decodeURIComponent(entryParam));
-      // Auto-submit the entry from URL
-      submitEntry(decodeURIComponent(entryParam));
-    } else if (isNew) {
-      inputRef.current?.focus();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entryParam, isNew]);
-
   // Fetch daily journal entries
   const { data: dailyData, isLoading: dailyLoading } = useQuery({
     queryKey: ["journal", "daily", currentDate],
@@ -182,6 +170,18 @@ function JournalPage() {
       setIsSubmitting(false);
     }
   }, [input, isSubmitting, currentDate, queryClient]);
+
+  // Auto-focus and pre-fill entry from URL params
+  useEffect(() => {
+    if (entryParam) {
+      setInput(decodeURIComponent(entryParam));
+      // Auto-submit the entry from URL
+      submitEntry(decodeURIComponent(entryParam));
+    } else if (isNew) {
+      inputRef.current?.focus();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entryParam, isNew]);
 
   // Compile monthly journal
   const compileMutation = useMutation({
