@@ -1,7 +1,12 @@
 /**
  * Sign-in codes and links against a real in-memory libsql database, so the
  * actual SQL runs: the UPDATE … RETURNING that charges each guess, the
- * julianday expiry, and the fallback for a database without the code column.
+ * julianday expiry, the per-link use allowance, and the fallbacks for a
+ * database not yet migrated.
+ *
+ * The scenario these exist for: a corporate mail scanner opens the link (in a
+ * real browser that runs JavaScript) before the person does. The person's own
+ * click, and the code in the same email, must both still work.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -21,11 +26,12 @@ vi.mock("@/lib/db/client", () => {
 vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 
 import { createSignIn, createMagicLink, verifyMagicLink, verifySignInCode } from "@/lib/auth";
-import { MAX_CODE_ATTEMPTS } from "@/lib/auth/magic-link";
+import { MAX_CODE_ATTEMPTS, MAX_LINK_USES } from "@/lib/auth/magic-link";
 
 const OWNER = "owner@example.com";
 
-async function setupSchema({ withCodeColumns = true } = {}) {
+/** "current": every column. "codes": before scanner-proofing. "none": before codes. */
+async function setupSchema({ columns = "current" }: { columns?: "current" | "codes" | "none" } = {}) {
   for (const table of ["sessions", "magic_links", "users"]) {
     await testDb.execute(`DROP TABLE IF EXISTS ${table}`);
   }
@@ -45,7 +51,8 @@ async function setupSchema({ withCodeColumns = true } = {}) {
     token TEXT UNIQUE NOT NULL,
     expires_at TEXT NOT NULL,
     used BOOLEAN DEFAULT FALSE,
-    ${withCodeColumns ? "code_hash TEXT, code_attempts INTEGER DEFAULT 0," : ""}
+    ${columns !== "none" ? "code_hash TEXT, code_attempts INTEGER DEFAULT 0," : ""}
+    ${columns === "current" ? "code_used INTEGER DEFAULT 0, link_uses INTEGER DEFAULT 0, browser_hash TEXT," : ""}
     created_at TEXT DEFAULT (datetime('now'))
   )`);
   // Stored with a capital, as accounts created before normalisation may be.
@@ -71,11 +78,10 @@ describe("sign-in codes", () => {
     if (result.ok) expect(result.user.id).toBe("u1");
   });
 
-  it("spends the whole login: the code and its link work once between them", async () => {
-    const { url, code } = await createSignIn(OWNER, { baseUrl: "https://app.example.com" });
+  it("accepts a code once", async () => {
+    const { code } = await createSignIn(OWNER, { baseUrl: "https://app.example.com" });
 
     expect((await verifySignInCode(OWNER, code!)).ok).toBe(true);
-    expect(await verifyMagicLink(OWNER, tokenOf(url))).toEqual({ ok: false, reason: "used" });
     expect(await verifySignInCode(OWNER, code!)).toEqual({ ok: false, reason: "expired" });
   });
 
@@ -127,9 +133,98 @@ describe("sign-in codes", () => {
   });
 });
 
+describe("a mail scanner opens the link first", () => {
+  const BROWSER = "e".repeat(64);
+  const OTHER_BROWSER = "f".repeat(64);
+  const signIn = () => createSignIn(OWNER, { baseUrl: "https://app.example.com", browserSecret: BROWSER });
+  /** What a scanner does: post the form from a browser without the cookie. */
+  const scan = (url: string) => verifyMagicLink(OWNER, tokenOf(url), { browserSecret: null });
+
+  beforeEach(async () => {
+    await setupSchema();
+  });
+
+  it("leaves the code working", async () => {
+    const { url, code } = await signIn();
+    for (let i = 0; i < MAX_LINK_USES; i++) expect((await scan(url)).ok).toBe(true);
+    expect(await scan(url)).toEqual({ ok: false, reason: "used" });
+
+    expect((await verifySignInCode(OWNER, code!)).ok).toBe(true);
+  });
+
+  it("leaves the link working for the person on another device", async () => {
+    const { url } = await signIn();
+    expect((await scan(url)).ok).toBe(true);
+
+    expect((await verifyMagicLink(OWNER, tokenOf(url), { browserSecret: OTHER_BROWSER })).ok).toBe(true);
+  });
+
+  it("always lets in the browser that asked, however many scanners got there first", async () => {
+    const { url } = await signIn();
+    for (let i = 0; i < MAX_LINK_USES; i++) await scan(url);
+
+    expect((await verifyMagicLink(OWNER, tokenOf(url), { browserSecret: BROWSER })).ok).toBe(true);
+    expect((await verifyMagicLink(OWNER, tokenOf(url), { browserSecret: BROWSER })).ok).toBe(true);
+    // A different secret is not that browser.
+    expect(await verifyMagicLink(OWNER, tokenOf(url), { browserSecret: OTHER_BROWSER })).toEqual({
+      ok: false,
+      reason: "used",
+    });
+  });
+
+  it("does not let the browser that asked in after the link expired", async () => {
+    const { url } = await signIn();
+    await testDb.execute("UPDATE magic_links SET expires_at = '2020-01-01T00:00:00.000Z'");
+
+    expect(await verifyMagicLink(OWNER, tokenOf(url), { browserSecret: BROWSER })).toEqual({
+      ok: false,
+      reason: "expired",
+    });
+  });
+
+  it("keeps a used-up link's code alive across a resend", async () => {
+    const first = await signIn();
+    for (let i = 0; i < MAX_LINK_USES; i++) await scan(first.url);
+    await signIn();
+
+    expect((await verifySignInCode(OWNER, first.code!)).ok).toBe(true);
+  });
+
+  it("never stores the browser's secret itself", async () => {
+    await signIn();
+    const row = await testDb.execute("SELECT * FROM magic_links");
+    expect(JSON.stringify(row.rows)).not.toContain(BROWSER);
+  });
+
+  it("refuses racing scanners more uses than the link allows", async () => {
+    const { url } = await signIn();
+    const results = await Promise.all(Array.from({ length: MAX_LINK_USES + 3 }, () => scan(url)));
+    expect(results.filter((r) => r.ok)).toHaveLength(MAX_LINK_USES);
+  });
+});
+
+describe("a database migrated for codes but not for scanner-proofing", () => {
+  beforeEach(async () => {
+    await setupSchema({ columns: "codes" });
+  });
+
+  it("still signs in with the code and the link, as before", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const first = await createSignIn(OWNER, { baseUrl: "https://app.example.com", browserSecret: "e".repeat(64) });
+    const second = await createSignIn(OWNER, { baseUrl: "https://app.example.com" });
+
+    expect(first.code).toMatch(/^\d{6}$/);
+    expect((await verifySignInCode(OWNER, first.code!)).ok).toBe(true);
+    expect((await verifyMagicLink(OWNER, tokenOf(second.url))).ok).toBe(true);
+    // One use per link there, as there always was.
+    expect(await verifyMagicLink(OWNER, tokenOf(second.url))).toEqual({ ok: false, reason: "used" });
+    warn.mockRestore();
+  });
+});
+
 describe("a database not yet migrated for codes", () => {
   beforeEach(async () => {
-    await setupSchema({ withCodeColumns: false });
+    await setupSchema({ columns: "none" });
   });
 
   it("still sends a working link, without a code", async () => {

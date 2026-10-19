@@ -22,10 +22,13 @@ import { GET, POST } from "@/app/api/auth/verify/route";
 
 const TOKEN = "b".repeat(64);
 
-function post(fields: Record<string, string>) {
+function post(fields: Record<string, string>, cookie?: string) {
   return new NextRequest("https://app.example.com/api/auth/verify", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
     body: new URLSearchParams(fields).toString(),
   });
 }
@@ -62,7 +65,7 @@ describe("POST /api/auth/verify", () => {
 
     const res = await POST(post({ token: TOKEN, email: "owner@example.com" }));
 
-    expect(verifyMagicLink).toHaveBeenCalledWith("owner@example.com", TOKEN);
+    expect(verifyMagicLink).toHaveBeenCalledWith("owner@example.com", TOKEN, { browserSecret: null });
     expect(res.status).toBe(303);
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
     expect(res.headers.get("set-cookie")).toContain("brain_session=");
@@ -81,6 +84,25 @@ describe("POST /api/auth/verify", () => {
     const location = new URL(res.headers.get("location")!);
     expect(location.pathname).toBe("/auth/error");
     expect(location.searchParams.get("reason")).toBe(code);
+  });
+
+  it("passes the requesting browser's secret through, so that browser is always let in", async () => {
+    verifyMagicLink.mockResolvedValue({ ok: false, reason: "invalid" });
+    const secret = "d".repeat(64);
+
+    await POST(post({ token: TOKEN, email: "owner@example.com" }, `brain_signin_browser=${secret}`));
+
+    expect(verifyMagicLink).toHaveBeenCalledWith("owner@example.com", TOKEN, { browserSecret: secret });
+  });
+
+  it("offers the code, address filled in, when a scanner used the link up", async () => {
+    verifyMagicLink.mockResolvedValue({ ok: false, reason: "used" });
+
+    const res = await POST(post({ token: TOKEN, email: "Owner@Example.com" }));
+
+    const location = new URL(res.headers.get("location")!);
+    expect(location.searchParams.get("reason")).toBe("link_used");
+    expect(location.searchParams.get("email")).toBe("owner@example.com");
   });
 
   it("lets a second click through when this browser is already signed in as that address", async () => {

@@ -11,6 +11,7 @@ import {
   normalizeSignInCode,
   MAX_ACTIVE_LINKS_PER_EMAIL,
   MAX_CODE_ATTEMPTS,
+  MAX_LINK_USES,
   SIGN_IN_CODE_LENGTH,
   type MagicLinkFailure,
   type SignInCodeFailure,
@@ -61,10 +62,13 @@ export interface SignInEmail {
  * Issue a sign-in link and, unless `withCode` is false, a code for the same
  * login. Project invites pass `withCode: false`: they live for days and are
  * opened by clicking, so a long-lived guessable code would only add risk.
+ *
+ * `browserSecret` is the requesting browser's `SIGN_IN_BROWSER_COOKIE`; its
+ * hash is stored so that browser is always let through (see `verifyMagicLink`).
  */
 export async function createSignIn(
   email: string,
-  options: { baseUrl?: string; expirySeconds?: number; withCode?: boolean } = {}
+  options: { baseUrl?: string; expirySeconds?: number; withCode?: boolean; browserSecret?: string } = {}
 ): Promise<SignInEmail> {
   const address = normalizeEmail(email);
   const token = generateToken();
@@ -72,16 +76,18 @@ export async function createSignIn(
   const expiry = options.expirySeconds ?? magicLinkTtlMinutes() * 60;
   const expiresAt = new Date(Date.now() + expiry * 1000).toISOString();
   const code = options.withCode === false ? null : generateSignInCode();
+  const browserHash = options.browserSecret ? hashToken(options.browserSecret) : null;
 
   // Earlier links for this address stay valid. This used to delete every one
   // of them, so pressing "send again" while the first email sat in a queue
-  // killed the link that then arrived. Only spent links are cleared, plus the
-  // oldest beyond a small cap so one address cannot pile them up.
+  // killed the link that then arrived. Only expired links are cleared, plus
+  // the oldest beyond a small cap so one address cannot pile them up. A link
+  // a scanner used up is *not* cleared: its code may still be the one the
+  // person is about to type.
   const prune = [
     {
       sql: `DELETE FROM magic_links
-            WHERE lower(email) = ?
-              AND (used = TRUE OR julianday(expires_at) <= julianday('now'))`,
+            WHERE lower(email) = ? AND julianday(expires_at) <= julianday('now')`,
       args: [address],
     },
     {
@@ -96,35 +102,40 @@ export async function createSignIn(
     },
   ];
 
-  let issuedCode = code;
-  try {
-    await db.batch(
-      [
-        ...prune,
-        {
-          sql: "INSERT INTO magic_links (email, token, expires_at, code_hash) VALUES (?, ?, ?, ?)",
-          args: [address, hashedToken, expiresAt, code ? hashSignInCode(hashedToken, code) : null],
-        },
-      ],
-      "write"
-    );
-  } catch (error) {
-    // A database that has not run `npm run db:migrate` since codes were added
-    // has no `code_hash` column. Sign-in must not break over it: send the
-    // link alone, as before.
-    if (!isMissingColumn(error)) throw error;
-    console.warn("[AUTH] magic_links.code_hash missing; run `npm run db:migrate` to enable sign-in codes");
-    issuedCode = null;
-    await db.batch(
-      [
-        ...prune,
-        {
-          sql: "INSERT INTO magic_links (email, token, expires_at) VALUES (?, ?, ?)",
-          args: [address, hashedToken, expiresAt],
-        },
-      ],
-      "write"
-    );
+  // A database that has not run `npm run db:migrate` since a column was added
+  // must not break sign-in over it: each fallback drops the newest columns,
+  // down to the link alone, as it was originally.
+  const attempts: Array<{ columns: string[]; values: (string | null)[]; hasCode: boolean }> = [
+    {
+      columns: ["code_hash", "browser_hash"],
+      values: [code ? hashSignInCode(hashedToken, code) : null, browserHash],
+      hasCode: code !== null,
+    },
+    { columns: ["code_hash"], values: [code ? hashSignInCode(hashedToken, code) : null], hasCode: code !== null },
+    { columns: [], values: [], hasCode: false },
+  ];
+
+  let issuedCode: string | null = null;
+  for (let i = 0; i < attempts.length; i++) {
+    const { columns, values, hasCode } = attempts[i];
+    const names = ["email", "token", "expires_at", ...columns];
+    try {
+      await db.batch(
+        [
+          ...prune,
+          {
+            sql: `INSERT INTO magic_links (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
+            args: [address, hashedToken, expiresAt, ...values],
+          },
+        ],
+        "write"
+      );
+      issuedCode = hasCode ? code : null;
+      break;
+    } catch (error) {
+      if (!isMissingColumn(error) || i === attempts.length - 1) throw error;
+      console.warn("[AUTH] magic_links is missing sign-in columns; run `npm run db:migrate`");
+    }
   }
 
   const appUrl = (options.baseUrl || getAppUrl()).replace(/\/$/, "");
@@ -187,17 +198,51 @@ async function startSession(
   return { ok: true, user, sessionToken };
 }
 
-/** Spend one link atomically: two racing consumers get one session between them. */
-async function spendLink(id: string): Promise<boolean> {
-  const spent = await db.execute({
-    sql: "UPDATE magic_links SET used = TRUE WHERE id = ? AND used = FALSE",
-    args: [id],
-  });
-  return spent.rowsAffected > 0;
+/**
+ * Count one use of a link by a browser other than the one that asked for it.
+ * Atomic: racing consumers cannot take more than `MAX_LINK_USES` between them.
+ */
+async function countLinkUse(id: string): Promise<boolean> {
+  try {
+    const spent = await db.execute({
+      sql: `UPDATE magic_links
+            SET link_uses = COALESCE(link_uses, 0) + 1,
+                used = CASE WHEN COALESCE(link_uses, 0) + 1 >= ? THEN TRUE ELSE used END
+            WHERE id = ? AND used = FALSE AND COALESCE(link_uses, 0) < ?`,
+      args: [MAX_LINK_USES, id, MAX_LINK_USES],
+    });
+    return spent.rowsAffected > 0;
+  } catch (error) {
+    if (!isMissingColumn(error)) throw error;
+    // Not migrated yet: one use, as before.
+    const spent = await db.execute({
+      sql: "UPDATE magic_links SET used = TRUE WHERE id = ? AND used = FALSE",
+      args: [id],
+    });
+    return spent.rowsAffected > 0;
+  }
 }
 
-// Verify magic link and create session
-export async function verifyMagicLink(email: string, token: string): Promise<VerifyMagicLinkResult> {
+/** Whether `browserSecret` is the secret of the browser that asked for this link. */
+function isSameBrowser(link: { browser_hash?: string | null }, browserSecret: string | null | undefined): boolean {
+  if (!browserSecret || !link.browser_hash) return false;
+  const expected = Buffer.from(link.browser_hash, "hex");
+  const actual = Buffer.from(hashToken(browserSecret), "hex");
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+/**
+ * Verify a sign-in link and create a session.
+ *
+ * The browser that requested the email (it carries `browserSecret`) is let in
+ * for as long as the link lives, however many times anything else opened it.
+ * Any other browser counts as one of the link's `MAX_LINK_USES`.
+ */
+export async function verifyMagicLink(
+  email: string,
+  token: string,
+  options: { browserSecret?: string | null } = {}
+): Promise<VerifyMagicLinkResult> {
   const address = normalizeEmail(email);
   const hashedToken = hashToken(token);
 
@@ -208,12 +253,13 @@ export async function verifyMagicLink(email: string, token: string): Promise<Ver
     [hashedToken]
   );
 
-  const assessment = assessMagicLink(magicLink, address);
+  const sameBrowser = magicLink ? isSameBrowser(magicLink, options.browserSecret) : false;
+  const assessment = assessMagicLink(magicLink, address, new Date(), { sameBrowser });
   if (!assessment.ok || !magicLink) {
     return { ok: false, reason: assessment.ok ? "invalid" : assessment.reason };
   }
 
-  if (!(await spendLink(magicLink.id))) {
+  if (!sameBrowser && !(await countLinkUse(magicLink.id))) {
     return { ok: false, reason: "used" };
   }
 
@@ -226,6 +272,10 @@ export type VerifySignInCodeResult =
 
 /**
  * Sign in with the six digits from the email instead of its link.
+ *
+ * The code is spent only by typing it. Opening the link, which a mail scanner
+ * does without asking, leaves the code working: that is the way in when a
+ * scanner got to the link first.
  *
  * Every guess is charged before it is checked: the attempt counter is raised
  * on all of this address's live codes in one statement, and only codes still
@@ -240,19 +290,31 @@ export async function verifySignInCode(email: string, rawCode: string): Promise<
     return { ok: false, reason: "wrong_code" };
   }
 
-  const live = `lower(email) = ? AND used = FALSE AND code_hash IS NOT NULL
+  // `code_used` is the code's own flag. A database not yet migrated for it
+  // falls back to the link's `used`, as before.
+  let spentColumn = "code_used";
+  const live = () => `lower(email) = ? AND COALESCE(${spentColumn}, 0) = 0 AND code_hash IS NOT NULL
                 AND julianday(expires_at) > julianday('now')`;
+  const charge = () =>
+    query<{ id: string; token: string; code_hash: string; code_attempts: number }>(
+      `UPDATE magic_links SET code_attempts = COALESCE(code_attempts, 0) + 1
+       WHERE ${live()} AND COALESCE(code_attempts, 0) < ?
+       RETURNING id, token, code_hash, code_attempts`,
+      [address, MAX_CODE_ATTEMPTS]
+    );
 
-  const candidates = await query<{ id: string; token: string; code_hash: string; code_attempts: number }>(
-    `UPDATE magic_links SET code_attempts = COALESCE(code_attempts, 0) + 1
-     WHERE ${live} AND COALESCE(code_attempts, 0) < ?
-     RETURNING id, token, code_hash, code_attempts`,
-    [address, MAX_CODE_ATTEMPTS]
-  );
+  let candidates: Awaited<ReturnType<typeof charge>>;
+  try {
+    candidates = await charge();
+  } catch (error) {
+    if (!isMissingColumn(error)) throw error;
+    spentColumn = "used";
+    candidates = await charge();
+  }
 
   if (candidates.length === 0) {
     const locked = await queryOne<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM magic_links WHERE ${live} AND COALESCE(code_attempts, 0) >= ?`,
+      `SELECT COUNT(*) AS n FROM magic_links WHERE ${live()} AND COALESCE(code_attempts, 0) >= ?`,
       [address, MAX_CODE_ATTEMPTS]
     );
     return { ok: false, reason: locked && Number(locked.n) > 0 ? "locked" : "expired" };
@@ -272,7 +334,11 @@ export async function verifySignInCode(email: string, rawCode: string): Promise<
     return { ok: false, reason: attemptsLeft > 0 ? "wrong_code" : "locked", attemptsLeft };
   }
 
-  if (!(await spendLink(match.id))) {
+  const spent = await db.execute({
+    sql: `UPDATE magic_links SET ${spentColumn} = TRUE WHERE id = ? AND COALESCE(${spentColumn}, 0) = 0`,
+    args: [match.id],
+  });
+  if (spent.rowsAffected === 0) {
     return { ok: false, reason: "expired" };
   }
 

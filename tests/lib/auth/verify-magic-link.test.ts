@@ -36,14 +36,16 @@ describe("createMagicLink", () => {
     batch.mockResolvedValue([]);
   });
 
-  it("keeps earlier unexpired links alive", async () => {
+  it("keeps earlier unexpired links alive, even ones a scanner used up", async () => {
     await createMagicLink("owner@example.com", "https://app.example.com");
     const statements = batch.mock.calls[0][0] as Stmt[];
     const deletes = statements.filter((s) => /DELETE/i.test(s.sql));
     expect(deletes.length).toBeGreaterThan(0);
     for (const del of deletes) {
-      // Every delete is conditional: spent or expired, or beyond the cap.
-      expect(del.sql).toMatch(/used = TRUE|NOT IN/);
+      // Every delete is conditional: expired, or beyond the cap. Never "used":
+      // a link a scanner used up still carries the code the person will type.
+      expect(del.sql).toMatch(/julianday\(expires_at\) <= julianday\('now'\)|NOT IN/);
+      expect(del.sql).not.toMatch(/used = TRUE/);
     }
   });
 

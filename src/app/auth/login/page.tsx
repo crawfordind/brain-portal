@@ -32,6 +32,15 @@ export default function LoginPage() {
   const [codeError, setCodeError] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
 
+  // `?email=…&step=code` (from a link a scanner used up, or the landing
+  // page): straight to typing the code from the email already received.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromLink = params.get("email");
+    if (fromLink) setEmail(fromLink);
+    if (fromLink && params.get("step") === "code") setSuccess(true);
+  }, []);
+
   useEffect(() => {
     if (cooldown <= 0) return;
     const timer = setTimeout(() => setCooldown((s) => s - 1), 1000);
@@ -176,7 +185,8 @@ export default function LoginPage() {
 
               <p className="text-xs text-muted-foreground">
                 Email can take a few minutes. Check spam too. If you ask for another email, the
-                earlier ones keep working, so use whichever arrives first.
+                earlier ones keep working, so use whichever arrives first. If the link says it was
+                already used (work email often checks links first), type the code instead.
               </p>
               {error && <p className="text-sm text-destructive">{error}</p>}
               {(devLink || devCode) && (
@@ -265,6 +275,18 @@ export default function LoginPage() {
                     Continue with Email
                   </>
                 )}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full min-h-11"
+                disabled={isLoading || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())}
+                onClick={() => {
+                  setError("");
+                  setSuccess(true);
+                }}
+              >
+                I already have a code
               </Button>
               <p className="text-xs text-center text-muted-foreground">
                 We&apos;ll email you a sign-in code and link.

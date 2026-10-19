@@ -19,6 +19,13 @@ describe("renderSignInEmail", () => {
     expect(email.text).toContain("expire in 30 minutes");
   });
 
+  it("tells the reader the code still works when a scanner opened the link first", () => {
+    const email = renderSignInEmail({ url: URL_, code: "042917", lifetime: "30 minutes" });
+    expect(email.text).toMatch(/already used.*type the code instead/);
+    expect(email.html).toMatch(/already used.*type the code instead/);
+    expect(email.text).not.toMatch(/work once/);
+  });
+
   it("falls back to a link-only email when no code could be stored", () => {
     const email = renderSignInEmail({ url: URL_, code: null, lifetime: "30 minutes" });
     expect(email.subject).toBe("Sign in to Brain Portal");

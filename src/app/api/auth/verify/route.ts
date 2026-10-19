@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyMagicLink, getCurrentUser } from "@/lib/auth";
-import { normalizeEmail, type MagicLinkFailure } from "@/lib/auth/magic-link";
+import { normalizeEmail, SIGN_IN_BROWSER_COOKIE, type MagicLinkFailure } from "@/lib/auth/magic-link";
 import { acceptProjectInvite } from "@/lib/collaborators";
 import { checkRateLimit } from "@/lib/rate-limit";
 
@@ -13,6 +13,10 @@ import { checkRateLimit } from "@/lib/rate-limit";
  *   link and the user's own click landed on "expired or already used". A GET
  *   here is sent to `/auth/verify`, the page a real browser posts from.
  * - POST does the work. It is what `/auth/verify` submits.
+ * - The browser that asked for the email (it holds `SIGN_IN_BROWSER_COOKIE`)
+ *   is always let in while the link lives. Corporate scanners run JavaScript
+ *   and so can post too; they are what the per-link use allowance and the
+ *   separately spent code are for.
  */
 
 const SESSION_COOKIE = "brain_session";
@@ -97,7 +101,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await verifyMagicLink(email, token);
+    const result = await verifyMagicLink(email, token, {
+      browserSecret: request.cookies.get(SIGN_IN_BROWSER_COOKIE)?.value ?? null,
+    });
 
     if (!result.ok) {
       // A second click, or a link opened after an earlier one already signed
@@ -109,7 +115,12 @@ export async function POST(request: NextRequest) {
           return redirectTo(await acceptInvite(invite, current.id, current.email), request);
         }
       }
-      return redirectTo(`/auth/error?reason=${ERROR_REASON[result.reason]}`, request);
+      // The code in the same email still works when the link does not (a
+      // scanner used it up), so the error page offers to take it, with the
+      // address already filled in.
+      const error = new URLSearchParams({ reason: ERROR_REASON[result.reason] });
+      if (result.reason === "used" || result.reason === "expired") error.set("email", normalizeEmail(email));
+      return redirectTo(`/auth/error?${error}`, request);
     }
 
     const redirectPath = await acceptInvite(invite, result.user.id, result.user.email);

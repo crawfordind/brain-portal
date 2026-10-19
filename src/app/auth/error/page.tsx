@@ -25,7 +25,7 @@ const errorMessages: Record<string, { title: string; description: string }> = {
   link_used: {
     title: "Link Already Used",
     description:
-      "Each sign-in link works once, and this one already has. If that wasn't you in this browser, request a new link here.",
+      "This link was already opened, often by an email security scanner that checks links before you see them. The 6-digit code in the same email still works.",
   },
   not_allowed: {
     title: "No Account for This Address",
@@ -49,6 +49,10 @@ function AuthErrorContent() {
   const searchParams = useSearchParams();
   const reason = searchParams.get("reason") || "default";
   const error = errorMessages[reason] || errorMessages.default;
+  const email = searchParams.get("email") || "";
+  const loginHref = email ? `/auth/login?${new URLSearchParams({ email })}` : "/auth/login";
+  // A used-up link leaves its code working; an expired one takes the code with it.
+  const codeHref = reason === "link_used" ? `/auth/login?${new URLSearchParams({ email, step: "code" })}` : null;
 
   return (
     <Card className="w-full max-w-md">
@@ -59,9 +63,14 @@ function AuthErrorContent() {
         <CardTitle>{error.title}</CardTitle>
         <CardDescription>{error.description}</CardDescription>
       </CardHeader>
-      <CardContent className="flex justify-center">
-        <Button asChild>
-          <Link href="/auth/login">Try Again</Link>
+      <CardContent className="flex flex-col gap-2">
+        {codeHref && (
+          <Button asChild className="min-h-11">
+            <Link href={codeHref}>Enter the code from the email</Link>
+          </Button>
+        )}
+        <Button asChild variant={codeHref ? "outline" : "default"} className="min-h-11">
+          <Link href={loginHref}>{codeHref ? "Send a new email" : "Try Again"}</Link>
         </Button>
       </CardContent>
     </Card>

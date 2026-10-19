@@ -12,6 +12,13 @@
  *   then arrived, it was dead. Earlier links now stay valid until they expire.
  * - "Dave@example.com" (a phone's autocapitalisation) and "dave@example.com"
  *   were different people to the database.
+ * - Corporate mail scanners (Defender Safe Links, Mimecast, Proofpoint) open
+ *   every link in a real browser that runs JavaScript, before the recipient
+ *   sees the message. A link that signed in on first open was spent by the
+ *   scanner, and because the code and link were one login, the code died with
+ *   it. Now the browser that asked for the email is recognised and always let
+ *   through, any other browser must press a button, a link tolerates a few
+ *   stray opens, and the code is spent only by typing it.
  */
 
 export const DEFAULT_MAGIC_LINK_MINUTES = 30;
@@ -20,6 +27,23 @@ const MAX_MAGIC_LINK_MINUTES = 24 * 60;
 
 /** How many unused sign-in links one address may hold at once. */
 export const MAX_ACTIVE_LINKS_PER_EMAIL = 5;
+
+/**
+ * How many browsers other than the one that asked may sign in with one link.
+ * One would be "one-time", and one is exactly what a scanner uses up. A few
+ * leaves the person's own click working after a scanner (or two: some
+ * gateways open a link from more than one sandbox) got there first. The
+ * browser that requested the email is not counted against this at all.
+ */
+export const MAX_LINK_USES = 3;
+
+/**
+ * Cookie set on the browser that requests a sign-in email, holding a random
+ * secret whose hash is stored on the link. A scanner never has it, so its
+ * presence is what tells "the person, back in the browser they asked from"
+ * apart from everything else that opens the link.
+ */
+export const SIGN_IN_BROWSER_COOKIE = "brain_signin_browser";
 
 /**
  * Lifetime of a sign-in link in minutes, from `MAGIC_LINK_EXPIRY_MINUTES`.
@@ -70,7 +94,7 @@ export function parseStoredTimestamp(raw: string | null | undefined): Date | nul
 export type MagicLinkFailure =
   /** No such link, or it was issued to another address. */
   | "invalid"
-  /** The link worked once already. */
+  /** The link has been used by as many other browsers as it allows. */
   | "used"
   /** The link outlived its lifetime. */
   | "expired"
@@ -80,24 +104,34 @@ export type MagicLinkFailure =
 export interface StoredMagicLink {
   email: string;
   expires_at: string;
+  /** Set once `link_uses` reaches `MAX_LINK_USES` (or, on rows from before that column, after one use). */
   used: number | boolean | null;
+  link_uses?: number | null;
 }
 
 /**
  * Why a stored link can or cannot be used right now. Order matters: a link
  * for another address is "invalid" whatever its state, so this cannot be used
  * to learn anything about someone else's link.
+ *
+ * `sameBrowser` means the request carries the secret of the browser that
+ * asked for this link. That browser is never refused for use: whatever a
+ * scanner did to the link, the person can still finish where they started.
  */
 export function assessMagicLink(
   link: StoredMagicLink | null,
   email: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  { sameBrowser = false }: { sameBrowser?: boolean } = {}
 ): { ok: true } | { ok: false; reason: Exclude<MagicLinkFailure, "not_allowed"> } {
   if (!link) return { ok: false, reason: "invalid" };
   if (normalizeEmail(link.email) !== normalizeEmail(email)) return { ok: false, reason: "invalid" };
-  if (link.used === true || link.used === 1) return { ok: false, reason: "used" };
   const expiresAt = parseStoredTimestamp(link.expires_at);
   if (!expiresAt || expiresAt.getTime() <= now.getTime()) return { ok: false, reason: "expired" };
+  if (!sameBrowser) {
+    const spent = link.used === true || link.used === 1 || Number(link.link_uses ?? 0) >= MAX_LINK_USES;
+    if (spent) return { ok: false, reason: "used" };
+  }
   return { ok: true };
 }
 
@@ -135,7 +169,7 @@ export type SignInCodeFailure =
   | "wrong_code"
   /** Too many wrong codes; the email's link still works. */
   | "locked"
-  /** No live code for this address: expired, already used, or never sent. */
+  /** No live code for this address: expired, already typed once, or never sent. */
   | "expired"
   /** The code was right, but this server does not create accounts for that address. */
   | "not_allowed";
