@@ -488,13 +488,35 @@ export default function NoteDetailPage() {
                 <span className="hidden sm:inline">{isSaving ? "Saving..." : "Save"}</span>
               </Button>
             )}
+            {/* In the header, not only the menu: the menu lists every project
+                inline on a phone, which pushed Share off the bottom of it. */}
+            {isOwner && (
+              <Button
+                variant="outline"
+                onClick={() => setShowShareDialog(true)}
+                className="min-h-11 min-w-11 md:min-h-9 px-3"
+                aria-label="Share note"
+              >
+                <Share2 className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">Share</span>
+              </Button>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" className="min-h-11 min-w-11 md:min-h-9 md:min-w-9">
+                <Button variant="outline" size="icon" className="min-h-11 min-w-11 md:min-h-9 md:min-w-9" aria-label="More actions">
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {isOwner && (
+                  <>
+                    <DropdownMenuItem onClick={() => setShowShareDialog(true)}>
+                      <Share2 className="h-4 w-4 mr-2" />
+                      Share
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 {/* Owner-only: every action below is served by an owner-only
                     endpoint, so offering them to a project editor or a share
                     recipient only produced errors. */}
@@ -606,12 +628,6 @@ export default function NoteDetailPage() {
                       {note.is_archived ? "Unarchive" : "Archive"}
                     </DropdownMenuItem>
                   </>
-                )}
-                {isOwner && (
-                  <DropdownMenuItem onClick={() => setShowShareDialog(true)}>
-                    <Share2 className="h-4 w-4 mr-2" />
-                    Share
-                  </DropdownMenuItem>
                 )}
                 {sharedBy && (
                   <DropdownMenuItem onClick={() => leaveSharedNote()}>
@@ -750,6 +766,7 @@ export default function NoteDetailPage() {
       <ShareDialog
         noteId={note.id}
         slug={slug}
+        title={note.title}
         open={showShareDialog}
         onOpenChange={setShowShareDialog}
       />

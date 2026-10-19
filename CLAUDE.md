@@ -377,6 +377,22 @@ Code: `src/lib/sharing/` (`types.ts` imports nothing; `access.ts`, `store.ts`,
   never published. In-app recipients see the note as the owner does.
 - **Toggling a public link leaves `updated_at` alone**, so sharing an old note
   no longer moves it to the top of the stream.
+- **Share is visible wherever a note is.** `ShareNoteButton` (icon, opens
+  `ShareDialog`) sits in the note page header, on each own note in the Notes
+  list and a project's notes, in the stream card menu and the stream detail
+  panel. It used to live only at the bottom of the note page's overflow menu,
+  under the inline project list, which on a phone put it off-screen. Render
+  it *beside* a row's link, never inside: React events bubble through the
+  dialog's portal, so a tap in the dialog would navigate the row.
+- **Lists say whose note it is.** `GET /api/notes` and `GET /api/projects/[id]`
+  return `is_owner`; only owners get the button (the API is owner-only
+  anyway). A collaborator's note is linked by id, since slugs are unique only
+  per author, and `GET /api/notes` nulls its `share_token`.
+- **The dialog fits a phone**: capped to `100dvh` and scrollable, 44px
+  targets, a labelled Share button, an inline check for a mistyped address,
+  **Send link…** through the native share sheet where there is one, Undo
+  after removing a person, and a confirmation before **New link** or
+  **Turn off** breaks a link someone was already given.
 
 ### "Share this with my work account" (MCP)
 

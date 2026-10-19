@@ -34,9 +34,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const [notes, tasks] = await Promise.all([
       queryAll<Note>(
-        `SELECT id, title, slug, note_type, word_count, is_pinned, created_at, updated_at
+        // is_owner: only the note's own author may share it onward.
+        `SELECT id, title, slug, note_type, word_count, is_pinned, created_at, updated_at,
+                (user_id = ?) AS is_owner
          FROM notes WHERE project_id = ? ORDER BY is_pinned DESC, updated_at DESC LIMIT 20`,
-        [projectId]
+        [user.id, projectId]
       ),
       queryAll<Task>(
         `SELECT * FROM tasks WHERE project_id = ? ORDER BY

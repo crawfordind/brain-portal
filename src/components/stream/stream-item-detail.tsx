@@ -25,6 +25,7 @@ import {
   Loader2,
   AlertCircle,
   Send,
+  Share2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +35,7 @@ import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import type { StreamItemType } from "@/lib/stream/types";
 import { SendToAgentLabel } from "@/components/agents/send-to-agent-label";
+import { ShareDialog } from "@/components/notes/share-dialog";
 
 const TYPE_CONFIG: Record<
   StreamItemType,
@@ -78,6 +80,7 @@ export function StreamItemDetail() {
   const [isCompleting, setIsCompleting] = useState(false);
   const { askAbout } = useAskAbout();
   const { sendToAgent } = useSendToAgent();
+  const [shareOpen, setShareOpen] = useState(false);
 
   const fetchItem = useCallback(async (id: string) => {
     setIsLoading(true);
@@ -385,6 +388,18 @@ export function StreamItemDetail() {
                     <SendToAgentLabel />
                   </Button>
                 )}
+                {/* Stream notes and journal entries are always the viewer's own, so they can be shared. */}
+                {(item.type === "note" || item.type === "journal") && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs flex-1 min-w-[100px]"
+                    onClick={() => setShareOpen(true)}
+                  >
+                    <Share2 className="h-3.5 w-3.5 mr-1.5" />
+                    Share
+                  </Button>
+                )}
                 <Button variant="outline" size="sm" className="text-xs flex-1 min-w-[100px]" onClick={handleOpenFull}>
                   <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
                   Open full
@@ -404,6 +419,9 @@ export function StreamItemDetail() {
                   Archive
                 </Button>
               </div>
+              {(item.type === "note" || item.type === "journal") && (
+                <ShareDialog noteId={item.id} title={item.title} open={shareOpen} onOpenChange={setShareOpen} />
+              )}
             </>
           )}
 
