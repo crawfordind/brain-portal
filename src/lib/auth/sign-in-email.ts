@@ -43,7 +43,7 @@ export function renderSignInEmail({ url, code, lifetime }: SignInEmailInput): {
               Sign In
             </a>
             <p style="color: #666; font-size: 14px; margin-top: 8px;">
-              ${shown ? "The code and the link" : "This link"} work once and expire in ${escapeHtml(lifetime)}. If you asked for more than one email, any of them will work.
+              ${shown ? "The code and the link" : "This link"} expire in ${escapeHtml(lifetime)}. If you asked for more than one email, any of them will work.${shown ? " If the link says it was already used (some work email checks links first), type the code instead." : ""}
             </p>
             <p style="color: #666; font-size: 14px;">
               If you didn&apos;t request this email, you can safely ignore it. Never share this code with anyone.
@@ -60,7 +60,8 @@ export function renderSignInEmail({ url, code, lifetime }: SignInEmailInput): {
     "",
     ...(shown ? [`Your sign-in code: ${shown}`, "Enter it on the sign-in screen, on any device.", "", `Or open this link on this device: ${url}`] : [`Click this link to sign in: ${url}`]),
     "",
-    `${shown ? "The code and the link" : "This link"} work once and expire in ${lifetime}.`,
+    `${shown ? "The code and the link" : "This link"} expire in ${lifetime}.`,
+    ...(shown ? ["If the link says it was already used (some work email checks links first), type the code instead."] : []),
     "",
     "If you didn't request this email, you can safely ignore it. Never share this code with anyone.",
   ].join("\n");

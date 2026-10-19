@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS magic_links (
   used BOOLEAN DEFAULT FALSE,
   code_hash TEXT,
   code_attempts INTEGER DEFAULT 0,
+  code_used INTEGER DEFAULT 0,
+  link_uses INTEGER DEFAULT 0,
+  browser_hash TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -987,6 +990,9 @@ export interface MagicLink {
   used: boolean;
   code_hash?: string | null;
   code_attempts?: number | null;
+  code_used?: number | boolean | null;
+  link_uses?: number | null;
+  browser_hash?: string | null;
   created_at: string;
 }
 

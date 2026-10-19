@@ -433,10 +433,27 @@ A sign-in link used to fail before the user reached it in four ways. Code:
 
 - **GET never spends a link.** Mail scanners (Safe Links, Defender, corporate
   gateways) fetch every URL in a message first, and a GET used to sign in, so
-  the user's own click hit "already used". `/auth/verify` renders a form that a
-  real browser auto-posts to `POST /api/auth/verify`; `GET /api/auth/verify`
-  only redirects back to that page. Same trade-off as email actions: a scanner
-  that runs JavaScript could still post.
+  the user's own click hit "already used". `/auth/verify` renders a form that
+  posts to `POST /api/auth/verify`; `GET /api/auth/verify` only redirects back
+  to that page.
+- **Scanners that run JavaScript cannot lock the user out.** Corporate
+  gateways open links in a real browser, so a page that auto-posted for
+  anyone signed the *scanner* in. Four rules, together:
+  1. *The browser that asked is recognised.* `POST /api/auth/login` sets an
+     httpOnly `brain_signin_browser` cookie (a random secret, reused across
+     requests, lifetime = link lifetime); its hash is `magic_links.browser_hash`.
+     That browser is let in for as long as the link lives, however many times
+     anything else used it.
+  2. *Only that browser auto-posts.* Any other browser gets a **Sign in**
+     button and a pointer to the code (`AutoSubmitSignIn`'s `auto`).
+  3. *A link tolerates a few stray opens.* Other browsers get `MAX_LINK_USES`
+     (3) between them (`link_uses`, charged atomically), so the user's click on
+     another device works after a scanner's.
+  4. *The code is spent only by typing it* (`code_used`). Opening the link
+     never touches it, and a used-up link is not pruned while its code lives.
+     The "already used" page offers **Enter the code from the email**
+     (`/auth/login?email=…&step=code`); the login form has "I already have a
+     code" too.
 - **Asking again doesn't cancel the first link.** `createMagicLink` deletes only
   spent or expired links, plus the oldest beyond 5 per address. It used to
   delete them all, so "send again" while the first email was queued killed it.
@@ -459,11 +476,12 @@ A sign-in link used to fail before the user reached it in four ways. Code:
   clear. Each guess is charged *before* it is compared (`UPDATE … SET
   code_attempts = code_attempts + 1 … RETURNING`), so parallel guesses cannot
   get extra tries; after 5 wrong codes that code stops working but its link
-  does not, so a guesser cannot lock the owner out. Code and link are one
-  login: spending either spends both. Project invites (`createMagicLink`) get
-  no code, since they live for days. A database without the column (migration
-  not run) still sends link-only emails rather than failing sign-in. Columns
-  are added by `npm run db:migrate`.
+  does not, so a guesser cannot lock the owner out. Project invites
+  (`createMagicLink`) get no code, since they live for days. A database
+  missing the newer columns (migration not run) falls back step by step (no
+  scanner columns: one-use link, code and link as one login; no code column:
+  link-only emails) rather than failing sign-in. Columns are added by
+  `npm run db:migrate`.
 - **Rate limits have buckets** (`checkRateLimit({ bucket })`). The key used to be
   the IP alone, so chat, link requests and link clicks shared one counter.
 

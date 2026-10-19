@@ -6,10 +6,13 @@ import {
   normalizeEmail,
   parseStoredTimestamp,
   DEFAULT_MAGIC_LINK_MINUTES,
+  MAX_LINK_USES,
 } from "@/lib/auth/magic-link";
 
 const NOW = new Date("2026-10-13T12:00:00.000Z");
-const link = (overrides: Partial<{ email: string; expires_at: string; used: number | boolean }> = {}) => ({
+const link = (
+  overrides: Partial<{ email: string; expires_at: string; used: number | boolean; link_uses: number }> = {}
+) => ({
   email: "owner@example.com",
   expires_at: "2026-10-13T12:10:00.000Z",
   used: 0,
@@ -68,6 +71,27 @@ describe("assessMagicLink", () => {
   it("names a spent link as used", () => {
     expect(assessMagicLink(link({ used: 1 }), "owner@example.com", NOW)).toEqual({ ok: false, reason: "used" });
     expect(assessMagicLink(link({ used: true }), "owner@example.com", NOW)).toEqual({ ok: false, reason: "used" });
+  });
+
+  it("tolerates a few opens from other browsers, so a scanner cannot use a link up alone", () => {
+    expect(assessMagicLink(link({ link_uses: MAX_LINK_USES - 1 }), "owner@example.com", NOW)).toEqual({ ok: true });
+    expect(assessMagicLink(link({ link_uses: MAX_LINK_USES }), "owner@example.com", NOW)).toEqual({
+      ok: false,
+      reason: "used",
+    });
+  });
+
+  it("always lets in the browser that asked for the link, while it lives", () => {
+    const spent = link({ used: 1, link_uses: MAX_LINK_USES });
+    expect(assessMagicLink(spent, "owner@example.com", NOW, { sameBrowser: true })).toEqual({ ok: true });
+    // …but never past its lifetime, and never for another address.
+    expect(
+      assessMagicLink(link({ expires_at: "2026-10-13T11:00:00.000Z" }), "owner@example.com", NOW, { sameBrowser: true })
+    ).toEqual({ ok: false, reason: "expired" });
+    expect(assessMagicLink(spent, "someone@example.com", NOW, { sameBrowser: true })).toEqual({
+      ok: false,
+      reason: "invalid",
+    });
   });
 
   it("expires by time, not by text comparison", () => {

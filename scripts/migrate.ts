@@ -64,6 +64,9 @@ async function migrate() {
       used INTEGER DEFAULT 0,
       code_hash TEXT,
       code_attempts INTEGER DEFAULT 0,
+      code_used INTEGER DEFAULT 0,
+      link_uses INTEGER DEFAULT 0,
+      browser_hash TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     )`,
 
@@ -939,6 +942,14 @@ async function migrate() {
     // Sign-in codes: typed on whichever device is signing in.
     `ALTER TABLE magic_links ADD COLUMN code_hash TEXT`,
     `ALTER TABLE magic_links ADD COLUMN code_attempts INTEGER DEFAULT 0`,
+    // Scanner-proof sign-in: the code is spent on its own, a link tolerates a
+    // few stray opens, and the browser that asked is recognised.
+    `ALTER TABLE magic_links ADD COLUMN code_used INTEGER DEFAULT 0`,
+    `ALTER TABLE magic_links ADD COLUMN link_uses INTEGER DEFAULT 0`,
+    `ALTER TABLE magic_links ADD COLUMN browser_hash TEXT`,
+    // Before code_used, `used` meant the code and link were both spent. Only
+    // such rows have used set with no link_uses, so this is safe every run.
+    `UPDATE magic_links SET code_used = 1 WHERE used = 1 AND COALESCE(link_uses, 0) = 0 AND COALESCE(code_used, 0) = 0`,
     // Add new columns to notes table
     `ALTER TABLE notes ADD COLUMN summary TEXT`,
     `ALTER TABLE notes ADD COLUMN auto_tags TEXT DEFAULT '[]'`,
