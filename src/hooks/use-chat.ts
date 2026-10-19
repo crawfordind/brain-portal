@@ -109,7 +109,12 @@ export function useChat() {
         setError(message);
         setStreaming(false);
         // Remove the streaming placeholder on error
-        finalizeStreamingMessage(`error-${Date.now()}`, "Sorry, something went wrong. Please try again.");
+        // A key problem is something the person can fix, so say what it is.
+        const actionable = /Settings → AI provider/.test(message);
+        finalizeStreamingMessage(
+          `error-${Date.now()}`,
+          actionable ? message : "Sorry, something went wrong. Please try again."
+        );
       }
     },
     [

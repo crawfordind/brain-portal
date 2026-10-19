@@ -17,6 +17,8 @@
 /** Stable, reportable identifiers. Safe to quote in a bug report. */
 export type DiagnosisCode =
   | "AI_KEY_MISSING"
+  | "AI_USER_KEY_NEEDED"
+  | "AI_USER_KEY_REJECTED"
   | "AI_KEY_INVALID"
   | "AI_QUOTA_EXHAUSTED"
   | "AI_RATE_LIMITED"
@@ -68,6 +70,10 @@ const RULES: Rule[] = [
   { code: "HERMES_UNREACHABLE", match: /Hermes agent (could not be reached|unreachable|did not answer|rejected Brain Portal's credentials)|Hermes server returned|connection to the Hermes agent dropped/i },
   { code: "AGENT_RUN_FAILED", match: /^The agent\b|Hermes gateway shut down|no longer has a record of this run/i },
   { code: "AGENT_NOT_CONFIGURED", match: /agent (config|configuration) not found|no agent_configs|unknown agent type/i },
+  // A personal key the provider refused, or that can no longer be decrypted:
+  // the user fixes this one themselves. Before the generic 401 rule.
+  { code: "AI_USER_KEY_REJECTED", match: /rejected your API key|saved AI key can no longer be read/i },
+  { code: "AI_USER_KEY_NEEDED", match: /Settings → AI provider|needs an OpenRouter or OpenAI key/i },
   { code: "AI_KEY_MISSING", match: /no auth credentials|api key.*(not|missing|unset|undefined)|missing api key|apikey.*required|OPENROUTER_API_KEY/i },
   { code: "AI_KEY_INVALID", match: /\b401\b|unauthorized|invalid api key|authentication (failed|error)|user not found/i },
   { code: "AI_QUOTA_EXHAUSTED", match: /\b402\b|insufficient (credits|funds|balance|quota)|payment required|billing|quota exceeded|out of credits/i },
@@ -88,6 +94,24 @@ const CATALOG: Record<DiagnosisCode, Omit<Diagnosis, "code">> = {
     explanation:
       "The server has no API key for the AI provider, so no agent, insight, or embedding work can run. Nothing you do in the app will fix this.",
     adminHint: "Set OPENROUTER_API_KEY in the deployment environment and redeploy.",
+    userRetryable: false,
+    severity: "error",
+  },
+  AI_USER_KEY_NEEDED: {
+    title: "Add your AI provider key",
+    explanation:
+      "AI features on this account run on your own API key, and there isn't one that can do this job yet. Add an OpenRouter, OpenAI or Claude key in Settings → AI provider.",
+    adminHint:
+      "The account has no usable personal key. With AI_KEY_POLICY=user_or_server (the default) the server's OPENROUTER_API_KEY would cover it; with user_only, each account must add its own.",
+    userRetryable: false,
+    severity: "error",
+  },
+  AI_USER_KEY_REJECTED: {
+    title: "Your AI provider key isn't working",
+    explanation:
+      "The provider refused the API key saved on this account, or it can no longer be read. Replace it in Settings → AI provider; until then, AI work on this account will fail.",
+    adminHint:
+      "A personal key in user_ai_keys was rejected (401) or could not be decrypted. Decryption fails when AI_KEY_ENCRYPTION_SECRET (or SESSION_SECRET, if that is unset) changed since the key was saved.",
     userRetryable: false,
     severity: "error",
   },

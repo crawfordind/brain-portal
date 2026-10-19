@@ -15,8 +15,13 @@ describe("getRuntimeConfig: choosing a runtime", () => {
     expect(c).toMatchObject({ runtime: "openrouter", state: "ready", hermes: null });
   });
 
-  it("reports OpenRouter as misconfigured, not silently ready, without a key", () => {
-    const c = getRuntimeConfig({});
+  it("is ready without a server key, because each account may bring its own", () => {
+    expect(getRuntimeConfig({})).toMatchObject({ runtime: "openrouter", state: "ready" });
+    expect(getRuntimeConfig({ AI_KEY_POLICY: "user_only" })).toMatchObject({ state: "ready" });
+  });
+
+  it("reports OpenRouter as misconfigured, not silently ready, when only the server key could pay and it is missing", () => {
+    const c = getRuntimeConfig({ AI_KEY_POLICY: "server_only" });
     expect(c.state).toBe("misconfigured");
     expect(c.reason).toMatch(/OPENROUTER_API_KEY is not set/);
   });

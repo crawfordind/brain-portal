@@ -2,7 +2,26 @@ import OpenAI from "openai";
 import { computeInsightConfidence } from "./insight-confidence";
 import { AUTO_ROUTER_MODEL, type ModelSlot } from "./models/slots";
 import { getAppUrl } from "@/lib/app-url";
+import { claudeComplete, claudeStream } from "./anthropic";
+import { anthropicClient, openAiCompatibleClient } from "./transport";
+import { claudeEffortForSlot, directModelChain } from "./models/providers";
+import { directModelIds } from "./models/direct-catalog";
+import {
+  directProviderModelChoices,
+  isAuthError,
+  noteKeyRejected,
+  resolveAiCredential,
+  type ResolvedCredential,
+} from "./credentials/resolve";
+import { PROVIDER_INFO, type AiProvider } from "./credentials/types";
 
+// The server's own OpenRouter client (OPENROUTER_API_KEY).
+//
+// Prefer `completeMessages` / `completeWithMeta` / `streamComplete` with a
+// `userId`: those use the account's own key when it has one (see
+// `credentials/`). This export remains for scripts and for work that belongs
+// to no account.
+//
 // OpenRouter uses the OpenAI-compatible API.
 //
 // Constructed lazily, for the same reason `src/lib/db/client.ts` is: the SDK
@@ -61,43 +80,60 @@ export async function streamComplete(
     models?: string[];
     maxTokens?: number;
     temperature?: number;
+    /** The account chatting; their own key pays when they have one. */
+    userId?: string | null;
   } = {}
 ): Promise<ReadableStream<Uint8Array>> {
   const { maxTokens = 4096, temperature = 0.7 } = options;
   const encoder = new TextEncoder();
 
-  // A stream can't be restarted once bytes are flowing, so the fallback here is
-  // OpenRouter's server-side `models` failover rather than a client-side walk.
-  const chain =
-    options.models && options.models.length > 0
-      ? options.models
-      : [options.model || DEFAULT_MODEL];
+  // Resolved before the stream opens, so "no key" is a clear error to the
+  // route rather than an SSE error frame after a 200.
+  const target = await resolveChatTarget(
+    { model: options.model, models: options.models, userId: options.userId },
+    "chat"
+  );
+  const chain = target.chain;
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
+      const send = (content: string) =>
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`));
       try {
-        const stream = await openrouter.chat.completions.create({
-          model: chain[0],
-          ...(wireFallbackModels(chain) ? { models: wireFallbackModels(chain) } : {}),
-          messages,
-          max_tokens: maxTokens,
-          temperature,
-          stream: true,
-        });
+        // A stream can't be restarted once bytes are flowing, so the fallback
+        // here is OpenRouter's server-side `models` failover rather than a
+        // client-side walk.
+        if (target.credential.provider === "anthropic") {
+          for await (const text of claudeStream(anthropicClient(target.credential), {
+            model: chain[0],
+            messages,
+            maxTokens,
+            effort: claudeEffortForSlot("chat"),
+          })) {
+            send(text);
+          }
+        } else {
+          const stream = await openAiCompatibleClient(target.credential).chat.completions.create({
+            model: chain[0],
+            messages,
+            ...openAiRequestOptions(target.credential.provider, chain[0], maxTokens, temperature),
+            ...(target.credential.provider === "openrouter" && wireFallbackModels(chain)
+              ? { models: wireFallbackModels(chain) }
+              : {}),
+            stream: true,
+          } as OpenAI.ChatCompletionCreateParamsStreaming);
 
-        for await (const chunk of stream) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ content })}\n\n`)
-            );
+          for await (const chunk of stream) {
+            const content = chunk.choices[0]?.delta?.content;
+            if (content) send(content);
           }
         }
 
         controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
         controller.close();
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Stream failed";
+        await handleAuthFailure(target.credential, error);
+        const message = describeProviderError(target.credential, error);
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`)
         );
@@ -105,6 +141,40 @@ export async function streamComplete(
       }
     },
   });
+}
+
+/**
+ * Request options that differ by provider. OpenAI's reasoning models (gpt-5,
+ * o-series) reject `max_tokens` and any non-default `temperature`, and spend
+ * hidden reasoning tokens from the same budget, so they get
+ * `max_completion_tokens` with a floor, and no temperature.
+ */
+export function openAiRequestOptions(
+  provider: AiProvider,
+  model: string,
+  maxTokens: number,
+  temperature: number
+): Record<string, unknown> {
+  if (provider === "openai" && /^(gpt-5|o\d)/.test(model)) {
+    return { max_completion_tokens: Math.max(maxTokens, 16000) };
+  }
+  if (provider === "openai") return { max_completion_tokens: maxTokens, temperature };
+  return { max_tokens: maxTokens, temperature };
+}
+
+/** Record a rejected personal key, so Settings can say which one and why. */
+async function handleAuthFailure(credential: ResolvedCredential, error: unknown): Promise<void> {
+  if (!isAuthError(error)) return;
+  await noteKeyRejected(credential, error instanceof Error ? error.message : String(error));
+}
+
+/** An error message that says whose key failed, when it was the person's own. */
+function describeProviderError(credential: ResolvedCredential, error: unknown): string {
+  const raw = error instanceof Error ? error.message : "Request failed";
+  if (credential.source === "user" && isAuthError(error)) {
+    return `${PROVIDER_INFO[credential.provider].label} rejected your API key. Update it in Settings → AI provider.`;
+  }
+  return raw;
 }
 
 export interface CompletionOptions {
@@ -213,7 +283,7 @@ export function isModelUnavailableError(error: unknown): boolean {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Build the ordered list of models to attempt.
+ * Build the ordered list of models to attempt on OpenRouter.
  *
  * Kept separate from the request loop so the precedence rules are readable and
  * testable: an explicit chain wins, then an explicit id, then a slot (which
@@ -248,6 +318,43 @@ async function buildModelChain(options: CompletionOptions): Promise<string[]> {
   return chain.length > 0 ? chain : [DEFAULT_MODEL];
 }
 
+interface ChatTarget {
+  credential: ResolvedCredential;
+  chain: string[];
+  /** The job, for Claude's effort setting. */
+  slot: ModelSlot;
+}
+
+/**
+ * Whose key, and which models. An OpenRouter key (the person's or the
+ * server's) keeps the live-catalog chain above. A direct OpenAI or Anthropic
+ * key gets that provider's own models: an OpenRouter-style id the caller
+ * pinned ("vendor/model") means nothing there and is passed over for the slot.
+ */
+async function resolveChatTarget(
+  options: Pick<CompletionOptions, "model" | "models" | "slot" | "userId" | "allowAutoFallback">,
+  capability: "chat" | "vision"
+): Promise<ChatTarget> {
+  const credential = await resolveAiCredential(capability, { userId: options.userId });
+  const slot: ModelSlot = options.slot ?? (capability === "vision" ? "vision" : "fast");
+
+  if (credential.provider === "openrouter") {
+    return { credential, chain: await buildModelChain(options), slot };
+  }
+
+  const provider = credential.provider;
+  const [userChoices, availableIds] = await Promise.all([
+    directProviderModelChoices(credential.userId, provider),
+    directModelIds(provider, credential.apiKey),
+  ]);
+  const pinned = options.models?.[0] ?? options.model ?? null;
+  return {
+    credential,
+    chain: directModelChain({ provider, slot, userChoice: userChoices[slot], pinned, availableIds }),
+    slot,
+  };
+}
+
 /**
  * Completion helper that surfaces provider metadata alongside the text.
  *
@@ -262,23 +369,35 @@ export async function completeWithMeta(
   prompt: string,
   options: CompletionOptions = {}
 ): Promise<CompletionResult> {
+  const messages: OpenAI.ChatCompletionMessageParam[] = [];
+
+  if (options.system) {
+    messages.push({ role: "system", content: options.system });
+  }
+
+  messages.push({ role: "user", content: prompt });
+
+  return completeMessages(messages, options);
+}
+
+/**
+ * The request loop behind every non-streaming completion, for callers that
+ * build their own messages (images, multi-turn). `capability: "vision"`
+ * makes sure the key chosen can read images.
+ */
+export async function completeMessages(
+  messages: OpenAI.ChatCompletionMessageParam[],
+  options: CompletionOptions & { capability?: "chat" | "vision" } = {}
+): Promise<CompletionResult> {
   const {
-    system,
     maxTokens = 2048,
     temperature = 0.7,
     retries = 0,
     retryDelayMs = 1000,
   } = options;
 
-  const messages: OpenAI.ChatCompletionMessageParam[] = [];
-
-  if (system) {
-    messages.push({ role: "system", content: system });
-  }
-
-  messages.push({ role: "user", content: prompt });
-
-  const chain = await buildModelChain(options);
+  const target = await resolveChatTarget(options, options.capability ?? "chat");
+  const { credential, chain } = target;
   const skippedModels: string[] = [];
   let lastError: unknown;
 
@@ -290,17 +409,28 @@ export async function completeWithMeta(
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const response = await openrouter.chat.completions.create({
+        if (credential.provider === "anthropic") {
+          const result = await claudeComplete(anthropicClient(credential), {
+            model,
+            messages,
+            maxTokens,
+            effort: claudeEffortForSlot(target.slot),
+          });
+          return { ...result, ...(skippedModels.length > 0 ? { skippedModels } : {}) };
+        }
+
+        const response = await openAiCompatibleClient(credential).chat.completions.create({
           model,
           messages,
-          max_tokens: maxTokens,
-          temperature,
+          ...openAiRequestOptions(credential.provider, model, maxTokens, temperature),
           // OpenRouter-specific: hand it the next few models so it can fail
           // over server-side, within this one request, when a provider is down
           // or rate-limited. Capped at the API's limit — our own loop still
           // walks the rest of the chain, and covers the case this doesn't:
           // an id that no longer exists at all.
-          ...(wireFallbackModels(remaining) ? { models: wireFallbackModels(remaining) } : {}),
+          ...(credential.provider === "openrouter" && wireFallbackModels(remaining)
+            ? { models: wireFallbackModels(remaining) }
+            : {}),
         } as OpenAI.ChatCompletionCreateParamsNonStreaming);
 
         // OpenRouter can answer HTTP 200 with an error envelope and no choices.
@@ -324,6 +454,18 @@ export async function completeWithMeta(
         };
       } catch (error) {
         lastError = error;
+
+        // A personal key the provider won't accept fails the call, says so,
+        // and is marked in Settings. It never quietly becomes the server's key.
+        if (isAuthError(error)) {
+          await handleAuthFailure(credential, error);
+          if (credential.source === "user") {
+            const wrapped = new Error(describeProviderError(credential, error)) as Error & { status?: number };
+            wrapped.status = 401;
+            throw wrapped;
+          }
+          throw error;
+        }
 
         // The one condition that earns a client-side hop: this id no longer
         // exists, so no number of retries and no amount of server-side routing
@@ -509,7 +651,7 @@ function formatInsightContext(context: InsightContext): string {
 // Generate insights from user's notes and captures
 export async function generateInsights(
   context: InsightContext,
-  options?: { guardrails?: string }
+  options?: { guardrails?: string; userId?: string | null }
 ): Promise<GeneratedInsight[]> {
   const { INSIGHT_SYSTEM_PROMPT, INSIGHT_GENERATION_PROMPT } = await import("./prompts");
 
@@ -539,6 +681,8 @@ export async function generateInsights(
 
   const response = await completeJSON<AIResponse>(prompt, {
     system: systemPrompt,
+    slot: "deep",
+    userId: options?.userId,
     maxTokens: 2048,
   });
 
@@ -601,7 +745,7 @@ interface WeeklyContext {
 // Generate weekly review content
 export async function generateWeeklyReview(
   context: WeeklyContext,
-  options?: { guardrails?: string }
+  options?: { guardrails?: string; userId?: string | null }
 ): Promise<string> {
   const { WEEKLY_REVIEW_SYSTEM_PROMPT, WEEKLY_REVIEW_PROMPT } = await import("./prompts");
 
@@ -659,6 +803,10 @@ export async function generateWeeklyReview(
   const review = await complete(prompt, {
     system: weeklySystemPrompt,
     model: MINIMAX_MODEL, // Complex synthesis benefits from M2.5's planning optimization
+    // On a direct OpenAI or Anthropic key the pinned id doesn't apply; the
+    // slot picks that provider's deep model.
+    slot: "deep",
+    userId: options?.userId,
     maxTokens: 2048,
     temperature: 0.6,
   });

@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
     const timeOfDay = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
 
     const classification = await classifyIntent(input.trim(), {
+      userId: user.id,
       activeProjects,
       recentItems,
       timeOfDay,

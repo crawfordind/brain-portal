@@ -166,7 +166,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate insights using AI
-    const aiInsights = await generateInsights(context, { guardrails });
+    const aiInsights = await generateInsights(context, { guardrails, userId: user.id });
 
     // ── Quality pipeline: embed → semantic dedup → diversity budget → rank ──
     // 1. Embed each candidate so we can suppress near-duplicates (the engine
@@ -176,7 +176,8 @@ export async function POST(request: NextRequest) {
         let embedding: number[] | undefined;
         try {
           embedding = await generateEmbedding(
-            `${insight.title}\n\n${insight.content}`
+            `${insight.title}\n\n${insight.content}`,
+            user.id
           );
         } catch {
           embedding = undefined; // dedup keeps un-embeddable candidates

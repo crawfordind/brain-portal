@@ -16,7 +16,10 @@
  * error message, so nothing ever surfaced it.
  */
 
-import { queryAll } from "@/lib/db/client";
+import { db, queryAll } from "@/lib/db/client";
+import { AiCredentialError, resolveAiCredential } from "@/lib/ai/credentials/resolve";
+import { listUserAiKeys } from "@/lib/ai/credentials/store";
+import { PROVIDER_INFO } from "@/lib/ai/credentials/types";
 import {
   diagnoseError,
   diagnosisFor,
@@ -358,28 +361,64 @@ async function checkSkills(userId: string): Promise<SystemIssue[]> {
   });
 }
 
+// ─── Probe: AI keys ──────────────────────────────────
+
+/**
+ * Can this account's AI work run at all, and on whose key? Asks the same
+ * resolver every model call uses, so the answer can't disagree with what
+ * actually happens. Reports the account's own rejected keys too.
+ */
+async function checkAiKeys(userId: string, now: string): Promise<SystemIssue[]> {
+  const issues: SystemIssue[] = [];
+  const issue = (code: "AI_KEY_MISSING" | "AI_USER_KEY_NEEDED" | "AI_USER_KEY_REJECTED", subject: string, raw = ""): SystemIssue => ({
+    signature: `config:${code}:${subject}`,
+    kind: "configuration",
+    subsystem: code === "AI_KEY_MISSING" ? "Server configuration" : "AI provider",
+    subject,
+    diagnosis: diagnosisFor(code),
+    rawError: raw,
+    occurredAt: now,
+    count: 1,
+  });
+
+  for (const capability of ["chat", "embedding"] as const) {
+    try {
+      await resolveAiCredential(capability, { userId });
+    } catch (error) {
+      if (!(error instanceof AiCredentialError)) continue;
+      const what = capability === "chat" ? "AI features" : "Search indexing";
+      if (error.code === "server_key_missing") issues.push(issue("AI_KEY_MISSING", "No AI provider key is set on the server"));
+      else if (error.code === "key_unreadable") issues.push(issue("AI_USER_KEY_REJECTED", "Your saved AI key can no longer be read", error.message));
+      else issues.push(issue("AI_USER_KEY_NEEDED", `${what} have no AI key to run on`, error.message));
+      // The chat answer already covers "no key at all"; don't say it twice.
+      if (capability === "chat") break;
+    }
+  }
+
+  try {
+    for (const key of await listUserAiKeys(db, userId)) {
+      if (key.status === "invalid") {
+        issues.push(issue("AI_USER_KEY_REJECTED", `${PROVIDER_INFO[key.provider].label} rejected your API key`, key.lastError ?? ""));
+      }
+    }
+  } catch {
+    // An optional table must not break the health endpoint.
+  }
+
+  return issues;
+}
+
 // ─── Probe: configuration ────────────────────────────
 
 /**
  * Catches the failures that never even produce an error row, because no work
  * can be attempted at all. Only ever reads presence of env vars — never values.
  */
-async function checkConfiguration(): Promise<SystemIssue[]> {
+async function checkConfiguration(userId: string): Promise<SystemIssue[]> {
   const issues: SystemIssue[] = [];
   const now = new Date().toISOString();
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    issues.push({
-      signature: "config:AI_KEY_MISSING",
-      kind: "configuration",
-      subsystem: "Server configuration",
-      subject: "No AI provider key is set on the server",
-      diagnosis: diagnosisFor("AI_KEY_MISSING"),
-      rawError: "",
-      occurredAt: now,
-      count: 1,
-    });
-  }
+  issues.push(...(await checkAiKeys(userId, now)));
 
   if (!process.env.CRON_SECRET && process.env.NODE_ENV === "production") {
     issues.push({
@@ -428,7 +467,7 @@ export async function getSystemHealth(userId: string): Promise<SystemHealth> {
       checkProcessingQueue(userId),
       checkHeartbeat(userId),
       checkSkills(userId),
-      checkConfiguration(),
+      checkConfiguration(userId),
     ]);
 
   // Configuration problems are the root cause of everything else, so they lead.

@@ -2,6 +2,7 @@ import { createClient } from "@libsql/client";
 import * as dotenv from "dotenv";
 import { applyAgentRuntimeMigration } from "../src/lib/agents/runtime/schema";
 import { applyNoteSharingMigration } from "../src/lib/sharing/schema";
+import { applyUserAiKeysMigration } from "../src/lib/ai/credentials/schema";
 
 dotenv.config({ path: ".env.local" });
 
@@ -1248,6 +1249,17 @@ async function migrate() {
   } catch (error: unknown) {
     errorCount++;
     console.error(`✗ Note sharing migration:`, (error as Error).message?.substring(0, 160));
+  }
+
+  // Personal AI provider keys (user_ai_keys). Additive; see
+  // src/lib/ai/credentials/schema.ts.
+  console.log("\nPersonal AI keys...");
+  try {
+    await applyUserAiKeysMigration(db, (m) => console.log(m));
+    successCount++;
+  } catch (error: unknown) {
+    errorCount++;
+    console.error(`✗ Personal AI keys migration:`, (error as Error).message?.substring(0, 160));
   }
 
   // Backfill existing tasks: content -> title

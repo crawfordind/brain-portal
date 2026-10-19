@@ -16,6 +16,7 @@
  */
 
 import type { RuntimeName } from "./types";
+import { parseAiKeyPolicy } from "@/lib/ai/credentials/types";
 
 export type RuntimeConfigState = "ready" | "disabled" | "misconfigured";
 
@@ -71,8 +72,15 @@ export function getRuntimeConfig(env: Env = process.env): RuntimeConfig {
       };
 
     case "openrouter":
-      if (!env.OPENROUTER_API_KEY?.trim()) {
-        return misconfigured("AGENT_RUNTIME is openrouter but OPENROUTER_API_KEY is not set.", "openrouter");
+      // Each account may bring its own AI key (OpenRouter, OpenAI or Claude),
+      // so a missing server key is only fatal when personal keys are off.
+      // An account with no usable key fails its own task, with a diagnosis
+      // that sends that person to Settings.
+      if (!env.OPENROUTER_API_KEY?.trim() && parseAiKeyPolicy(env.AI_KEY_POLICY) === "server_only") {
+        return misconfigured(
+          "AGENT_RUNTIME is openrouter, AI_KEY_POLICY is server_only, and OPENROUTER_API_KEY is not set.",
+          "openrouter"
+        );
       }
       return { ...base, runtime: "openrouter", state: "ready", reason: null };
 

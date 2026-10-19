@@ -558,6 +558,8 @@ const generateInsightsHandler: SkillHandler = async (params, context) => {
 
   const response = await completeJSON<InsightResponse>(prompt, {
     system: INSIGHT_SYSTEM_PROMPT,
+    slot: "deep",
+    userId: context.userId,
     maxTokens: 1500,
   });
 
@@ -809,6 +811,7 @@ const autoTriageCapturesHandler: SkillHandler = async (params, context) => {
   for (const capture of captures) {
     try {
       const classification = await classifyIntent(capture.content, {
+        userId: context.userId,
         activeProjects: activeProjects.map((p) => ({ slug: p.slug, name: p.name })),
         recentItems,
         timeOfDay,

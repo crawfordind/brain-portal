@@ -7,6 +7,7 @@
  */
 
 import { db, queryOne, queryAll } from "@/lib/db/client";
+import { runWithAiUser } from "@/lib/ai/credentials/context";
 import type { SkillExecution, SkillTriggerSource } from "@/lib/db/schema";
 import {
   getSkill,
@@ -125,7 +126,8 @@ export async function executeSkill(
       }
     }
 
-    const result: SkillResult = await skill.handler(paramsWithDefaults, context);
+    // Whatever the skill calls bills this account's own AI key, when it has one.
+    const result: SkillResult = await runWithAiUser(userId, () => skill.handler(paramsWithDefaults, context));
     const durationMs = Date.now() - startTime;
 
     // Mark completed

@@ -233,7 +233,7 @@ export async function ingestSourceEntities(params: {
   occurredAt?: string | null;
 }): Promise<IngestResult> {
   const combined = `${params.title ?? ""}\n\n${params.text ?? ""}`;
-  const extracted = await extractEntities(combined);
+  const extracted = await extractEntities(combined, params.userId);
   const { result } = await ingestExtractedEntities(params, extracted);
   return result;
 }

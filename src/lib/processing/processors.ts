@@ -14,6 +14,7 @@
  */
 
 import { db, queryOne } from "@/lib/db/client";
+import { runWithAiUser } from "@/lib/ai/credentials/context";
 
 export interface QueueJob {
   id: string;
@@ -70,7 +71,7 @@ async function processNoteEmbedding(job: QueueJob): Promise<void> {
   const note = await getNote(job.entity_id);
   const text = `${note.title}\n\n${note.content}`;
 
-  const embedding = await generateEmbedding(text);
+  const embedding = await generateEmbedding(text, job.user_id);
   await storeEmbedding(job.user_id, "note", job.entity_id, embedding, hashContent(text));
 }
 
@@ -190,6 +191,12 @@ async function processExtractInteractions(job: QueueJob): Promise<void> {
  * caller can record it against the job rather than losing the reason.
  */
 export async function runJob(job: QueueJob): Promise<void> {
+  // Everything this job calls is the job owner's work, paid by their own AI
+  // key when they have one; see credentials/context.ts.
+  return runWithAiUser(job.user_id, () => runJobForOwner(job));
+}
+
+async function runJobForOwner(job: QueueJob): Promise<void> {
   switch (job.operation) {
     case "generate_embedding":
       return processNoteEmbedding(job);

@@ -1,3 +1,4 @@
+import { AiCredentialError } from "@/lib/ai/credentials/resolve";
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { queryAll, queryOne, mutate } from "@/lib/db/client";
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest) {
     ];
 
     // Stream the response
-    const stream = await streamComplete(messages, { models: chatChain });
+    const stream = await streamComplete(messages, { models: chatChain, userId: user.id });
 
     // Collect the full response for persistence
     const [responseStream, persistStream] = stream.tee();
@@ -181,6 +182,10 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    // No usable key: say what to do, rather than a generic failure.
+    if (error instanceof AiCredentialError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 });
+    }
     console.error("[Chat API] Error:", error);
     return NextResponse.json({ error: "Failed to process chat message" }, { status: 500 });
   }

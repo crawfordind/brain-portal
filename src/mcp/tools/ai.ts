@@ -10,35 +10,11 @@ import { z } from "zod";
 import { query, queryOne } from "../db";
 import { errorResult, type ToolContext } from "../guard";
 
-// We use OpenRouter directly here since this runs outside Next.js
-import OpenAI from "openai";
-import { getAppUrl } from "@/lib/app-url";
-
-function getOpenRouter() {
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY is required for AI tools.");
-  }
-  return new OpenAI({
-    baseURL: "https://openrouter.ai/api/v1",
-    apiKey: process.env.OPENROUTER_API_KEY,
-    defaultHeaders: {
-      "HTTP-Referer": getAppUrl(),
-      "X-Title": "Brain Portal MCP",
-    },
-  });
-}
-
-const EMBEDDING_MODEL = "openai/text-embedding-3-small";
-const DEFAULT_MODEL = process.env.OPENROUTER_MODEL || "x-ai/grok-4.1-fast";
-
-async function generateEmbedding(text: string): Promise<number[]> {
-  const client = getOpenRouter();
-  const response = await client.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text.substring(0, 8191),
-  });
-  return response.data[0].embedding;
-}
+// The shared AI layer. It runs fine outside Next.js (it uses the same shared
+// database client as these tools), and it is what makes these tools spend the
+// key's owner's own AI key, when they have one, instead of the server's.
+import { generateEmbedding } from "@/lib/ai/embeddings";
+import { completeMessages } from "@/lib/ai/client";
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, normA = 0, normB = 0;
@@ -76,7 +52,7 @@ export function registerAITools(server: McpServer, ctx: ToolContext) {
       if (!guard.ok) return errorResult(guard);
       const userId = guard.userId;
 
-      const queryEmbedding = await generateEmbedding(params.query);
+      const queryEmbedding = await generateEmbedding(params.query, userId);
 
       const allEmbeddings = await query<{
         entity_id: string;
@@ -171,7 +147,6 @@ export function registerAITools(server: McpServer, ctx: ToolContext) {
       const guard = ctx.guard("ai:insights");
       if (!guard.ok) return errorResult(guard);
       const userId = guard.userId;
-      const client = getOpenRouter();
 
       // Gather context
       let notesCondition = "n.user_id = ? AND n.is_archived = FALSE";
@@ -230,9 +205,8 @@ export function registerAITools(server: McpServer, ctx: ToolContext) {
         })),
       };
 
-      const response = await client.chat.completions.create({
-        model: DEFAULT_MODEL,
-        messages: [
+      const response = await completeMessages(
+        [
           {
             role: "system",
             content:
@@ -243,11 +217,10 @@ export function registerAITools(server: McpServer, ctx: ToolContext) {
             content: `Analyze this content and generate insights:\n${JSON.stringify(context, null, 2)}\n\nRespond as JSON: { "insights": [{ "type": "connection|pattern|gap|action|question", "title": "...", "content": "...", "confidence": 0.0-1.0 }] }`,
           },
         ],
-        max_tokens: 2048,
-        temperature: 0.5,
-      });
+        { slot: "deep", userId, maxTokens: 2048, temperature: 0.5 }
+      );
 
-      const raw = response.choices[0]?.message?.content || "{}";
+      const raw = response.content || "{}";
       let insights;
       try {
         const jsonMatch = raw.match(/\{[\s\S]*\}|\[[\s\S]*\]/);

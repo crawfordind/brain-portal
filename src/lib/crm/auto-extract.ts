@@ -55,7 +55,7 @@ export async function extractContactsFromText(params: {
   const title = params.title?.trim() || "";
   const combined = title ? `${title}\n\n${params.text}` : params.text;
 
-  const knowledge = await extractKnowledge(combined, referenceDay);
+  const knowledge = await extractKnowledge(combined, referenceDay, userId);
   if (knowledge.entities.length === 0) return EMPTY;
 
   const { result, entityIdsByKey } = await ingestExtractedEntities(

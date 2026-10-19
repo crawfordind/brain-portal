@@ -80,6 +80,11 @@ export async function runOpenRouterTask(
   const options = {
     system,
     models,
+    // The owner's own key pays when they have one. With a direct OpenAI or
+    // Anthropic key the OpenRouter ids above don't apply, and the slot picks
+    // that provider's agent model instead.
+    userId: request.userId,
+    slot: "agent" as const,
     maxTokens,
     temperature: request.isRevision ? 0.4 : 0.7,
     retries: 2,

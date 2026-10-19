@@ -204,7 +204,7 @@ export async function scanForTasks(
   for (const candidate of candidatesToProcess) {
     try {
       // 4a. Generate embedding
-      const embedding = await generateEmbedding(candidate.text);
+      const embedding = await generateEmbedding(candidate.text, userId);
 
       // 4b. Check for duplicates
       const duplicateCheck = await isDuplicate(userId, candidate.text, embedding);
