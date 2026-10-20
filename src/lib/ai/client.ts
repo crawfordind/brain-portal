@@ -3,6 +3,9 @@ import { computeInsightConfidence } from "./insight-confidence";
 import { AUTO_ROUTER_MODEL, type ModelSlot } from "./models/slots";
 import { getAppUrl } from "@/lib/app-url";
 import { claudeComplete, claudeStream } from "./anthropic";
+import { shouldFallBack } from "./fallback";
+import { chatGptComplete, chatGptModelIds, chatGptStream, ChatGptPlanError } from "./chatgpt/responses";
+import { chooseChatGptModels } from "./chatgpt/types";
 import { anthropicClient, openAiCompatibleClient } from "./transport";
 import { claudeEffortForSlot, directModelChain } from "./models/providers";
 import { directModelIds } from "./models/direct-catalog";
@@ -10,7 +13,7 @@ import {
   directProviderModelChoices,
   isAuthError,
   noteKeyRejected,
-  resolveAiCredential,
+  resolveAiCredentialChain,
   type ResolvedCredential,
 } from "./credentials/resolve";
 import { PROVIDER_INFO, type AiProvider } from "./credentials/types";
@@ -94,94 +97,128 @@ export async function streamComplete(
 
   // Resolved before the stream opens, so "no key" is a clear error to the
   // route rather than an SSE error frame after a 200.
-  const target = await resolveChatTarget(
-    { model: options.model, models: options.models, userId: options.userId },
-    "chat"
-  );
-  const chain = target.chain;
-  const startedAt = Date.now();
-  const served: { model: string; usage: UsageTokens } = { model: chain[0], usage: { inputTokens: 0, outputTokens: 0 } };
-  const log = (status: "ok" | "error", error: string | null) =>
-    logUsage(target, {
-      kind: "stream",
-      model: served.model,
-      purpose: options.purpose || "Chat",
-      messages,
-      usage: served.usage,
-      status,
-      error,
-      startedAt,
-    });
+  const credentials = await resolveAiCredentialChain("chat", { userId: options.userId });
+  const targetOptions = { model: options.model, models: options.models, userId: options.userId };
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (content: string) =>
+      let sent = false;
+      const send = (content: string) => {
+        sent = true;
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`));
-      try {
-        // A stream can't be restarted once bytes are flowing, so the fallback
-        // here is OpenRouter's server-side `models` failover rather than a
-        // client-side walk.
-        if (target.credential.provider === "anthropic") {
-          for await (const text of claudeStream(anthropicClient(target.credential), {
-            model: chain[0],
-            messages,
-            maxTokens,
-            effort: claudeEffortForSlot("chat"),
-            onMeta: (meta) => {
-              if (meta.model) served.model = meta.model;
-              served.usage = meta.usage;
-            },
-          })) {
-            send(text);
-          }
-        } else {
-          const stream = await openAiCompatibleClient(target.credential).chat.completions.create({
-            model: chain[0],
-            messages,
-            ...openAiRequestOptions(target.credential.provider, chain[0], maxTokens, temperature),
-            ...(target.credential.provider === "openrouter" && wireFallbackModels(chain)
-              ? { models: wireFallbackModels(chain) }
-              : {}),
-            stream: true,
-            // The last chunk then carries the token counts.
-            stream_options: { include_usage: true },
-          } as OpenAI.ChatCompletionCreateParamsStreaming);
+      };
+      const fail = (message: string) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`));
+        controller.close();
+      };
+      const skipped: string[] = [];
 
-          for await (const chunk of stream) {
-            if (chunk.model) served.model = chunk.model;
-            if (chunk.usage) served.usage = openAiUsage(chunk.usage);
-            const content = chunk.choices[0]?.delta?.content;
-            if (content) send(content);
+      // Cheapest first; a provider that fails before saying anything hands
+      // over to the next. Once words are on screen a stream can't be
+      // restarted, so a failure mid-answer ends it with an error.
+      for (let i = 0; i < credentials.length; i++) {
+        const credential = credentials[i];
+        const isLast = i === credentials.length - 1;
+        let target: ChatTarget;
+        try {
+          target = await targetFor(credential, targetOptions, "chat");
+        } catch (error) {
+          if (!isLast && shouldFallBack(error)) {
+            skipped.push(PROVIDER_INFO[credential.provider].label);
+            continue;
           }
+          return fail(error instanceof Error ? error.message : "Request failed");
         }
+        const chain = target.chain;
+        const startedAt = Date.now();
+        const served: { model: string; usage: UsageTokens } = { model: chain[0], usage: { inputTokens: 0, outputTokens: 0 } };
+        const log = (status: "ok" | "error", error: string | null) =>
+          logUsage(target, {
+            kind: "stream",
+            model: served.model,
+            purpose: options.purpose || "Chat",
+            messages,
+            usage: served.usage,
+            status,
+            error,
+            startedAt,
+          });
 
-        // Which model answered, whose key paid, and what it cost in tokens,
-        // so the chat can say so under the answer.
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              meta: {
-                model: served.model,
-                provider: target.credential.provider,
-                source: target.credential.source,
-                inputTokens: served.usage.inputTokens,
-                outputTokens: served.usage.outputTokens,
+        try {
+          if (credential.provider === "chatgpt") {
+            for await (const event of chatGptStream({ accessToken: credential.apiKey, model: chain[0], messages })) {
+              if (event.text) send(event.text);
+              if (event.model) served.model = event.model;
+              if (event.usage) served.usage = event.usage;
+            }
+          } else if (credential.provider === "anthropic") {
+            for await (const text of claudeStream(anthropicClient(credential), {
+              model: chain[0],
+              messages,
+              maxTokens,
+              effort: claudeEffortForSlot("chat"),
+              onMeta: (meta) => {
+                if (meta.model) served.model = meta.model;
+                served.usage = meta.usage;
               },
-            })}\n\n`
-          )
-        );
-        controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-        controller.close();
-        await log("ok", null);
-      } catch (error) {
-        await handleAuthFailure(target.credential, error);
-        const message = describeProviderError(target.credential, error);
-        await log("error", message);
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`)
-        );
-        controller.close();
+            })) {
+              send(text);
+            }
+          } else {
+            const stream = await openAiCompatibleClient(credential).chat.completions.create({
+              model: chain[0],
+              messages,
+              ...openAiRequestOptions(credential.provider, chain[0], maxTokens, temperature),
+              // OpenRouter fails over between models server-side, within the request.
+              ...(credential.provider === "openrouter" && wireFallbackModels(chain)
+                ? { models: wireFallbackModels(chain) }
+                : {}),
+              stream: true,
+              // The last chunk then carries the token counts.
+              stream_options: { include_usage: true },
+            } as OpenAI.ChatCompletionCreateParamsStreaming);
+
+            for await (const chunk of stream) {
+              if (chunk.model) served.model = chunk.model;
+              if (chunk.usage) served.usage = openAiUsage(chunk.usage);
+              const content = chunk.choices[0]?.delta?.content;
+              if (content) send(content);
+            }
+          }
+
+          // Which model answered, whose key paid, and what it cost in tokens,
+          // so the chat can say so under the answer.
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                meta: {
+                  model: served.model,
+                  provider: credential.provider,
+                  source: credential.source,
+                  inputTokens: served.usage.inputTokens,
+                  outputTokens: served.usage.outputTokens,
+                  ...(skipped.length > 0 ? { fellBackFrom: skipped } : {}),
+                },
+              })}\n\n`
+            )
+          );
+          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+          controller.close();
+          await log("ok", null);
+          return;
+        } catch (error) {
+          await handleAuthFailure(credential, error);
+          const message = describeProviderError(credential, error);
+          await log("error", message);
+          if (!sent && !isLast && shouldFallBack(error)) {
+            console.warn(`[AI] ${credential.provider} failed (${message}); trying ${credentials[i + 1].provider}`);
+            skipped.push(PROVIDER_INFO[credential.provider].label);
+            continue;
+          }
+          return fail(message);
+        }
       }
+      fail("No AI provider could answer. Check Settings → AI provider.");
     },
   });
 }
@@ -305,6 +342,8 @@ export interface CompletionResult {
   /** Whose key paid, and which provider ran it. */
   provider?: AiProvider;
   source?: "user" | "server";
+  /** Providers tried first that couldn't serve the request, by label. */
+  fellBackFrom?: string[];
 }
 
 /**
@@ -328,51 +367,8 @@ export function wireFallbackModels(chain: string[]): string[] | undefined {
   return window.length > 1 ? window : undefined;
 }
 
-// Upstream conditions worth retrying: rate limits, gateway hiccups, dropped
-// sockets. Anything else (bad model id, auth, malformed request) fails fast —
-// retrying those just burns the caller's time budget.
-const TRANSIENT_STATUS_CODES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
-const TRANSIENT_ERROR_CODES = new Set([
-  "ECONNRESET",
-  "ECONNREFUSED",
-  "ETIMEDOUT",
-  "EPIPE",
-  "EAI_AGAIN",
-]);
-
-function isTransientError(error: unknown): boolean {
-  const status = (error as { status?: number } | null)?.status;
-  if (typeof status === "number") return TRANSIENT_STATUS_CODES.has(status);
-
-  const code = (error as { code?: string } | null)?.code;
-  if (typeof code === "string" && TRANSIENT_ERROR_CODES.has(code)) return true;
-
-  return error instanceof Error && /timeout|socket hang up|fetch failed/i.test(error.message);
-}
-
-/**
- * Does this error mean "that model is gone", as opposed to "that request was
- * bad"?
- *
- * This is the trigger for hopping to the next model in the chain, so it is
- * deliberately keyed on the provider's *message* rather than on HTTP 400
- * alone — a 400 is also what you get for a malformed request, and retrying
- * that against every model in the chain would just be four identical failures.
- */
-export function isModelUnavailableError(error: unknown): boolean {
-  const status = (error as { status?: number } | null)?.status;
-  if (status === 404) return true;
-
-  const message = error instanceof Error ? error.message : String(error ?? "");
-
-  // Phrases only, never a bare "unavailable": this app wraps envelope errors as
-  // "Upstream model error: <provider text>", so a loose pattern anchored on the
-  // word "model" matches things like "provider unavailable" — a transient
-  // outage — and would wrongly abandon a perfectly good model.
-  return /not a valid model|no endpoints found|no allowed providers|unknown model|no such model|model not found|does not exist|is not available|no longer available|deprecat|decommission|sunset|retired/i.test(
-    message
-  );
-}
+export { isModelUnavailableError, shouldFallBack } from "./fallback";
+import { isModelUnavailableError, isTransientError } from "./fallback";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -420,20 +416,37 @@ interface ChatTarget {
 }
 
 /**
- * Whose key, and which models. An OpenRouter key (the person's or the
- * server's) keeps the live-catalog chain above. A direct OpenAI or Anthropic
- * key gets that provider's own models: an OpenRouter-style id the caller
- * pinned ("vendor/model") means nothing there and is passed over for the slot.
+ * Which models to try on one provider. An OpenRouter key (the person's or
+ * the server's) keeps the live-catalog chain above. A direct OpenAI or
+ * Anthropic key gets that provider's own models: an OpenRouter-style id the
+ * caller pinned ("vendor/model") means nothing there and is passed over for
+ * the slot. A ChatGPT plan picks from the models the plan itself lists.
  */
-async function resolveChatTarget(
+async function targetFor(
+  credential: ResolvedCredential,
   options: Pick<CompletionOptions, "model" | "models" | "slot" | "userId" | "allowAutoFallback">,
   capability: "chat" | "vision"
 ): Promise<ChatTarget> {
-  const credential = await resolveAiCredential(capability, { userId: options.userId });
   const slot: ModelSlot = options.slot ?? (capability === "vision" ? "vision" : "fast");
 
   if (credential.provider === "openrouter") {
     return { credential, chain: await buildModelChain(options), slot };
+  }
+
+  if (credential.provider === "chatgpt") {
+    const [userChoices, available] = await Promise.all([
+      directProviderModelChoices(credential.userId, "chatgpt"),
+      cachedChatGptModels(credential),
+    ]);
+    const chain = chooseChatGptModels({ slot, available: available ?? [], userChoice: userChoices[slot] });
+    if (chain.length === 0) {
+      throw new ChatGptPlanError("Couldn't get the list of models your ChatGPT plan offers.", {
+        status: 503,
+        code: null,
+        fallback: true,
+      });
+    }
+    return { credential, chain, slot };
   }
 
   const provider = credential.provider;
@@ -448,6 +461,23 @@ async function resolveChatTarget(
     slot,
   };
 }
+
+const chatGptModelCache = new Map<string, { ids: string[] | null; expiresAt: number }>();
+
+async function cachedChatGptModels(credential: ResolvedCredential): Promise<string[] | null> {
+  const key = credential.userId ?? "";
+  const hit = chatGptModelCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.ids;
+  const ids = await chatGptModelIds(credential.apiKey);
+  chatGptModelCache.set(key, { ids, expiresAt: Date.now() + (ids && ids.length > 0 ? 60 * 60 * 1000 : 2 * 60 * 1000) });
+  return ids;
+}
+
+/** Test seam. */
+export function clearChatGptModelCache(): void {
+  chatGptModelCache.clear();
+}
+
 
 /**
  * Completion helper that surfaces provider metadata alongside the text.
@@ -483,37 +513,72 @@ export async function completeMessages(
   messages: OpenAI.ChatCompletionMessageParam[],
   options: CompletionOptions & { capability?: "chat" | "vision" } = {}
 ): Promise<CompletionResult> {
-  const target = await resolveChatTarget(options, options.capability ?? "chat");
-  const startedAt = Date.now();
-  const purpose =
-    options.purpose || currentAiPurpose() || SLOT_PURPOSE[target.slot] || "AI task";
-  const kind: UsageKind = options.capability === "vision" ? "vision" : "chat";
-  try {
-    const result = await completeMessagesWith(target, messages, options);
-    await logUsage(target, {
-      kind,
-      model: result.model,
-      purpose,
-      messages,
-      usage: result.usage ?? { inputTokens: 0, outputTokens: 0 },
-      status: "ok",
-      error: null,
-      startedAt,
-    });
-    return { ...result, provider: target.credential.provider, source: target.credential.source };
-  } catch (error) {
-    await logUsage(target, {
-      kind,
-      model: target.chain[0],
-      purpose,
-      messages,
-      usage: { inputTokens: 0, outputTokens: 0 },
-      status: "error",
-      error: error instanceof Error ? error.message : String(error),
-      startedAt,
-    });
-    throw error;
+  const capability = options.capability ?? "chat";
+  const credentials = await resolveAiCredentialChain(capability, { userId: options.userId });
+  const kind: UsageKind = capability === "vision" ? "vision" : "chat";
+  const fellBackFrom: string[] = [];
+  let lastError: unknown;
+
+  // Cheapest first (a flat-rate plan before pay-per-token keys); a provider
+  // that can't serve the request right now hands it to the next.
+  for (let i = 0; i < credentials.length; i++) {
+    const credential = credentials[i];
+    const isLast = i === credentials.length - 1;
+    let target: ChatTarget;
+    try {
+      target = await targetFor(credential, options, capability);
+    } catch (error) {
+      lastError = error;
+      if (!isLast && shouldFallBack(error)) {
+        fellBackFrom.push(PROVIDER_INFO[credential.provider].label);
+        continue;
+      }
+      throw error;
+    }
+
+    const startedAt = Date.now();
+    const purpose = options.purpose || currentAiPurpose() || SLOT_PURPOSE[target.slot] || "AI task";
+    try {
+      const result = await completeMessagesWith(target, messages, options);
+      await logUsage(target, {
+        kind,
+        model: result.model,
+        purpose,
+        messages,
+        usage: result.usage ?? { inputTokens: 0, outputTokens: 0 },
+        status: "ok",
+        error: null,
+        startedAt,
+      });
+      return {
+        ...result,
+        provider: credential.provider,
+        source: credential.source,
+        ...(fellBackFrom.length > 0 ? { fellBackFrom } : {}),
+      };
+    } catch (error) {
+      lastError = error;
+      await logUsage(target, {
+        kind,
+        model: target.chain[0],
+        purpose,
+        messages,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+        startedAt,
+      });
+      if (!isLast && shouldFallBack(error)) {
+        console.warn(
+          `[AI] ${credential.provider} failed (${error instanceof Error ? error.message : error}); trying ${credentials[i + 1].provider}`
+        );
+        fellBackFrom.push(PROVIDER_INFO[credential.provider].label);
+        continue;
+      }
+      throw error;
+    }
   }
+  throw lastError;
 }
 
 async function completeMessagesWith(
@@ -539,6 +604,11 @@ async function completeMessagesWith(
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
+        if (credential.provider === "chatgpt") {
+          const result = await chatGptComplete({ accessToken: credential.apiKey, model, messages });
+          return { ...result, ...(skippedModels.length > 0 ? { skippedModels } : {}) };
+        }
+
         if (credential.provider === "anthropic") {
           const result = await claudeComplete(anthropicClient(credential), {
             model,
@@ -608,6 +678,10 @@ async function completeMessagesWith(
           skippedModels.push(model);
           break;
         }
+
+        // A plan's usage limit or refusal won't change with a retry; let the
+        // next provider have it instead.
+        if (error instanceof ChatGptPlanError) throw error;
 
         // Everything else — provider down, rate limit, bad request — is either
         // already handled inside the request by OpenRouter's `models` failover,

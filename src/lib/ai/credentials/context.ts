@@ -31,6 +31,14 @@ export function currentAiUser(): string | null {
   return storage.getStore()?.userId ?? null;
 }
 
+/**
+ * True inside a background scope (the queue, skills, heartbeat): work the
+ * person didn't just ask for. A ChatGPT plan runs it only with their consent.
+ */
+export function isBackgroundAi(): boolean {
+  return storage.getStore() !== undefined;
+}
+
 export function currentAiPurpose(): string | null {
   return storage.getStore()?.purpose ?? null;
 }

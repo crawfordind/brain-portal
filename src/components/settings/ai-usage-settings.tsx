@@ -23,6 +23,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   openrouter: "OpenRouter",
   openai: "OpenAI",
   anthropic: "Claude",
+  chatgpt: "ChatGPT plan",
 };
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {

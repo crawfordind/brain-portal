@@ -316,6 +316,9 @@ Required for development (see `.env.example`):
 - `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` - Database
 - `OPENROUTER_API_KEY` - the server's AI key. With personal keys it pays only
   for accounts without their own, and for work that belongs to no account.
+- `CHATGPT_PLAN_USERS` - who may connect a ChatGPT plan (default
+  `ADMIN_EMAILS`, or the sole account; `off` disables). See *Sign in with
+  ChatGPT and backup routing*.
 - `AI_KEY_POLICY` (`user_or_server` default, `user_only`, `server_only`) and
   `AI_KEY_ENCRYPTION_SECRET` (falls back to `SESSION_SECRET`) - see *Personal
   AI Keys*.
@@ -873,10 +876,13 @@ pasted OpenRouter, OpenAI or Claude key. Code: `src/lib/ai/credentials/`
   `AI_KEY_POLICY=user_or_server`. No account at all means the server key.
   System Health, Operations and the Settings "What runs your AI" list all ask
   this same function, so none can disagree with what a call actually does.
-- **Never a silent swap.** A key the provider rejects (401) fails the call with
-  "rejected your API key", is marked `invalid` in Settings, and surfaces as
-  `AI_USER_KEY_REJECTED`; it does not fall through to the server key. The
-  server key stands in only when the account has *no* key able to do the job.
+- **Never a silent swap.** A key the provider rejects (401) is marked
+  `invalid` in Settings and surfaces as `AI_USER_KEY_REJECTED`. With backups on
+  (the default) the account's *own* next key takes the call, and the usage log
+  says so; it never falls through to the server key unless the person turned
+  on "server key as a last resort". The server key otherwise stands in only
+  when the account has *no* key able to do the job. See *Sign in with ChatGPT
+  and backup routing*.
 - **Every call says whose it is.** Request handlers pass `userId`. Background
   work (`runJob`, `/api/process`, `executeSkill`) wraps each job in
   `runWithAiUser(job.user_id, …)` (AsyncLocalStorage `run`, never `enterWith`,
@@ -923,6 +929,62 @@ pasted OpenRouter, OpenAI or Claude key. Code: `src/lib/ai/credentials/`
 - `AGENT_RUNTIME=openrouter` is ready without a server key unless
   `AI_KEY_POLICY=server_only`; an account with no key fails its own task with a
   diagnosis that points at Settings.
+
+## Sign in with ChatGPT and backup routing
+
+An account can run AI on its ChatGPT Plus/Pro plan instead of pay-per-token
+credits (Settings → AI provider → **Sign in with ChatGPT**), and every call
+tries the cheapest option first and backs up to the next when one fails.
+Code: `src/lib/ai/chatgpt/` (`types.ts` imports nothing), `src/lib/ai/fallback.ts`,
+`/api/ai-keys/chatgpt/start|finish`, `chooseCredentialChain`,
+`resolveAiCredentialChain`.
+
+- **OpenAI's official open-source flow, not a borrowed Codex login.** Some
+  agents reuse the Codex CLI's OAuth identity and call ChatGPT's private
+  backend; OpenAI's docs say not to. Here the app registers itself on first
+  sign-in (`client_id=dynamic_agent_client`, `agent_name_hint`,
+  `ext_agent_host_id`), saves the issued `oaiapp_…` id, and calls the public
+  Responses API (`POST https://api.openai.com/v1/responses`) with the access
+  token. Scopes include `resource.invoke chatgpt.tokens.use.direct`; an ID
+  token alone does not authorize plan usage, so the granted scope is checked,
+  and the ID token is verified against OpenAI's JWKS, client id and nonce.
+- **The paste step is forced by the rules.** Open-source apps may only
+  redirect to `http://127.0.0.1:<port>/auth/callback` (not `localhost`, no
+  device flow), which a web server can't receive. The browser lands on a page
+  that doesn't load; the person pastes that address into Settings. The PKCE
+  verifier, state and nonce wait in an httpOnly, `SameSite=Strict` cookie, so
+  only the browser that started a sign-in can finish it.
+- **Owner-only, per OpenAI's terms**: plan usage must come from "a remote
+  runtime only that user controls", and one person's plan must never serve
+  another's requests. `chatGptPlanAccess`: `CHATGPT_PLAN_USERS`, else
+  `ADMIN_EMAILS`, else the only account on a one-person instance; `off`
+  disables. A plan is only ever used for its owner's own work.
+- **Background use needs consent** (`ai_routing.chatgpt_background`, off by
+  default). Background = inside a `runWithAiUser` scope (`isBackgroundAi`).
+- **Tokens**: stored encrypted in `user_ai_keys` (provider `chatgpt`) as the
+  session JSON. Access tokens last an hour; refresh tokens rotate on every use,
+  so refresh is serialized by a 30s lease (`user_ai_keys.refresh_lock_until`,
+  added by `npm run db:migrate`); the loser waits for the winner's token.
+  Sign-out also revokes at OpenAI.
+- **Preview request rules**: `store: false`, `stream: true` always, system
+  prompt in `instructions`, no `temperature`/`max_output_tokens`. A used-up
+  plan (`subscription_sharing_usage_limit_exceeded`) can arrive mid-stream as
+  `response.failed`. Models come from `GET /v1/models` with the token; there is
+  no fixed list, so `chooseChatGptModels` picks a light one ("mini"/"nano")
+  for everyday jobs and the first listed for deep work.
+- **Routing order** (`COST_ORDER`): preferred provider, then the flat-rate
+  plan, OpenRouter, OpenAI, Anthropic. Connecting a plan makes it preferred.
+- **Backups** (`ai_routing.fallback`, on by default): the account's other
+  capable keys follow in that order; the server key comes last only with
+  `server_fallback` (off by default, `user_or_server` only). `shouldFallBack`
+  moves on for refused keys or sign-ins, no credit or plan usage, rate limits,
+  outages and missing models, never for a malformed request or a refusal,
+  which every provider would repeat. A plan's usage limit is never retried on
+  the same plan. A stream hands over only before its first word. Every attempt
+  is in the usage log, and answers carry `fellBackFrom`.
+- Not verified against a live ChatGPT account from CI or the dev sandbox
+  (OpenAI's hosts are unreachable there); the flow follows OpenAI's SIWC docs
+  as of October 2026.
 
 ## AI Usage (which model, which prompt, how many tokens)
 

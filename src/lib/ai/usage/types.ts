@@ -6,7 +6,7 @@
  * server and the tests share it (same reason as `credentials/types.ts`).
  */
 
-export type UsageProvider = "openrouter" | "openai" | "anthropic";
+export type UsageProvider = "openrouter" | "openai" | "anthropic" | "chatgpt";
 export type UsageKind = "chat" | "stream" | "vision" | "embedding";
 
 export interface UsageTokens {

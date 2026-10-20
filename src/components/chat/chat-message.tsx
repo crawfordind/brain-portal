@@ -119,7 +119,14 @@ export function ChatMessage({ message, contextType }: ChatMessageProps) {
                 {message.meta.inputTokens || message.meta.outputTokens
                   ? ` · ${formatTokens(message.meta.inputTokens ?? 0)} in / ${formatTokens(message.meta.outputTokens ?? 0)} out`
                   : ""}
-                {message.meta.source === "server" ? " · server key" : message.meta.source === "user" ? " · your key" : ""}
+                {message.meta.provider === "chatgpt"
+                  ? " · ChatGPT plan"
+                  : message.meta.source === "server"
+                    ? " · server key"
+                    : message.meta.source === "user"
+                      ? " · your key"
+                      : ""}
+                {message.meta.fellBackFrom?.length ? ` · backup for ${message.meta.fellBackFrom.join(", ")}` : ""}
               </p>
             )}
             {canSave && (

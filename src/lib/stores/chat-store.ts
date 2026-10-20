@@ -16,6 +16,9 @@ export interface ChatMessageMeta {
   outputTokens?: number;
   /** "user": the account's own key. "server": the server's. */
   source?: "user" | "server";
+  provider?: string;
+  /** Providers that couldn't answer first, when a backup did. */
+  fellBackFrom?: string[];
 }
 
 export type ChatContextType = "executive" | "project" | "note" | "task" | "item" | "general";

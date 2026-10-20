@@ -25,6 +25,8 @@ import {
 } from "@/lib/ai/credentials/store";
 import { AiCredentialError, invalidateAiCredentialCache, resolveAiCredential } from "@/lib/ai/credentials/resolve";
 import { runWithAiUser } from "@/lib/ai/credentials/context";
+import { resolveAiCredentialChain } from "@/lib/ai/credentials/resolve";
+import { saveChatGptSession } from "@/lib/ai/chatgpt/session";
 
 const CLAUDE = "sk-ant-api03-" + "c".repeat(40);
 const OPENAI = "sk-proj-" + "o".repeat(40);
@@ -142,5 +144,63 @@ describe("resolveAiCredential", () => {
     const error = await resolveAiCredential("chat", { userId: "u2", env: { ...env, AI_KEY_POLICY: "user_only" } }).catch((e) => e);
     expect(error).toBeInstanceOf(AiCredentialError);
     expect(error.message).toMatch(/Settings → AI provider/);
+  });
+
+  describe("a ChatGPT plan beside pay-per-token keys", () => {
+    const plan = {
+      clientId: "oaiapp_1",
+      hostId: "h",
+      idToken: "",
+      accessToken: "plan-access-token",
+      refreshToken: "rt",
+      expiresAt: Date.now() + 3600_000,
+      scopes: ["chatgpt.tokens.use.direct"],
+      email: "owner@example.com",
+      savedAt: Date.now(),
+    };
+    const chain = async (capability: "chat" | "embedding", extra: Record<string, string> = {}) =>
+      (await resolveAiCredentialChain(capability, { userId: "u1", db: testDb, env: { ...env, ADMIN_EMAILS: "owner@example.com", ...extra } })).map(
+        (c) => `${c.source}:${c.provider}`
+      );
+
+    beforeEach(async () => {
+      await saveChatGptSession(testDb, "u1", plan);
+      await saveUserAiKey(testDb, { userId: "u1", provider: "openai", apiKey: OPENAI, verified: true });
+      invalidateAiCredentialCache();
+    });
+
+    it("tries the plan first with the sign-in's access token, and backs it up with the account's keys", async () => {
+      const resolved = await resolveAiCredentialChain("chat", { userId: "u1", db: testDb, env: { ...env, ADMIN_EMAILS: "owner@example.com" } });
+      expect(resolved[0]).toMatchObject({ provider: "chatgpt", apiKey: "plan-access-token", source: "user" });
+      expect(await chain("chat")).toEqual(["user:chatgpt", "user:openai"]);
+      // The single-credential path still picks one, the plan.
+      expect((await resolveAiCredential("chat", { userId: "u1", db: testDb, env: { ...env, ADMIN_EMAILS: "owner@example.com" } })).provider).toBe("chatgpt");
+    });
+
+    it("never stores the sign-in readable, and lists it by account, not by token", async () => {
+      const raw = await testDb.execute("SELECT * FROM user_ai_keys WHERE provider = 'chatgpt'");
+      expect(JSON.stringify(raw.rows)).not.toContain("plan-access-token");
+      const summary = (await listUserAiKeys(testDb, "u1")).find((k) => k.provider === "chatgpt");
+      expect(summary).toMatchObject({ hint: "ChatGPT plan · owner@example.com", source: "connect" });
+    });
+
+    it("keeps background work off the plan until the person agrees", async () => {
+      const background = await runWithAiUser("u1", () => chain("chat"));
+      expect(background).toEqual(["user:openai"]);
+      await updateAiPreferences(testDb, "u1", { routing: { chatgptBackground: true } });
+      invalidateAiCredentialCache();
+      expect(await runWithAiUser("u1", () => chain("chat"))).toEqual(["user:chatgpt", "user:openai"]);
+    });
+
+    it("ignores the plan for an account that may not use one here", async () => {
+      expect(await chain("chat", { ADMIN_EMAILS: "someone-else@example.com" })).toEqual(["user:openai"]);
+    });
+
+    it("uses only the first when backups are off, and never the plan for search indexing", async () => {
+      expect(await chain("embedding")).toEqual(["user:openai"]);
+      await updateAiPreferences(testDb, "u1", { routing: { fallback: false } });
+      invalidateAiCredentialCache();
+      expect(await chain("chat")).toEqual(["user:chatgpt"]);
+    });
   });
 });

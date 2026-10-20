@@ -105,6 +105,8 @@ export async function saveUserAiKey(
     source?: "manual" | "connect";
     /** Set when the key was just tested against the provider. */
     verified?: boolean;
+    /** What Settings shows instead of the key; derived from the key when omitted. */
+    hint?: string;
   }
 ): Promise<void> {
   const encrypted = encryptApiKey(input.apiKey, { userId: input.userId, provider: input.provider });
@@ -124,7 +126,7 @@ export async function saveUserAiKey(
       input.userId,
       input.provider,
       encrypted,
-      keyHint(input.apiKey),
+      input.hint ?? keyHint(input.apiKey),
       input.source ?? "manual",
       input.verified ? "ok" : "unknown",
       input.verified ? now : null,
@@ -174,10 +176,14 @@ export interface AiPreferences {
   provider: AiProvider | null;
   /** Model ids chosen per slot, per direct provider (OpenRouter uses `models`). */
   modelsByProvider: Partial<Record<AiProvider, Record<string, string>>>;
+  /** Backups and consent; see `RoutingOptions`. */
+  routing: { fallback: boolean; serverFallback: boolean; chatgptBackground: boolean };
 }
 
+const DEFAULT_ROUTING_PREFS: AiPreferences["routing"] = { fallback: true, serverFallback: false, chatgptBackground: false };
+
 export function parseAiPreferences(raw: string | null | undefined): AiPreferences {
-  const empty: AiPreferences = { provider: null, modelsByProvider: {} };
+  const empty: AiPreferences = { provider: null, modelsByProvider: {}, routing: { ...DEFAULT_ROUTING_PREFS } };
   if (!raw) return empty;
   try {
     const blob = JSON.parse(raw) as Record<string, unknown> | null;
@@ -195,7 +201,14 @@ export function parseAiPreferences(raw: string | null | undefined): AiPreference
         byProvider[key] = slots;
       }
     }
-    return { provider, modelsByProvider: byProvider };
+    const r = blob.ai_routing && typeof blob.ai_routing === "object" ? (blob.ai_routing as Record<string, unknown>) : {};
+    const routing = {
+      fallback: typeof r.fallback === "boolean" ? r.fallback : DEFAULT_ROUTING_PREFS.fallback,
+      serverFallback: typeof r.server_fallback === "boolean" ? r.server_fallback : DEFAULT_ROUTING_PREFS.serverFallback,
+      chatgptBackground:
+        typeof r.chatgpt_background === "boolean" ? r.chatgpt_background : DEFAULT_ROUTING_PREFS.chatgptBackground,
+    };
+    return { provider, modelsByProvider: byProvider, routing };
   } catch {
     return empty;
   }
@@ -216,6 +229,7 @@ export async function updateAiPreferences(
   update: {
     provider?: AiProvider | null;
     models?: { provider: AiProvider; slots: Record<string, string | null> };
+    routing?: Partial<AiPreferences["routing"]>;
   }
 ): Promise<AiPreferences> {
   const found = await rows<{ preferences: string | null }>(db, "SELECT preferences FROM users WHERE id = ?", [userId]);
@@ -239,6 +253,15 @@ export async function updateAiPreferences(
       else slots[slot] = id;
     }
     blob.models_by_provider = { ...current.modelsByProvider, [update.models.provider]: slots };
+  }
+
+  if (update.routing) {
+    const next = { ...current.routing, ...update.routing };
+    blob.ai_routing = {
+      fallback: next.fallback,
+      server_fallback: next.serverFallback,
+      chatgpt_background: next.chatgptBackground,
+    };
   }
 
   await db.execute({

@@ -18,8 +18,9 @@ vi.mock("@/lib/ai/transport", async () => {
   const { openrouter } = await import("@/lib/ai/client");
   return { openAiCompatibleClient: () => openrouter };
 });
-vi.mock("@/lib/ai/credentials/resolve", () => ({
-  resolveAiCredential: vi.fn(async () => ({ provider: "openrouter", apiKey: "sk-or-test", source: "server", userId: null })),
+vi.mock("@/lib/ai/credentials/resolve", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ai/credentials/resolve")>()),
+  resolveAiCredentialChain: vi.fn(async () => [{ provider: "openrouter", apiKey: "sk-or-test", source: "server", userId: null }]),
   isAuthError: () => false,
   noteKeyRejected: vi.fn(),
 }));

@@ -1,4 +1,5 @@
 import { AiCredentialError } from "@/lib/ai/credentials/resolve";
+import { ChatGptAuthError } from "@/lib/ai/chatgpt/oauth";
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { queryAll, queryOne, mutate } from "@/lib/db/client";
@@ -191,8 +192,11 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     // No usable key: say what to do, rather than a generic failure.
-    if (error instanceof AiCredentialError) {
-      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 });
+    if (error instanceof AiCredentialError || (error instanceof ChatGptAuthError && error.needsSignIn)) {
+      return NextResponse.json(
+        { error: error.message, code: error instanceof AiCredentialError ? error.code : "chatgpt_sign_in" },
+        { status: 409 }
+      );
     }
     console.error("[Chat API] Error:", error);
     return NextResponse.json({ error: "Failed to process chat message" }, { status: 500 });
