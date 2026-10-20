@@ -10,7 +10,7 @@
  * server and the tests all share it (same reason as `sharing/types.ts`).
  */
 
-export const AI_PROVIDERS = ["openrouter", "openai", "anthropic"] as const;
+export const AI_PROVIDERS = ["openrouter", "openai", "anthropic", "chatgpt"] as const;
 export type AiProvider = (typeof AI_PROVIDERS)[number];
 
 /**
@@ -31,6 +31,10 @@ export interface ProviderInfo {
   capabilities: AiCapability[];
   /** OpenRouter can mint a key for this app with one click (OAuth PKCE). */
   supportsConnect: boolean;
+  /** Signed in to, never pasted (the ChatGPT plan). */
+  signInOnly?: boolean;
+  /** Paid by a flat subscription rather than per token, so it is tried first. */
+  flatRate?: boolean;
 }
 
 export const PROVIDER_INFO: Record<AiProvider, ProviderInfo> = {
@@ -62,7 +66,26 @@ export const PROVIDER_INFO: Record<AiProvider, ProviderInfo> = {
     capabilities: ["chat", "vision"],
     supportsConnect: false,
   },
+  chatgpt: {
+    provider: "chatgpt",
+    label: "ChatGPT plan",
+    description:
+      "Sign in with ChatGPT to run AI on your Plus or Pro plan instead of paying per token. Search indexing still needs an OpenRouter or OpenAI key.",
+    keysUrl: "https://chatgpt.com/",
+    keyPrefixes: [],
+    capabilities: ["chat", "vision"],
+    supportsConnect: false,
+    signInOnly: true,
+    flatRate: true,
+  },
 };
+
+/**
+ * The order providers are tried in when the person hasn't picked one: the
+ * flat-rate plan first (it costs nothing extra per call), then pay-per-token
+ * keys. A preferred provider always goes first.
+ */
+export const COST_ORDER: AiProvider[] = ["chatgpt", "openrouter", "openai", "anthropic"];
 
 export function isAiProvider(value: unknown): value is AiProvider {
   return typeof value === "string" && (AI_PROVIDERS as readonly string[]).includes(value);
@@ -109,6 +132,7 @@ export function detectProvider(key: string): AiProvider | null {
  * before a network round trip.
  */
 export function keyFormatProblem(provider: AiProvider, key: string): string | null {
+  if (PROVIDER_INFO[provider].signInOnly) return "A ChatGPT plan is connected with Sign in with ChatGPT, not a pasted key.";
   if (!key) return "Paste your API key.";
   if (/\s/.test(key)) return "That has spaces in it. Copy just the key.";
   if (key.length < 20 || key.length > 512) return "That doesn't look like a complete API key.";
@@ -143,6 +167,61 @@ export interface AiKeySummary {
   updatedAt: string;
 }
 
+/** Routing preferences that decide the order and the backups. */
+export interface RoutingOptions {
+  /** Try the account's other keys when one fails (default on). */
+  fallback: boolean;
+  /** After all of those, the server's key (default off; `user_or_server` only). */
+  serverFallback: boolean;
+  /** The call is background work rather than something the person just asked for. */
+  background: boolean;
+  /** The person agreed to their ChatGPT plan running background work. */
+  chatgptBackground: boolean;
+  /** This account may use a ChatGPT plan on this server (see chatgpt/types.ts). */
+  chatgptAllowed: boolean;
+}
+
+export const DEFAULT_ROUTING: RoutingOptions = {
+  fallback: true,
+  serverFallback: false,
+  background: false,
+  chatgptBackground: false,
+  chatgptAllowed: true,
+};
+
+/**
+ * Every key a call may use, in the order to try them. Pure.
+ *
+ * - The preferred provider first, then the cost order (flat-rate plan, then
+ *   pay-per-token keys). Only keys able to do the job count.
+ * - With `fallback` on, the rest of the account's capable keys follow as
+ *   backups, and with `serverFallback` the server's key last. Off, it is just
+ *   the first, which is what `chooseCredential` returns.
+ * - A ChatGPT plan runs background work only with the person's consent, and
+ *   only for accounts allowed to use one here.
+ */
+export function chooseCredentialChain(
+  input: Parameters<typeof chooseCredential>[0] & { routing?: Partial<RoutingOptions> }
+): CredentialChoice[] {
+  const routing = { ...DEFAULT_ROUTING, ...input.routing };
+  const { policy, capability, hasUser, userProviders, preferred, serverKey } = input;
+  const usable = userProviders.filter(
+    (p) =>
+      p !== "chatgpt" || (routing.chatgptAllowed && (!routing.background || routing.chatgptBackground))
+  );
+  const first = chooseCredential({ ...input, userProviders: usable });
+  if (first.kind !== "user" || !routing.fallback) return [first];
+
+  const order: AiProvider[] = [...(preferred ? [preferred] : []), ...COST_ORDER.filter((p) => p !== preferred)];
+  const chain: CredentialChoice[] = order
+    .filter((p) => usable.includes(p) && providerSupports(p, capability))
+    .map((provider) => ({ kind: "user" as const, provider }));
+  if (routing.serverFallback && policy === "user_or_server" && serverKey && hasUser) {
+    chain.push({ kind: "server", provider: "openrouter", reason: "no_user_key" });
+  }
+  return chain;
+}
+
 /** The result of the pure choice: which key a call should use. */
 export type CredentialChoice =
   | { kind: "user"; provider: AiProvider }
@@ -165,7 +244,7 @@ export type AiCredentialErrorCode =
  * Choose whose key pays for one call. Pure.
  *
  * - A user's own capable key always wins: their preferred provider first, then
- *   OpenRouter, OpenAI, Anthropic.
+ *   a ChatGPT plan, OpenRouter, OpenAI, Anthropic (`COST_ORDER`).
  * - It never silently swaps a key the user chose for the server's because the
  *   user's key is failing; a rejected key fails the call, loudly. The server
  *   key stands in only when the user has *no* key able to do the job.
@@ -191,7 +270,7 @@ export function chooseCredential(input: {
 
   const order: AiProvider[] = [
     ...(preferred ? [preferred] : []),
-    ...AI_PROVIDERS.filter((p) => p !== preferred),
+    ...COST_ORDER.filter((p) => p !== preferred),
   ];
   const capable = order.find((p) => userProviders.includes(p) && providerSupports(p, capability));
   if (capable) return { kind: "user", provider: capable };

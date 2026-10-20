@@ -1,5 +1,5 @@
 /**
- * PUT /api/ai-keys/models  { provider: "openai" | "anthropic", models: { <slot>: <id | null> } }
+ * PUT /api/ai-keys/models  { provider: "openai" | "anthropic" | "chatgpt", models: { <slot>: <id | null> } }
  *
  * Which of the account's own OpenAI or Claude models runs each job. OpenRouter
  * choices stay on PUT /api/models. Checked against the key's own model list
@@ -17,6 +17,9 @@ import { loadUserAiKeys, updateAiPreferences } from "@/lib/ai/credentials/store"
 import { PROVIDER_INFO } from "@/lib/ai/credentials/types";
 import { directModelIds } from "@/lib/ai/models/direct-catalog";
 import { isModelSlot } from "@/lib/ai/models/slots";
+import { chatGptAccessToken } from "@/lib/ai/chatgpt/session";
+import { chatGptModelIds } from "@/lib/ai/chatgpt/responses";
+import { parseChatGptSession } from "@/lib/ai/chatgpt/types";
 
 export async function PUT(request: NextRequest) {
   const user = await getCurrentUser();
@@ -25,8 +28,8 @@ export async function PUT(request: NextRequest) {
   const body = await safeParseJson(request);
   if (isErrorResponse(body)) return body;
   const { provider, models } = body as { provider?: unknown; models?: unknown };
-  if (provider !== "openai" && provider !== "anthropic") {
-    return NextResponse.json({ error: "provider must be openai or anthropic" }, { status: 400 });
+  if (provider !== "openai" && provider !== "anthropic" && provider !== "chatgpt") {
+    return NextResponse.json({ error: "provider must be openai, anthropic or chatgpt" }, { status: 400 });
   }
   if (!models || typeof models !== "object" || Array.isArray(models)) {
     return NextResponse.json({ error: "Body must be { provider, models: { <slot>: <id or null> } }" }, { status: 400 });
@@ -47,7 +50,14 @@ export async function PUT(request: NextRequest) {
   if (!stored?.apiKey) {
     return NextResponse.json({ error: `Save a working ${PROVIDER_INFO[provider].label} key first.` }, { status: 400 });
   }
-  const available = await directModelIds(provider, stored.apiKey);
+  let available: Set<string> | null;
+  if (provider === "chatgpt") {
+    const session = parseChatGptSession(stored.apiKey);
+    const ids = session ? await chatGptAccessToken(db, user.id, session).then(chatGptModelIds).catch(() => null) : null;
+    available = ids ? new Set(ids) : null;
+  } else {
+    available = await directModelIds(provider, stored.apiKey);
+  }
   if (available) {
     for (const [slot, id] of Object.entries(slots)) {
       if (id && !available.has(id)) {

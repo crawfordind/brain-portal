@@ -9,15 +9,16 @@
  * each kind of work, which provider and whose key will actually run it.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, ExternalLink, KeyRound, Loader2, Plug, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardPaste, ExternalLink, KeyRound, LogIn, Loader2, Plug, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { Switch } from "@/components/ui/switch";
 import type { AiKeysStatus, EffectiveRoute } from "@/lib/ai/credentials/status";
 import { PROVIDER_INFO, type AiKeySummary, type AiProvider, type ProviderInfo } from "@/lib/ai/credentials/types";
 
@@ -49,10 +50,16 @@ const WORK_LABELS: Record<keyof AiKeysStatus["effective"], string> = {
   embedding: "Search index",
 };
 
+function routeName(provider: AiProvider, source: "user" | "server"): string {
+  if (provider === "chatgpt") return "your ChatGPT plan";
+  return `${PROVIDER_INFO[provider].label}, ${source === "user" ? "your key" : "this server's key"}`;
+}
+
 function routeText(route: EffectiveRoute): string {
   if (!route.ok) return route.message;
-  const who = route.source === "user" ? "your key" : "this server's key";
-  return `${PROVIDER_INFO[route.provider].label}, ${who}`;
+  const first = routeName(route.provider, route.source);
+  const backups = route.backups ?? [];
+  return backups.length > 0 ? `${first}; if that fails: ${backups.map((b) => routeName(b.provider, b.source)).join(", then ")}` : first;
 }
 
 export function AiProviderSettingsPanel() {
@@ -166,7 +173,19 @@ export function AiProviderSettingsPanel() {
           )}
 
           <div className="space-y-3">
-            {data.providers.map((info) => (
+            {data.providers.map((info) =>
+              info.signInOnly ? (
+                <ChatGptCard
+                  key={info.provider}
+                  info={info}
+                  saved={keyFor(info.provider)}
+                  access={data.chatgpt}
+                  background={data.routing.chatgptBackground}
+                  disabled={!data.encryptionReady}
+                  isActive={chatProvider === info.provider && data.effective.chat.ok}
+                  onStatus={setStatus}
+                />
+              ) : (
               <ProviderCard
                 key={info.provider}
                 info={info}
@@ -177,8 +196,11 @@ export function AiProviderSettingsPanel() {
                 onPrefer={() => setPreferred.mutate(info.provider)}
                 onStatus={setStatus}
               />
-            ))}
+              )
+            )}
           </div>
+
+          <RoutingSettings data={data} onStatus={setStatus} />
 
           {data.directModels && <DirectModels models={data.directModels} onStatus={setStatus} />}
 
@@ -408,6 +430,8 @@ function DirectModels({
           Which of your {label} models runs each job.
           {models.provider === "anthropic" &&
             " Everyday tasks run constantly in the background; a smaller Claude model there costs much less."}
+          {models.provider === "chatgpt" &&
+            " A lighter model for everyday tasks uses less of your plan's limit; it is picked by default."}
         </p>
       </div>
       {models.slots.map((slot) => (
@@ -439,6 +463,296 @@ function DirectModels({
           )}
         </div>
       ))}
+    </section>
+  );
+}
+
+/**
+ * Sign in with ChatGPT. OpenAI only lets open-source apps receive the sign-in
+ * on a 127.0.0.1 address, which a server can't listen on, so the last step is
+ * the person pasting that address back here.
+ */
+function ChatGptCard({
+  info,
+  saved,
+  access,
+  background,
+  disabled,
+  isActive,
+  onStatus,
+}: {
+  info: ProviderInfo;
+  saved: AiKeySummary | null;
+  access: AiKeysStatus["chatgpt"];
+  background: boolean;
+  disabled: boolean;
+  isActive: boolean;
+  onStatus: (status: AiKeysStatus) => void;
+}) {
+  const confirm = useConfirm();
+  const [step, setStep] = useState<"idle" | "paste">("idle");
+  const [pasted, setPasted] = useState("");
+  const [allowBackground, setAllowBackground] = useState(background);
+
+  const start = useMutation({
+    mutationFn: () =>
+      call<{ url: string }>("/api/ai-keys/chatgpt/start", {
+        method: "POST",
+        body: JSON.stringify({ background: allowBackground }),
+      }),
+    onSuccess: ({ url }) => {
+      setStep("paste");
+      // The tab was opened on the click itself, so pop-up blockers allow it.
+      const tab = pendingTab.current;
+      pendingTab.current = null;
+      if (tab && !tab.closed) tab.location.href = url;
+      else window.open(url, "_blank", "noopener");
+    },
+    onError: (error: Error) => {
+      pendingTab.current?.close();
+      pendingTab.current = null;
+      toast.error(error.message);
+    },
+  });
+  const pendingTab = useRef<Window | null>(null);
+  const begin = () => {
+    const tab = window.open("about:blank", "_blank");
+    if (tab) tab.opener = null;
+    pendingTab.current = tab;
+    start.mutate();
+  };
+
+  const finish = useMutation({
+    mutationFn: () =>
+      call<{ message: string; status: AiKeysStatus }>("/api/ai-keys/chatgpt/finish", {
+        method: "POST",
+        body: JSON.stringify({ callbackUrl: pasted }),
+      }),
+    onSuccess: ({ message, status }) => {
+      setPasted("");
+      setStep("idle");
+      onStatus(status);
+      toast.success(message);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const test = useMutation({
+    mutationFn: () =>
+      call<{ ok: boolean; message: string; status: AiKeysStatus }>("/api/ai-keys/test", {
+        method: "POST",
+        body: JSON.stringify({ provider: "chatgpt" }),
+      }),
+    onSuccess: ({ ok, message, status }) => {
+      onStatus(status);
+      if (ok) toast.success(message);
+      else toast.error(message);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const setBackground = useMutation({
+    mutationFn: (value: boolean) =>
+      call<AiKeysStatus>("/api/ai-keys", { method: "PATCH", body: JSON.stringify({ routing: { chatgptBackground: value } }) }),
+    onSuccess: onStatus,
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => call<AiKeysStatus>("/api/ai-keys?provider=chatgpt", { method: "DELETE" }),
+    onSuccess: (status) => {
+      onStatus(status);
+      toast.success("Signed out of ChatGPT");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return (
+    <div className="rounded-md border p-3 space-y-3">
+      <div className="min-w-0">
+        <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+          {info.label}
+          {saved && statusBadge(saved)}
+          {isActive && <Badge>Using ChatGPT plan</Badge>}
+        </p>
+        <p className="text-xs text-muted-foreground mt-0.5">{info.description}</p>
+        {saved && <p className="text-xs text-muted-foreground mt-1">{saved.hint}</p>}
+        {saved?.lastError && saved.status !== "ok" && <p className="text-xs text-destructive mt-1">{saved.lastError}</p>}
+      </div>
+
+      {!access.allowed ? (
+        <p className="text-xs text-muted-foreground">{access.reason}</p>
+      ) : saved && step === "idle" ? (
+        <div className="space-y-3">
+          <label className="flex min-h-11 items-start gap-3 text-sm">
+            <Switch
+              checked={background}
+              disabled={setBackground.isPending}
+              onCheckedChange={(value) => setBackground.mutate(value)}
+              aria-label="Use my ChatGPT plan for background work"
+            />
+            <span>
+              Use it for background work too
+              <span className="block text-xs text-muted-foreground">
+                Summaries, tags and contact reading run on their own. Off: only things you ask for use your plan.
+              </span>
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" className="min-h-11 sm:min-h-9" disabled={test.isPending} onClick={() => test.mutate()}>
+              {test.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+              Test
+            </Button>
+            <Button variant="outline" size="sm" className="min-h-11 sm:min-h-9" asChild>
+              <a href={access.manageUsageUrl} target="_blank" rel="noopener noreferrer">
+                Manage usage <ExternalLink className="h-3 w-3 ml-1.5" />
+              </a>
+            </Button>
+            <Button variant="outline" size="sm" className="min-h-11 sm:min-h-9" onClick={begin}>
+              <LogIn className="h-3.5 w-3.5 mr-1.5" />
+              Sign in again
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="min-h-11 sm:min-h-9 text-destructive"
+              disabled={remove.isPending}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: "Sign out of ChatGPT?",
+                  description: "Brain Portal stops using your ChatGPT plan, and AI work moves to your other keys.",
+                  confirmLabel: "Sign out",
+                  destructive: true,
+                });
+                if (ok) remove.mutate();
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+              Sign out
+            </Button>
+          </div>
+        </div>
+      ) : step === "idle" ? (
+        <div className="space-y-3">
+          <label className="flex min-h-11 items-start gap-3 text-sm">
+            <Switch
+              checked={allowBackground}
+              onCheckedChange={setAllowBackground}
+              aria-label="Also use my plan for background work"
+            />
+            <span>
+              Also use my plan for background work
+              <span className="block text-xs text-muted-foreground">
+                Summaries, tags and contact reading. You can change this later.
+              </span>
+            </span>
+          </label>
+          <Button className="w-full min-h-11 sm:min-h-9" disabled={disabled || start.isPending} onClick={begin}>
+            {start.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <LogIn className="h-4 w-4 mr-2" />}
+            Sign in with ChatGPT
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Uses your Plus or Pro plan&apos;s limits instead of API credits. Brain Portal can&apos;t see your chats or
+            your API key.
+          </p>
+        </div>
+      ) : (
+        <form
+          className="space-y-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (pasted.trim()) finish.mutate();
+          }}
+        >
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+            <li>In the ChatGPT tab that just opened, sign in and allow Brain Portal to use your plan.</li>
+            <li>
+              ChatGPT then sends you to a page that won&apos;t load, with an address starting{" "}
+              <span className="font-mono">http://127.0.0.1</span>. That&apos;s expected.
+            </li>
+            <li>Copy that whole address from the address bar and paste it here.</li>
+          </ol>
+          <label htmlFor="chatgpt-callback" className="sr-only">
+            Address from the ChatGPT sign-in
+          </label>
+          <Input
+            id="chatgpt-callback"
+            autoComplete="off"
+            spellCheck={false}
+            inputMode="url"
+            placeholder="http://127.0.0.1:1455/auth/callback?code=…"
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+            disabled={finish.isPending}
+            className="h-11 sm:h-10 font-mono text-xs"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" className="flex-1 sm:flex-none min-h-11 sm:min-h-9" disabled={finish.isPending || !pasted.trim()}>
+              {finish.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ClipboardPaste className="h-4 w-4 mr-2" />}
+              {finish.isPending ? "Connecting…" : "Finish sign-in"}
+            </Button>
+            <Button type="button" variant="ghost" className="min-h-11 sm:min-h-9" onClick={begin} disabled={start.isPending}>
+              Open ChatGPT again
+            </Button>
+            <Button type="button" variant="ghost" className="min-h-11 sm:min-h-9" onClick={() => { setStep("idle"); setPasted(""); }}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+/** Backups: what happens when the first choice can't answer. */
+function RoutingSettings({ data, onStatus }: { data: AiKeysStatus; onStatus: (status: AiKeysStatus) => void }) {
+  const update = useMutation({
+    mutationFn: (routing: Partial<AiKeysStatus["routing"]>) =>
+      call<AiKeysStatus>("/api/ai-keys", { method: "PATCH", body: JSON.stringify({ routing }) }),
+    onSuccess: onStatus,
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const ownKeys = data.keys.length;
+  if (ownKeys === 0) return null;
+
+  return (
+    <section aria-labelledby="ai-routing-backups" className="rounded-md border p-3 space-y-3">
+      <div>
+        <h3 id="ai-routing-backups" className="text-sm font-medium">When one fails</h3>
+        <p className="text-xs text-muted-foreground">
+          Brain Portal tries the cheapest option first: a ChatGPT plan before pay-per-token keys, and a light model for
+          quick background jobs. If it can&apos;t answer (out of credit or plan usage, rate limited, down, or a rejected
+          key), the next one takes over. The usage log says which one ran.
+        </p>
+      </div>
+      <label className="flex min-h-11 items-start gap-3 text-sm">
+        <Switch
+          checked={data.routing.fallback}
+          disabled={update.isPending}
+          onCheckedChange={(value) => update.mutate({ fallback: value })}
+          aria-label="Back up with my other keys"
+        />
+        <span>
+          Back up with my other keys
+          <span className="block text-xs text-muted-foreground">
+            {ownKeys > 1 ? "Your saved keys cover for each other." : "Add a second provider for this to matter."}
+          </span>
+        </span>
+      </label>
+      {data.serverFallbackAvailable && (
+        <label className="flex min-h-11 items-start gap-3 text-sm">
+          <Switch
+            checked={data.routing.serverFallback}
+            disabled={update.isPending || !data.routing.fallback}
+            onCheckedChange={(value) => update.mutate({ serverFallback: value })}
+            aria-label="Use this server's key as a last resort"
+          />
+          <span>
+            Then this server&apos;s key, as a last resort
+            <span className="block text-xs text-muted-foreground">Billed to whoever runs this server, not to you.</span>
+          </span>
+        </label>
+      )}
     </section>
   );
 }

@@ -3,7 +3,7 @@
  *
  * GET    /api/ai-keys                 what Settings shows (never a key)
  * PUT    /api/ai-keys                 { provider, apiKey } test with the provider, then save
- * PATCH  /api/ai-keys                 { preferred: provider | null } which key to use first
+ * PATCH  /api/ai-keys                 { preferred?: provider | null, routing?: { fallback?, serverFallback?, chatgptBackground? } }
  * DELETE /api/ai-keys?provider=...    remove one key
  *
  * Session-only on purpose: no MCP key can read, add or change these. A key
@@ -18,7 +18,9 @@ import { safeParseJson, isErrorResponse } from "@/lib/api/validation";
 import { encryptionSecret } from "@/lib/ai/credentials/crypto";
 import { invalidateAiCredentialCache } from "@/lib/ai/credentials/resolve";
 import { getAiKeysStatus } from "@/lib/ai/credentials/status";
-import { deleteUserAiKey, saveUserAiKey, updateAiPreferences } from "@/lib/ai/credentials/store";
+import { deleteUserAiKey, loadUserAiKeys, saveUserAiKey, updateAiPreferences } from "@/lib/ai/credentials/store";
+import { revokeChatGptSession } from "@/lib/ai/chatgpt/oauth";
+import { parseChatGptSession } from "@/lib/ai/chatgpt/types";
 import { isMissingUserAiKeysTable } from "@/lib/ai/credentials/schema";
 import {
   isAiProvider,
@@ -26,6 +28,7 @@ import {
   normalizeApiKey,
   parseAiKeyPolicy,
   PROVIDER_INFO,
+  type AiProvider,
 } from "@/lib/ai/credentials/types";
 import { verifyApiKey } from "@/lib/ai/credentials/verify";
 
@@ -107,12 +110,27 @@ export async function PATCH(request: NextRequest) {
 
   const body = await safeParseJson(request);
   if (isErrorResponse(body)) return body;
-  const { preferred } = body as { preferred?: unknown };
-  if (preferred !== null && !isAiProvider(preferred)) {
-    return NextResponse.json({ error: "preferred must be openrouter, openai, anthropic or null" }, { status: 400 });
+  const { preferred, routing } = body as { preferred?: unknown; routing?: unknown };
+  if (preferred !== undefined && preferred !== null && !isAiProvider(preferred)) {
+    return NextResponse.json({ error: "preferred must be openrouter, openai, anthropic, chatgpt or null" }, { status: 400 });
+  }
+  const routingUpdate: { fallback?: boolean; serverFallback?: boolean; chatgptBackground?: boolean } = {};
+  if (routing !== undefined) {
+    if (!routing || typeof routing !== "object" || Array.isArray(routing)) {
+      return NextResponse.json({ error: "routing must be an object" }, { status: 400 });
+    }
+    for (const key of ["fallback", "serverFallback", "chatgptBackground"] as const) {
+      const value = (routing as Record<string, unknown>)[key];
+      if (value === undefined) continue;
+      if (typeof value !== "boolean") return NextResponse.json({ error: `routing.${key} must be true or false` }, { status: 400 });
+      routingUpdate[key] = value;
+    }
   }
 
-  await updateAiPreferences(db, user.id, { provider: preferred });
+  await updateAiPreferences(db, user.id, {
+    ...(preferred !== undefined ? { provider: preferred as AiProvider | null } : {}),
+    ...(Object.keys(routingUpdate).length > 0 ? { routing: routingUpdate } : {}),
+  });
   invalidateAiCredentialCache(user.id);
   return NextResponse.json(await getAiKeysStatus(user.id), { headers: NO_STORE });
 }
@@ -125,6 +143,11 @@ export async function DELETE(request: NextRequest) {
   if (!isAiProvider(provider)) return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
 
   try {
+    if (provider === "chatgpt") {
+      // Tell OpenAI too, so the sign-in stops working everywhere, not just here.
+      const session = parseChatGptSession((await loadUserAiKeys(db, user.id)).find((k) => k.provider === "chatgpt")?.apiKey);
+      if (session) await revokeChatGptSession(session);
+    }
     await deleteUserAiKey(db, user.id, provider);
   } catch (error) {
     if (isMissingUserAiKeysTable(error)) return notMigrated();

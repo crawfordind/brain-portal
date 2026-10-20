@@ -15,6 +15,10 @@ import { getAiKeysStatus } from "@/lib/ai/credentials/status";
 import { loadUserAiKeys, recordKeyStatus } from "@/lib/ai/credentials/store";
 import { isAiProvider, PROVIDER_INFO } from "@/lib/ai/credentials/types";
 import { verifyApiKey } from "@/lib/ai/credentials/verify";
+import { ChatGptAuthError } from "@/lib/ai/chatgpt/oauth";
+import { chatGptAccessToken } from "@/lib/ai/chatgpt/session";
+import { chatGptModelIds } from "@/lib/ai/chatgpt/responses";
+import { parseChatGptSession } from "@/lib/ai/chatgpt/types";
 
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
@@ -38,6 +42,22 @@ export async function POST(request: NextRequest) {
   if (!stored.apiKey) {
     await recordKeyStatus(db, user.id, provider, "unreadable", "The key can no longer be decrypted.");
     message = "This key can no longer be read (the server's secret changed). Paste it again.";
+  } else if (provider === "chatgpt") {
+    // A plan is checked by renewing the sign-in if needed and listing its models.
+    const session = parseChatGptSession(stored.apiKey);
+    try {
+      if (!session) throw new ChatGptAuthError("This sign-in can't be read. Sign in with ChatGPT again.", { needsSignIn: true, status: 401 });
+      const token = await chatGptAccessToken(db, user.id, session);
+      const models = await chatGptModelIds(token);
+      ok = Boolean(models && models.length > 0);
+      message = ok
+        ? `Your ChatGPT plan is connected and offers ${models!.length} model${models!.length === 1 ? "" : "s"}.`
+        : "Signed in, but ChatGPT didn't list any models for this plan right now.";
+      if (ok) await recordKeyStatus(db, user.id, provider, "ok");
+    } catch (error) {
+      message = error instanceof Error ? error.message : "Couldn't check the ChatGPT sign-in.";
+      if (error instanceof ChatGptAuthError && error.needsSignIn) await recordKeyStatus(db, user.id, provider, "invalid", message);
+    }
   } else {
     const result = await verifyApiKey(provider, stored.apiKey);
     ok = result.ok;

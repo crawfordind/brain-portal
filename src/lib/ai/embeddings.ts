@@ -4,7 +4,8 @@
  */
 
 import { openAiCompatibleClient } from "./transport";
-import { isAuthError, noteKeyRejected, resolveAiCredential } from "./credentials/resolve";
+import { isAuthError, noteKeyRejected, resolveAiCredentialChain } from "./credentials/resolve";
+import { shouldFallBack } from "./fallback";
 import { db, queryOne, queryAll, mutate } from "@/lib/db/client";
 import type { Embedding, Note } from "@/lib/db/schema";
 import { hashContent } from "@/lib/processing/cache";
@@ -54,38 +55,45 @@ export async function generateEmbedding(
   // Truncate to max length
   const truncatedText = text.substring(0, MAX_INPUT_LENGTH);
 
-  const credential = await resolveAiCredential("embedding", { userId });
-  const model = credential.provider === "openai" ? DIRECT_OPENAI_EMBEDDING_MODEL : EMBEDDING_MODEL;
-  const startedAt = Date.now();
-  const log = (inputTokens: number, error: string | null) =>
-    credential.userId
-      ? recordAiUsage({
-          userId: credential.userId,
-          provider: credential.provider,
-          model,
-          source: credential.source,
-          kind: "embedding",
-          slot: "embedding",
-          purpose: purpose || currentAiPurpose() || "Search indexing",
-          prompt: truncatedText.slice(0, 1000),
-          inputTokens,
-          outputTokens: 0,
-          status: error ? "error" : "ok",
-          error,
-          durationMs: Date.now() - startedAt,
-        })
-      : Promise.resolve();
+  // Every key able to embed, best first; one that fails hands over to the next.
+  // They all produce the same 1536-dimension vectors, so mixing is safe.
+  const credentials = await resolveAiCredentialChain("embedding", { userId });
   let response;
-  try {
-    response = await openAiCompatibleClient(credential).embeddings.create({ model, input: truncatedText });
-  } catch (error) {
-    if (isAuthError(error)) await noteKeyRejected(credential, error instanceof Error ? error.message : String(error));
-    await log(0, error instanceof Error ? error.message : String(error));
-    throw error;
+  for (let i = 0; i < credentials.length; i++) {
+    const credential = credentials[i];
+    const model = credential.provider === "openai" ? DIRECT_OPENAI_EMBEDDING_MODEL : EMBEDDING_MODEL;
+    const startedAt = Date.now();
+    const log = (inputTokens: number, error: string | null) =>
+      credential.userId
+        ? recordAiUsage({
+            userId: credential.userId,
+            provider: credential.provider,
+            model,
+            source: credential.source,
+            kind: "embedding",
+            slot: "embedding",
+            purpose: purpose || currentAiPurpose() || "Search indexing",
+            prompt: truncatedText.slice(0, 1000),
+            inputTokens,
+            outputTokens: 0,
+            status: error ? "error" : "ok",
+            error,
+            durationMs: Date.now() - startedAt,
+          })
+        : Promise.resolve();
+    try {
+      response = await openAiCompatibleClient(credential).embeddings.create({ model, input: truncatedText });
+      await log(tokenCount(response.usage?.prompt_tokens), null);
+      break;
+    } catch (error) {
+      if (isAuthError(error)) await noteKeyRejected(credential, error instanceof Error ? error.message : String(error));
+      await log(0, error instanceof Error ? error.message : String(error));
+      if (i < credentials.length - 1 && shouldFallBack(error)) continue;
+      throw error;
+    }
   }
-  await log(tokenCount(response.usage?.prompt_tokens), null);
 
-  if (!response.data?.[0]?.embedding) {
+  if (!response?.data?.[0]?.embedding) {
     throw new Error("Embedding API returned no data");
   }
   return response.data[0].embedding;

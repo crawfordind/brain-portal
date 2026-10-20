@@ -36,6 +36,16 @@ export const USER_AI_KEYS_STATEMENTS: Array<{ label: string; sql: string }> = [
   },
 ];
 
+/**
+ * Columns added after the table first shipped. `refresh_lock_until` is a
+ * short lease that serializes refreshing a ChatGPT sign-in: its refresh token
+ * works once, so two server instances refreshing together would lock the
+ * person out.
+ */
+export const USER_AI_KEYS_COLUMNS: Array<{ label: string; sql: string }> = [
+  { label: "user_ai_keys.refresh_lock_until", sql: "ALTER TABLE user_ai_keys ADD COLUMN refresh_lock_until TEXT" },
+];
+
 export async function applyUserAiKeysMigration(
   client: Pick<Client, "execute">,
   log: (message: string) => void = () => {}
@@ -43,6 +53,15 @@ export async function applyUserAiKeysMigration(
   for (const { label, sql } of USER_AI_KEYS_STATEMENTS) {
     await client.execute(sql);
     log(`✓ ${label}`);
+  }
+  for (const { label, sql } of USER_AI_KEYS_COLUMNS) {
+    try {
+      await client.execute(sql);
+      log(`✓ ${label}`);
+    } catch (error) {
+      if (!/duplicate column/i.test(error instanceof Error ? error.message : String(error))) throw error;
+      log(`✓ ${label} (already there)`);
+    }
   }
 }
 
