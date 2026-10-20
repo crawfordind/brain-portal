@@ -39,6 +39,16 @@ export interface DirectModelSlot {
   options: string[] | null;
 }
 
+/** One job, the model that runs it now, and whose key pays. */
+export interface JobModel {
+  slot: ModelSlot;
+  label: string;
+  /** Null when no key can run this job. */
+  provider: AiProvider | null;
+  source: "user" | "server" | null;
+  model: string | null;
+}
+
 export interface AiKeysStatus {
   policy: AiKeyPolicy;
   personalKeysEnabled: boolean;
@@ -52,7 +62,16 @@ export interface AiKeysStatus {
   effective: Record<AiCapability, EffectiveRoute>;
   /** Model choices for the provider running chat, when it is OpenAI or Anthropic. */
   directModels: { provider: DirectProvider; slots: DirectModelSlot[] } | null;
+  /** Which model each job runs on right now, as the next call would choose it. */
+  jobs: JobModel[];
 }
+
+/** The embedding model is fixed, so stored vectors stay comparable; see embeddings.ts. */
+const EMBEDDING_MODEL_BY_PROVIDER: Record<AiProvider, string | null> = {
+  openrouter: "openai/text-embedding-3-small",
+  openai: "text-embedding-3-small",
+  anthropic: null,
+};
 
 async function route(capability: AiCapability, userId: string): Promise<{ route: EffectiveRoute; apiKey?: string }> {
   try {
@@ -94,6 +113,12 @@ export async function getAiKeysStatus(userId: string, env = process.env): Promis
     };
   }
 
+  const jobs = await jobModels(userId, { chat: chat.route, vision: vision.route, embedding: embedding.route }, {
+    chatKey: chat.apiKey,
+    visionKey: vision.apiKey,
+    chosen: prefs.modelsByProvider,
+  });
+
   return {
     policy,
     personalKeysEnabled: policy !== "server_only",
@@ -104,7 +129,56 @@ export async function getAiKeysStatus(userId: string, env = process.env): Promis
     preferred: prefs.provider,
     effective: { chat: chat.route, vision: vision.route, embedding: embedding.route },
     directModels,
+    jobs,
   };
+}
+
+async function jobModels(
+  userId: string,
+  routes: Record<AiCapability, EffectiveRoute>,
+  keys: { chatKey?: string; visionKey?: string; chosen: Partial<Record<AiProvider, Record<string, string>>> }
+): Promise<JobModel[]> {
+  let openRouterPrimary: Partial<Record<ModelSlot, string>> | null = null;
+  const needsOpenRouter = (Object.values(routes) as EffectiveRoute[]).some((r) => r.ok && r.provider === "openrouter");
+  if (needsOpenRouter) {
+    try {
+      // Lazy: pulls the catalog fetch and the database preference read.
+      const { resolveAllSlots } = await import("../models");
+      const { resolved } = await resolveAllSlots(userId);
+      openRouterPrimary = Object.fromEntries(MODEL_SLOTS.map((slot) => [slot, resolved[slot].primary]));
+    } catch {
+      openRouterPrimary = null;
+    }
+  }
+
+  const directAvailable = new Map<string, Set<string> | null>();
+  const directFirst = async (provider: DirectProvider, slot: ModelSlot, apiKey: string | undefined) => {
+    if (!apiKey) return null;
+    if (!directAvailable.has(provider)) directAvailable.set(provider, await directModelIds(provider, apiKey));
+    return directModelChain({
+      provider,
+      slot,
+      userChoice: keys.chosen[provider]?.[slot],
+      availableIds: directAvailable.get(provider) ?? null,
+    })[0] ?? null;
+  };
+
+  const out: JobModel[] = [];
+  for (const slot of MODEL_SLOTS) {
+    const capability: AiCapability = slot === "vision" ? "vision" : slot === "embedding" ? "embedding" : "chat";
+    const route = routes[capability];
+    const base = { slot, label: SLOT_DEFINITIONS[slot].label };
+    if (!route.ok) {
+      out.push({ ...base, provider: null, source: null, model: null });
+      continue;
+    }
+    let model: string | null;
+    if (slot === "embedding") model = EMBEDDING_MODEL_BY_PROVIDER[route.provider];
+    else if (route.provider === "openrouter") model = openRouterPrimary?.[slot] ?? null;
+    else model = await directFirst(route.provider, slot, capability === "vision" ? keys.visionKey : keys.chatKey);
+    out.push({ ...base, provider: route.provider, source: route.source, model });
+  }
+  return out;
 }
 
 /** Hide embedding, audio and image-generation models from a chat picker. */

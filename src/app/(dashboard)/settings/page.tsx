@@ -29,6 +29,7 @@ import { NotificationPreferencesPanel } from "@/components/notifications/notific
 import { GuardrailsSettingsPanel } from "@/components/settings/guardrails-settings";
 import { ModelSettingsPanel } from "@/components/settings/model-settings";
 import { AiProviderSettingsPanel } from "@/components/settings/ai-provider-settings";
+import { AiUsageSettingsPanel } from "@/components/settings/ai-usage-settings";
 import { McpKeysPanel } from "@/components/settings/mcp-keys-panel";
 import { SharingSettingsPanel } from "@/components/settings/sharing-settings";
 import { VaultExportDialog } from "@/components/export/vault-export-dialog";
@@ -296,6 +297,20 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent>
           <AiProviderSettingsPanel />
+        </CardContent>
+      </Card>
+
+      {/* AI usage: tokens per model, and what each call sent */}
+      <Card id="ai-usage" className="scroll-mt-20">
+        <CardHeader>
+          <CardTitle className="text-base md:text-lg">AI usage</CardTitle>
+          <CardDescription className="text-xs md:text-sm">
+            How many tokens each model has used, and what every recent AI call was for, which model ran it and
+            the prompt it sent.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AiUsageSettingsPanel />
         </CardContent>
       </Card>
 

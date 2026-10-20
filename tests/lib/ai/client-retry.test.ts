@@ -33,7 +33,7 @@ describe('completeWithMeta', () => {
 
     const result = await completeWithMeta('prompt');
 
-    expect(result).toEqual({ content: 'hello', finishReason: 'length', model: 'test-model' });
+    expect(result).toMatchObject({ content: 'hello', finishReason: 'length', model: 'test-model' });
   });
 
   it('retries transient upstream failures and succeeds', async () => {

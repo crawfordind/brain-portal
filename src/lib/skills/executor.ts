@@ -127,7 +127,11 @@ export async function executeSkill(
     }
 
     // Whatever the skill calls bills this account's own AI key, when it has one.
-    const result: SkillResult = await runWithAiUser(userId, () => skill.handler(paramsWithDefaults, context));
+    const result: SkillResult = await runWithAiUser(
+      userId,
+      () => skill.handler(paramsWithDefaults, context),
+      `Skill: ${skill.definition.name || skillId}`
+    );
     const durationMs = Date.now() - startTime;
 
     // Mark completed

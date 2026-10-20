@@ -90,6 +90,7 @@ export async function generateHealthInsightsForUser(
     let alertText: string;
     try {
       alertText = await complete(prompt, {
+        purpose: "Project health",
         slot: 'fast',
         userId,
         maxTokens: 150,

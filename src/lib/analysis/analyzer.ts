@@ -183,6 +183,7 @@ ${annotationSection ? `\n${annotationSection}\n\nLet these markings steer the an
   }
 
   const aiResult = await completeJSON<AIAnalysis>(prompt, {
+    purpose: "Note analysis",
     system: ANALYSIS_SYSTEM_PROMPT,
     slot: config.slot,
     userId,

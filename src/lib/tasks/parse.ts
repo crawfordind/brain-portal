@@ -46,6 +46,7 @@ export async function parseTaskNL(
 Task: "${content.replace(/"/g, "'")}"`;
 
     const parsed = await completeJSON<ParsedTask>(prompt, {
+      purpose: "Task parsing",
       slot: "fast",
       userId,
       maxTokens: 256,

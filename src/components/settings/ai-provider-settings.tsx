@@ -135,6 +135,21 @@ export function AiProviderSettingsPanel() {
             );
           })}
         </ul>
+        {data.jobs?.length > 0 && (
+          <div className="pt-1">
+            <h4 className="text-xs font-medium text-muted-foreground">Model for each job</h4>
+            <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+              {data.jobs.map((job) => (
+                <div key={job.slot} className="contents">
+                  <dt className="text-muted-foreground">{job.label}</dt>
+                  <dd className="min-w-0 truncate font-mono text-xs leading-5" title={job.model ?? undefined}>
+                    {job.model ?? (job.provider ? "chosen when it runs" : "not available")}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        )}
       </section>
 
       {!data.personalKeysEnabled ? (

@@ -87,6 +87,7 @@ export async function GET(
     try {
       const prompt = buildHealthAlertPrompt(assessment);
       summary = await complete(prompt, {
+        purpose: "Project health",
         slot: 'fast',
         userId: user.id,
         maxTokens: 150,

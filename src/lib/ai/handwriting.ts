@@ -121,6 +121,7 @@ export async function recognizeHandwriting(
     ],
     {
       capability: "vision",
+      purpose: "Handwriting recognition",
       slot: "vision",
       model: options.model,
       userId: options.userId,

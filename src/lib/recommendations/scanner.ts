@@ -242,6 +242,7 @@ export async function scanForTasks(
       // 4f. Call LLM if not cached
       if (!llmResponse) {
         llmResponse = await completeJSON<LLMTaskResponse>(prompt, {
+          purpose: "Task recommendations",
           maxTokens: 500
         });
 

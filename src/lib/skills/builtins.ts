@@ -257,6 +257,7 @@ const summarizeContentHandler: SkillHandler = async (params, context) => {
   const prompt = `${styleInstructions[style] || styleInstructions.concise}\n\nContent:\n${truncated}`;
 
   const summary = await complete(prompt, {
+    purpose: "Skill: summarize",
     slot: "fast",
     userId: context.userId,
     maxTokens: 500,
@@ -557,6 +558,7 @@ const generateInsightsHandler: SkillHandler = async (params, context) => {
   }
 
   const response = await completeJSON<InsightResponse>(prompt, {
+    purpose: "Insights",
     system: INSIGHT_SYSTEM_PROMPT,
     slot: "deep",
     userId: context.userId,
@@ -679,6 +681,7 @@ const dailyDigestHandler: SkillHandler = async (params, context) => {
 Be direct and specific. State what actually moved forward and flag anything that looks stalled or time-sensitive. No cheerleading.`;
 
       digest.ai_summary = await complete(summaryPrompt, {
+        purpose: "Daily digest",
         slot: "fast",
         userId: context.userId,
         maxTokens: 200,
@@ -1164,6 +1167,7 @@ ${entrySummaries.substring(0, 6000)}
 Respond in JSON: { "summary": "...", "highlights": ["...", "..."] }`;
 
       const response = await complete(prompt, {
+        purpose: "Capture triage",
         slot: "fast",
         userId: context.userId,
         maxTokens: 500,

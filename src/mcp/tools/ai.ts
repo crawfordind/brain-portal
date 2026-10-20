@@ -52,7 +52,7 @@ export function registerAITools(server: McpServer, ctx: ToolContext) {
       if (!guard.ok) return errorResult(guard);
       const userId = guard.userId;
 
-      const queryEmbedding = await generateEmbedding(params.query, userId);
+      const queryEmbedding = await generateEmbedding(params.query, userId, "Semantic search (MCP)");
 
       const allEmbeddings = await query<{
         entity_id: string;
@@ -217,7 +217,7 @@ export function registerAITools(server: McpServer, ctx: ToolContext) {
             content: `Analyze this content and generate insights:\n${JSON.stringify(context, null, 2)}\n\nRespond as JSON: { "insights": [{ "type": "connection|pattern|gap|action|question", "title": "...", "content": "...", "confidence": 0.0-1.0 }] }`,
           },
         ],
-        { slot: "deep", userId, maxTokens: 2048, temperature: 0.5 }
+        { purpose: "Insights (MCP)", slot: "deep", userId, maxTokens: 2048, temperature: 0.5 }
       );
 
       const raw = response.content || "{}";

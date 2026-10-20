@@ -186,6 +186,7 @@ ${body}
 ${OUTPUT_SHAPE}`;
 
   const raw = await completeJSON<unknown>(prompt, {
+    purpose: "Note lenses: read deeper",
     system: LENS_EXTRACTION_SYSTEM_PROMPT,
     slot: getTierConfig("full_llm").slot,
     userId: args.userId,

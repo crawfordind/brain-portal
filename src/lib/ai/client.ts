@@ -14,6 +14,9 @@ import {
   type ResolvedCredential,
 } from "./credentials/resolve";
 import { PROVIDER_INFO, type AiProvider } from "./credentials/types";
+import { currentAiPurpose } from "./credentials/context";
+import { recordAiUsage } from "./usage/store";
+import { formatPromptPreview, SLOT_PURPOSE, tokenCount, type UsageKind, type UsageTokens } from "./usage/types";
 
 // The server's own OpenRouter client (OPENROUTER_API_KEY).
 //
@@ -82,6 +85,8 @@ export async function streamComplete(
     temperature?: number;
     /** The account chatting; their own key pays when they have one. */
     userId?: string | null;
+    /** What the usage log calls this call. Defaults to "Chat". */
+    purpose?: string;
   } = {}
 ): Promise<ReadableStream<Uint8Array>> {
   const { maxTokens = 4096, temperature = 0.7 } = options;
@@ -94,6 +99,19 @@ export async function streamComplete(
     "chat"
   );
   const chain = target.chain;
+  const startedAt = Date.now();
+  const served: { model: string; usage: UsageTokens } = { model: chain[0], usage: { inputTokens: 0, outputTokens: 0 } };
+  const log = (status: "ok" | "error", error: string | null) =>
+    logUsage(target, {
+      kind: "stream",
+      model: served.model,
+      purpose: options.purpose || "Chat",
+      messages,
+      usage: served.usage,
+      status,
+      error,
+      startedAt,
+    });
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -109,6 +127,10 @@ export async function streamComplete(
             messages,
             maxTokens,
             effort: claudeEffortForSlot("chat"),
+            onMeta: (meta) => {
+              if (meta.model) served.model = meta.model;
+              served.usage = meta.usage;
+            },
           })) {
             send(text);
           }
@@ -121,19 +143,40 @@ export async function streamComplete(
               ? { models: wireFallbackModels(chain) }
               : {}),
             stream: true,
+            // The last chunk then carries the token counts.
+            stream_options: { include_usage: true },
           } as OpenAI.ChatCompletionCreateParamsStreaming);
 
           for await (const chunk of stream) {
+            if (chunk.model) served.model = chunk.model;
+            if (chunk.usage) served.usage = openAiUsage(chunk.usage);
             const content = chunk.choices[0]?.delta?.content;
             if (content) send(content);
           }
         }
 
+        // Which model answered, whose key paid, and what it cost in tokens,
+        // so the chat can say so under the answer.
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              meta: {
+                model: served.model,
+                provider: target.credential.provider,
+                source: target.credential.source,
+                inputTokens: served.usage.inputTokens,
+                outputTokens: served.usage.outputTokens,
+              },
+            })}\n\n`
+          )
+        );
         controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
         controller.close();
+        await log("ok", null);
       } catch (error) {
         await handleAuthFailure(target.credential, error);
         const message = describeProviderError(target.credential, error);
+        await log("error", message);
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`)
         );
@@ -177,6 +220,47 @@ function describeProviderError(credential: ResolvedCredential, error: unknown): 
   return raw;
 }
 
+function openAiUsage(usage: { prompt_tokens?: number | null; completion_tokens?: number | null } | null | undefined): UsageTokens {
+  return { inputTokens: tokenCount(usage?.prompt_tokens), outputTokens: tokenCount(usage?.completion_tokens) };
+}
+
+/**
+ * One line in the account's usage log and a bump to its running total. Never
+ * throws and never changes the call's result; work that belongs to no account
+ * is not logged.
+ */
+async function logUsage(
+  target: ChatTarget,
+  entry: {
+    kind: UsageKind;
+    model: string;
+    purpose: string;
+    messages: OpenAI.ChatCompletionMessageParam[];
+    usage: UsageTokens;
+    status: "ok" | "error";
+    error: string | null;
+    startedAt: number;
+  }
+): Promise<void> {
+  const userId = target.credential.userId;
+  if (!userId) return;
+  await recordAiUsage({
+    userId,
+    provider: target.credential.provider,
+    model: entry.model,
+    source: target.credential.source,
+    kind: entry.kind,
+    slot: target.slot,
+    purpose: entry.purpose,
+    prompt: formatPromptPreview(entry.messages),
+    inputTokens: entry.usage.inputTokens,
+    outputTokens: entry.usage.outputTokens,
+    status: entry.status,
+    error: entry.error,
+    durationMs: Date.now() - entry.startedAt,
+  });
+}
+
 export interface CompletionOptions {
   system?: string;
   /** A specific model id. Prefer `slot` — a pinned id is what goes stale. */
@@ -201,6 +285,11 @@ export interface CompletionOptions {
   retries?: number;
   /** Base delay for exponential backoff between retries. */
   retryDelayMs?: number;
+  /**
+   * What the usage log calls this call ("Note summary", "Weekly review").
+   * Falls back to the background job's purpose, then to the slot's.
+   */
+  purpose?: string;
 }
 
 export interface CompletionResult {
@@ -211,6 +300,11 @@ export interface CompletionResult {
   model: string;
   /** Ids skipped because the provider no longer offers them. */
   skippedModels?: string[];
+  /** Token counts the provider reported; zero when it reported none. */
+  usage?: UsageTokens;
+  /** Whose key paid, and which provider ran it. */
+  provider?: AiProvider;
+  source?: "user" | "server";
 }
 
 /**
@@ -389,14 +483,50 @@ export async function completeMessages(
   messages: OpenAI.ChatCompletionMessageParam[],
   options: CompletionOptions & { capability?: "chat" | "vision" } = {}
 ): Promise<CompletionResult> {
+  const target = await resolveChatTarget(options, options.capability ?? "chat");
+  const startedAt = Date.now();
+  const purpose =
+    options.purpose || currentAiPurpose() || SLOT_PURPOSE[target.slot] || "AI task";
+  const kind: UsageKind = options.capability === "vision" ? "vision" : "chat";
+  try {
+    const result = await completeMessagesWith(target, messages, options);
+    await logUsage(target, {
+      kind,
+      model: result.model,
+      purpose,
+      messages,
+      usage: result.usage ?? { inputTokens: 0, outputTokens: 0 },
+      status: "ok",
+      error: null,
+      startedAt,
+    });
+    return { ...result, provider: target.credential.provider, source: target.credential.source };
+  } catch (error) {
+    await logUsage(target, {
+      kind,
+      model: target.chain[0],
+      purpose,
+      messages,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+      startedAt,
+    });
+    throw error;
+  }
+}
+
+async function completeMessagesWith(
+  target: ChatTarget,
+  messages: OpenAI.ChatCompletionMessageParam[],
+  options: CompletionOptions
+): Promise<CompletionResult> {
   const {
     maxTokens = 2048,
     temperature = 0.7,
     retries = 0,
     retryDelayMs = 1000,
   } = options;
-
-  const target = await resolveChatTarget(options, options.capability ?? "chat");
   const { credential, chain } = target;
   const skippedModels: string[] = [];
   let lastError: unknown;
@@ -450,6 +580,7 @@ export async function completeMessages(
           content: choice?.message?.content ?? "",
           finishReason: choice?.finish_reason ?? null,
           model: response.model || model,
+          usage: openAiUsage(response.usage),
           ...(skippedModels.length > 0 ? { skippedModels } : {}),
         };
       } catch (error) {
@@ -680,6 +811,7 @@ export async function generateInsights(
   }
 
   const response = await completeJSON<AIResponse>(prompt, {
+    purpose: "Insights",
     system: systemPrompt,
     slot: "deep",
     userId: options?.userId,
@@ -801,6 +933,7 @@ export async function generateWeeklyReview(
   }
 
   const review = await complete(prompt, {
+    purpose: "Weekly review",
     system: weeklySystemPrompt,
     model: MINIMAX_MODEL, // Complex synthesis benefits from M2.5's planning optimization
     // On a direct OpenAI or Anthropic key the pinned id doesn't apply; the

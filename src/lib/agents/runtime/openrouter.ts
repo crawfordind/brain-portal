@@ -85,6 +85,7 @@ export async function runOpenRouterTask(
     // that provider's agent model instead.
     userId: request.userId,
     slot: "agent" as const,
+    purpose: request.isRevision ? "Delegated task (revision)" : "Delegated task",
     maxTokens,
     temperature: request.isRevision ? 0.4 : 0.7,
     retries: 2,

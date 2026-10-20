@@ -12,6 +12,7 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAppUrl } from "@/lib/app-url";
 import type { ResolvedCredential } from "./credentials/resolve";
+import { ANTHROPIC_API_URL } from "./credentials/verify";
 
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export const OPENAI_BASE_URL = "https://api.openai.com/v1";
@@ -47,8 +48,11 @@ export function openAiCompatibleClient(credential: Pick<ResolvedCredential, "pro
             baseURL: OPENROUTER_BASE_URL,
             apiKey: credential.apiKey,
             defaultHeaders: { "HTTP-Referer": getAppUrl(), "X-Title": "Brain Portal" },
+            // The SDK would otherwise add these from OPENAI_ORG_ID / OPENAI_PROJECT_ID.
+            organization: null,
+            project: null,
           }
-        : { baseURL: OPENAI_BASE_URL, apiKey: credential.apiKey }
+        : { baseURL: OPENAI_BASE_URL, apiKey: credential.apiKey, organization: null, project: null }
     )
   );
 }
@@ -59,7 +63,13 @@ export function anthropicClient(credential: Pick<ResolvedCredential, "provider" 
   const hit = clients.get(key);
   if (hit instanceof Anthropic) return hit;
   // Retries stay in our own loop (client.ts), so one policy covers every provider.
-  return remember(key, new Anthropic({ apiKey: credential.apiKey, maxRetries: 0 }));
+  // baseURL and authToken are pinned because the SDK otherwise reads
+  // ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN from the server's environment and
+  // sends the person's key there, or beside a second credential.
+  return remember(
+    key,
+    new Anthropic({ apiKey: credential.apiKey, authToken: null, baseURL: ANTHROPIC_API_URL, maxRetries: 0 })
+  );
 }
 
 /** Test seam. */

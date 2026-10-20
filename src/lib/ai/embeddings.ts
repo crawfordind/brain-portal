@@ -9,6 +9,9 @@ import { db, queryOne, queryAll, mutate } from "@/lib/db/client";
 import type { Embedding, Note } from "@/lib/db/schema";
 import { hashContent } from "@/lib/processing/cache";
 import { cosineSimilarity } from "./vector";
+import { currentAiPurpose } from "./credentials/context";
+import { recordAiUsage } from "./usage/store";
+import { tokenCount } from "./usage/types";
 
 // Re-exported for backward compatibility — the pure implementation now lives
 // in ./vector so it can be imported without the OpenAI client.
@@ -42,21 +45,45 @@ export interface SimilarNote {
  * text-embedding-3-small vectors, so stored vectors stay comparable whichever
  * key made them.
  */
-export async function generateEmbedding(text: string, userId?: string | null): Promise<number[]> {
+export async function generateEmbedding(
+  text: string,
+  userId?: string | null,
+  /** What the usage log calls it; a background job's own label otherwise. */
+  purpose?: string
+): Promise<number[]> {
   // Truncate to max length
   const truncatedText = text.substring(0, MAX_INPUT_LENGTH);
 
   const credential = await resolveAiCredential("embedding", { userId });
+  const model = credential.provider === "openai" ? DIRECT_OPENAI_EMBEDDING_MODEL : EMBEDDING_MODEL;
+  const startedAt = Date.now();
+  const log = (inputTokens: number, error: string | null) =>
+    credential.userId
+      ? recordAiUsage({
+          userId: credential.userId,
+          provider: credential.provider,
+          model,
+          source: credential.source,
+          kind: "embedding",
+          slot: "embedding",
+          purpose: purpose || currentAiPurpose() || "Search indexing",
+          prompt: truncatedText.slice(0, 1000),
+          inputTokens,
+          outputTokens: 0,
+          status: error ? "error" : "ok",
+          error,
+          durationMs: Date.now() - startedAt,
+        })
+      : Promise.resolve();
   let response;
   try {
-    response = await openAiCompatibleClient(credential).embeddings.create({
-      model: credential.provider === "openai" ? DIRECT_OPENAI_EMBEDDING_MODEL : EMBEDDING_MODEL,
-      input: truncatedText,
-    });
+    response = await openAiCompatibleClient(credential).embeddings.create({ model, input: truncatedText });
   } catch (error) {
     if (isAuthError(error)) await noteKeyRejected(credential, error instanceof Error ? error.message : String(error));
+    await log(0, error instanceof Error ? error.message : String(error));
     throw error;
   }
+  await log(tokenCount(response.usage?.prompt_tokens), null);
 
   if (!response.data?.[0]?.embedding) {
     throw new Error("Embedding API returned no data");
@@ -302,7 +329,7 @@ export async function findSimilarToText(
   limit: number = 10
 ): Promise<SimilarNote[]> {
   // Generate embedding for the query text
-  const queryEmbedding = await generateEmbedding(text, userId);
+  const queryEmbedding = await generateEmbedding(text, userId, "Semantic search");
 
   // Get all note embeddings for this user
   const allEmbeddings = await queryAll<{
