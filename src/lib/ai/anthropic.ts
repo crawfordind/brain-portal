@@ -22,6 +22,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
+import { tokenCount, type UsageTokens } from "./usage/types";
 
 type BetaMessageParam = Anthropic.Beta.BetaMessageParam;
 type BetaContentBlockParam = Anthropic.Beta.BetaContentBlockParam;
@@ -132,6 +133,20 @@ export interface ClaudeResult {
   /** Mapped onto OpenAI's vocabulary: "stop" | "length" | the raw reason. */
   finishReason: string | null;
   model: string;
+  usage: UsageTokens;
+}
+
+/** Claude counts cached input separately; all of it is input the call read. */
+function claudeInputTokens(usage: {
+  input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+} | null | undefined): number {
+  return (
+    tokenCount(usage?.input_tokens) +
+    tokenCount(usage?.cache_creation_input_tokens) +
+    tokenCount(usage?.cache_read_input_tokens)
+  );
 }
 
 function mapStopReason(reason: string | null): string | null {
@@ -158,20 +173,46 @@ export async function claudeComplete(
     .map((block) => block.text)
     .join("");
 
-  return { content, finishReason: mapStopReason(response.stop_reason), model: response.model || input.model };
+  return {
+    content,
+    finishReason: mapStopReason(response.stop_reason),
+    model: response.model || input.model,
+    usage: { inputTokens: claudeInputTokens(response.usage), outputTokens: tokenCount(response.usage?.output_tokens) },
+  };
 }
 
-/** Text deltas only; thinking blocks are not shown to the person. */
+/**
+ * Text deltas only; thinking blocks are not shown to the person. `onMeta`
+ * receives the model that answered and the token counts as they arrive.
+ */
 export async function* claudeStream(
   client: Anthropic,
-  input: { model: string; messages: OpenAI.ChatCompletionMessageParam[]; maxTokens: number; effort: Effort }
+  input: {
+    model: string;
+    messages: OpenAI.ChatCompletionMessageParam[];
+    maxTokens: number;
+    effort: Effort;
+    onMeta?: (meta: { model?: string; usage: UsageTokens }) => void;
+  }
 ): AsyncGenerator<string> {
+  const usage: UsageTokens = { inputTokens: 0, outputTokens: 0 };
   const stream = await client.beta.messages.create({
     ...requestBody({ ...input, stream: true }),
     stream: true,
   } as Anthropic.Beta.MessageCreateParamsStreaming);
 
   for await (const event of stream) {
+    if (event.type === "message_start") {
+      usage.inputTokens = claudeInputTokens(event.message.usage);
+      usage.outputTokens = tokenCount(event.message.usage?.output_tokens);
+      input.onMeta?.({ model: event.message.model, usage: { ...usage } });
+    } else if (event.type === "message_delta" && event.usage) {
+      // Cumulative, not a delta.
+      usage.outputTokens = tokenCount(event.usage.output_tokens) || usage.outputTokens;
+      const input_ = claudeInputTokens(event.usage as Parameters<typeof claudeInputTokens>[0]);
+      if (input_) usage.inputTokens = input_;
+      input.onMeta?.({ usage: { ...usage } });
+    }
     if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
       yield event.delta.text;
     } else if (event.type === "message_delta" && event.delta.stop_reason === "refusal") {

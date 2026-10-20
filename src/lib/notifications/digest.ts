@@ -191,6 +191,7 @@ ${data.insights.length > 0 ? `\nRecent insights:\n${data.insights.map((i) => `- 
 
   try {
     const digest = await complete(context, {
+      purpose: "Daily digest email",
       system: `You are an executive assistant providing a brief daily intelligence brief. Be warm but concise.
 Analyze the user's day in 3-4 sentences:
 1. Highlight productivity wins and momentum

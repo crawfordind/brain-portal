@@ -190,6 +190,7 @@ Respond in JSON:
 }`;
 
       const response = await complete(prompt, {
+        purpose: "Monthly journal",
         slot: "fast",
         userId: user.id,
         maxTokens: 500,

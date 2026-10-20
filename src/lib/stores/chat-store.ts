@@ -6,6 +6,16 @@ export interface ChatMessageItem {
   content: string;
   isStreaming?: boolean;
   created_at: string;
+  /** Which model answered, and what it took. Assistant messages only. */
+  meta?: ChatMessageMeta;
+}
+
+export interface ChatMessageMeta {
+  model: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  /** "user": the account's own key. "server": the server's. */
+  source?: "user" | "server";
 }
 
 export type ChatContextType = "executive" | "project" | "note" | "task" | "item" | "general";
@@ -45,7 +55,7 @@ export interface ChatStore {
   askAboutItem: (subject: ChatItemSubject) => void;
   addMessage: (msg: ChatMessageItem) => void;
   updateStreamingMessage: (content: string) => void;
-  finalizeStreamingMessage: (id: string, content: string) => void;
+  finalizeStreamingMessage: (id: string, content: string, meta?: ChatMessageMeta) => void;
   setStreaming: (v: boolean) => void;
   setError: (e: string | null) => void;
   setConversationId: (id: string | null) => void;
@@ -133,7 +143,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return { messages };
     }),
 
-  finalizeStreamingMessage: (id, content) =>
+  finalizeStreamingMessage: (id, content, meta) =>
     set((state) => {
       const messages = [...state.messages];
       const last = messages[messages.length - 1];
@@ -143,6 +153,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           id,
           content,
           isStreaming: false,
+          ...(meta ? { meta } : {}),
         };
       }
       return { messages, isStreaming: false };

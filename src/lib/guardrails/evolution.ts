@@ -114,6 +114,7 @@ If there isn't enough signal to update, return the current learned context uncha
 
   try {
     const response = await complete(prompt, {
+      purpose: "Guardrail suggestions",
       slot: "fast",
       userId,
       maxTokens: 300,

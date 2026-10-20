@@ -11,6 +11,7 @@ import {
 import { embedNote } from "@/lib/ai/embeddings";
 import { complete } from "@/lib/ai/client";
 import { runWithAiUser } from "@/lib/ai/credentials/context";
+import { jobPurpose } from "@/lib/ai/usage/types";
 import type { Note, Capture, ProcessingJob } from "@/lib/db/schema";
 
 // GET /api/process - Get queue stats
@@ -63,7 +64,7 @@ export async function POST(request: NextRequest) {
 
         try {
           // The job owner's own AI key pays, when they have one.
-          await runWithAiUser(job.user_id, () => processJob(job));
+          await runWithAiUser(job.user_id, () => processJob(job), jobPurpose(job.operation));
           await completeJob(job.id);
           results.push({
             jobId: job.id,
@@ -168,6 +169,7 @@ async function processSummaryJob(job: ProcessingJob): Promise<void> {
   const summary = await complete(
     `Summarize this note in 1-2 sentences. Lead with the core point, then its significance. No preamble.\n\nTitle: ${note.title}\n\nContent:\n${note.content.substring(0, 2000)}`,
     {
+      purpose: "Note summary",
       system: "Summarize notes. Output the summary only — no intro, no meta-commentary, no 'This note...' openings.",
       maxTokens: 150,
       temperature: 0.3,
@@ -192,6 +194,7 @@ async function processTagsJob(job: ProcessingJob): Promise<void> {
   const response = await complete(
     `Extract 3-5 topic tags for this note. Tags should be specific enough to be useful for search and filtering — not generic. Return a JSON array of lowercase strings only.\n\nTitle: ${note.title}\n\nContent:\n${note.content.substring(0, 2000)}`,
     {
+      purpose: "Note tags",
       system: "Extract topic tags. Output only a valid JSON array: [\"tag1\", \"tag2\"]. No explanation, no other text.",
       maxTokens: 100,
       temperature: 0.3,
@@ -321,6 +324,7 @@ async function processAnalyzeCaptureJob(job: ProcessingJob): Promise<void> {
   const response = await complete(
     `Analyze this capture and determine its type. Return JSON with "type" (one of: thought, idea, followup, task, quote, reference) and "summary" (1 sentence).\n\nContent: ${capture.content}`,
     {
+      purpose: "Capture classification",
       system: "You are a helpful assistant. Output only valid JSON like {\"type\": \"idea\", \"summary\": \"...\"}.",
       maxTokens: 100,
       temperature: 0.3,

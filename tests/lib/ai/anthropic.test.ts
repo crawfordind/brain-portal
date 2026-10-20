@@ -60,7 +60,7 @@ describe("claudeComplete", () => {
       effort: "low",
     });
 
-    expect(result).toEqual({ content: "tags: a, b", finishReason: "stop", model: "claude-opus-5-5" });
+    expect(result).toMatchObject({ content: "tags: a, b", finishReason: "stop", model: "claude-opus-5-5" });
     const body = create.mock.calls[0][0];
     expect(body).not.toHaveProperty("temperature");
     expect(body).not.toHaveProperty("thinking");

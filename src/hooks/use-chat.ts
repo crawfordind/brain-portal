@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { useChatStore, ChatMessageItem, ChatContextType, ChatItemSubject } from "@/lib/stores/chat-store";
+import { useChatStore, ChatMessageItem, ChatContextType, ChatItemSubject, type ChatMessageMeta } from "@/lib/stores/chat-store";
 import { CONTEXT_LABELS } from "@/lib/chat/prompts";
 import { parseItemRef } from "@/lib/chat/item-types";
 
@@ -75,6 +75,7 @@ export function useChat() {
 
         const decoder = new TextDecoder();
         let fullContent = "";
+        let meta: ChatMessageMeta | undefined;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -95,6 +96,7 @@ export function useChat() {
                   fullContent += parsed.content;
                   updateStreamingMessage(fullContent);
                 }
+                if (parsed.meta?.model) meta = parsed.meta;
               } catch (e) {
                 if (e instanceof SyntaxError) continue;
                 throw e;
@@ -103,7 +105,7 @@ export function useChat() {
           }
         }
 
-        finalizeStreamingMessage(`assistant-${Date.now()}`, fullContent);
+        finalizeStreamingMessage(`assistant-${Date.now()}`, fullContent, meta);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to send message";
         setError(message);
@@ -141,12 +143,31 @@ export function useChat() {
         const conv = data.conversation;
         const messages = data.messages
           .filter((m: { role: string }) => m.role !== "system")
-          .map((m: { id: string; role: string; content: string; created_at: string }) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            created_at: m.created_at,
-          }));
+          .map(
+            (m: {
+              id: string;
+              role: string;
+              content: string;
+              created_at: string;
+              model_used?: string | null;
+              tokens_input?: number | null;
+              tokens_output?: number | null;
+            }) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              created_at: m.created_at,
+              ...(m.role === "assistant" && m.model_used
+                ? {
+                    meta: {
+                      model: m.model_used,
+                      inputTokens: m.tokens_input ?? undefined,
+                      outputTokens: m.tokens_output ?? undefined,
+                    },
+                  }
+                : {}),
+            })
+          );
 
         // Restore full state from loaded conversation in one batch
         const ctxType = (conv?.context_type || "general") as ChatContextType;

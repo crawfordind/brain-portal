@@ -3,6 +3,7 @@ import * as dotenv from "dotenv";
 import { applyAgentRuntimeMigration } from "../src/lib/agents/runtime/schema";
 import { applyNoteSharingMigration } from "../src/lib/sharing/schema";
 import { applyUserAiKeysMigration } from "../src/lib/ai/credentials/schema";
+import { applyAiUsageMigration } from "../src/lib/ai/usage/schema";
 
 dotenv.config({ path: ".env.local" });
 
@@ -1260,6 +1261,15 @@ async function migrate() {
   } catch (error: unknown) {
     errorCount++;
     console.error(`✗ Personal AI keys migration:`, (error as Error).message?.substring(0, 160));
+  }
+
+  console.log("\nAI usage log and totals...");
+  try {
+    await applyAiUsageMigration(db, (m) => console.log(m));
+    successCount++;
+  } catch (error: unknown) {
+    errorCount++;
+    console.error(`✗ AI usage migration:`, (error as Error).message?.substring(0, 160));
   }
 
   // Backfill existing tasks: content -> title

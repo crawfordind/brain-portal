@@ -15,6 +15,7 @@
 
 import { db, queryOne } from "@/lib/db/client";
 import { runWithAiUser } from "@/lib/ai/credentials/context";
+import { jobPurpose } from "@/lib/ai/usage/types";
 
 export interface QueueJob {
   id: string;
@@ -193,7 +194,7 @@ async function processExtractInteractions(job: QueueJob): Promise<void> {
 export async function runJob(job: QueueJob): Promise<void> {
   // Everything this job calls is the job owner's work, paid by their own AI
   // key when they have one; see credentials/context.ts.
-  return runWithAiUser(job.user_id, () => runJobForOwner(job));
+  return runWithAiUser(job.user_id, () => runJobForOwner(job), jobPurpose(job.operation));
 }
 
 async function runJobForOwner(job: QueueJob): Promise<void> {

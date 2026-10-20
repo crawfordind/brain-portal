@@ -9,6 +9,7 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import { AgentAvatar } from "./agent-avatar";
 import { useChatStore } from "@/lib/stores/chat-store";
 import type { ChatMessageItem } from "@/lib/stores/chat-store";
+import { formatTokens } from "@/lib/ai/usage/types";
 
 interface ChatMessageProps {
   message: ChatMessageItem;
@@ -108,6 +109,18 @@ export function ChatMessage({ message, contextType }: ChatMessageProps) {
             />
             {message.isStreaming && (
               <span className="inline-block h-3.5 w-0.5 ml-0.5 animate-pulse bg-current align-middle" />
+            )}
+            {!message.isStreaming && message.meta?.model && (
+              <p
+                className="mt-1.5 text-[11px] text-muted-foreground"
+                title="The model that answered, and the tokens it read and wrote. Totals are in Settings → AI usage."
+              >
+                {message.meta.model}
+                {message.meta.inputTokens || message.meta.outputTokens
+                  ? ` · ${formatTokens(message.meta.inputTokens ?? 0)} in / ${formatTokens(message.meta.outputTokens ?? 0)} out`
+                  : ""}
+                {message.meta.source === "server" ? " · server key" : message.meta.source === "user" ? " · your key" : ""}
+              </p>
             )}
             {canSave && (
               <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border/50 pt-2">

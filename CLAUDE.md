@@ -907,13 +907,53 @@ pasted OpenRouter, OpenAI or Claude key. Code: `src/lib/ai/credentials/`
   Changing the secret makes keys `unreadable` (re-enter), never wrong. Only a
   hint (`sk-ant-…a1b2`) ever reaches a browser. Keys are cached 30s per account.
 - **Saving tests the key first** with the provider's free key/model-list
-  endpoint; a key that doesn't work is never stored. Session-only routes: no
+  endpoint; a key that doesn't work is never stored. The test is a plain
+  `fetch` for every provider, and a failure quotes the provider's own words
+  ("Anthropic said: …"), never a bare status code.
+- **SDK clients are pinned against the server's environment.** The Anthropic
+  SDK reads `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and
+  `ANTHROPIC_CUSTOM_HEADERS` even when handed a key, and the OpenAI SDK reads
+  `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID`. `transport.ts` sets `baseURL`,
+  `authToken: null`, `organization: null` and `project: null` explicitly, so a
+  person's key only ever goes to its own provider, alone. A Claude key test
+  that 400'd on a host with those variables set is how this was found. Session-only routes: no
   MCP key can read or change AI keys.
 - **The standalone MCP server** uses the same code (it shares the DB client),
   so `semantic_search` and `generate_insights` bill the key's owner too.
 - `AGENT_RUNTIME=openrouter` is ready without a server key unless
   `AI_KEY_POLICY=server_only`; an account with no key fails its own task with a
   diagnosis that points at Settings.
+
+## AI Usage (which model, which prompt, how many tokens)
+
+Settings → **AI usage** shows a running token total per model (and whose key
+paid), and the recent calls: what each was for, the model that answered, the
+tokens it read and wrote, and the prompt it sent. Each chat answer carries a
+small line naming its model and tokens. Code: `src/lib/ai/usage/` (`types.ts`
+imports nothing), `GET/DELETE /api/ai-usage`, `ai-usage-settings.tsx`.
+
+- **Recorded at the three choke points**: `completeMessages` (everything
+  non-streaming), `streamComplete` (chat) and `generateEmbedding`. A new call
+  site that goes through them is logged for free. Tokens are what the provider
+  reported (`usage.prompt_tokens`/`completion_tokens`; Claude's `input_tokens`
+  including cache reads and writes, `output_tokens`); streams ask for them with
+  `stream_options.include_usage` and Claude's `message_start`/`message_delta`.
+- **Purpose** is the call site's `purpose` option, else the background scope's
+  (`runWithAiUser(userId, fn, purpose)`: the queue labels each job with
+  `jobPurpose(operation)`, skills with `Skill: <name>`), else the slot's.
+- **Best-effort, always.** `recordAiUsage` never throws and never changes a
+  call's result; a database without the tables records nothing. Work that
+  belongs to no account is not logged.
+- **Tables** (`npm run db:migrate`): `ai_usage_events` (one row per call,
+  prompt trimmed to 4k chars from both ends, pruned to 30 days / 500 rows per
+  account on about one write in 25) and `ai_usage_totals` (upserted per
+  account, provider, model and key source; never pruned). Reset clears both.
+- **The chat stream's last frame** before `[DONE]` is
+  `{ meta: { model, provider, source, inputTokens, outputTokens } }`; the chat
+  route stores it in `chat_messages.model_used` / `tokens_*` (it used to store
+  the requested OpenRouter id even when Claude answered).
+- Settings → AI provider also lists the model each job runs on right now
+  (`AiKeysStatus.jobs`), from the same resolution a call would make.
 
 ## Model Selection
 

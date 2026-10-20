@@ -120,6 +120,7 @@ export async function classifyIntent(
 
   try {
     const result = await completeJSON<IntentClassification>(prompt, {
+      purpose: "Brain Bar classification",
       system: CLASSIFIER_SYSTEM_PROMPT,
       slot: "fast",
       userId: context?.userId,

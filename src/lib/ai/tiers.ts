@@ -211,6 +211,7 @@ Content:
 ${content.substring(0, 2000)}`;
 
   const summary = await complete(prompt, {
+    purpose: "Note summary",
     system:
       "Summarize notes. Output the summary only — no intro, no meta-commentary, no 'This note...' openings.",
     slot: config.slot,
@@ -273,6 +274,7 @@ Content:
 ${content.substring(0, 2000)}`;
 
   const response = await complete(prompt, {
+    purpose: "Note tags",
     system:
       'Extract topic tags. Output only a valid JSON array: ["tag1", "tag2"]. No explanation, no other text.',
     slot: config.slot,
@@ -356,6 +358,7 @@ export async function processClassifyCapture(
 Content: ${content}`;
 
   const response = await complete(prompt, {
+    purpose: "Capture classification",
     system:
       'Classify content captures. Output only valid JSON: {"type": "...", "summary": "..."}. No other text.',
     slot: config.slot,

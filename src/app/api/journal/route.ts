@@ -226,6 +226,7 @@ Journal entry: "${content}"
 
 Respond with JSON only.`;
       const aiResponse = await complete(aiPrompt, {
+        purpose: "Journal reflection",
         slot: "fast",
         userId: user.id,
         maxTokens: 200,

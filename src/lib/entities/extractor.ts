@@ -118,7 +118,7 @@ ${trimmed}
 
   const res = await completeJSON<{ entities?: unknown; touches?: unknown }>(
     prompt,
-    { system: TOUCH_SYSTEM_PROMPT, maxTokens: 900, userId }
+    { purpose: "Contacts and touches", system: TOUCH_SYSTEM_PROMPT, maxTokens: 900, userId }
   );
 
   return {

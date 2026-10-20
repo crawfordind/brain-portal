@@ -44,6 +44,7 @@ export async function analyzeNote(
 
     try {
       const suggestions = await completeJSON<CleanupSuggestion[]>(prompt, {
+        purpose: "Cleanup suggestions",
         system: CLEANUP_SYSTEM_PROMPT,
         slot: config.slot,
         userId,
