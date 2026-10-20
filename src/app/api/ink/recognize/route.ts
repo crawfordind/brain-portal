@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
   let recognition = null;
   if (shouldRecognize) {
     try {
-      recognition = await recognizeHandwriting(image);
+      recognition = await recognizeHandwriting(image, { userId: user.id });
     } catch (error) {
       console.error("Handwriting recognition failed:", error);
       // Don't fail the whole request — persistence may still be useful.

@@ -54,6 +54,7 @@ import {
 import { format } from "date-fns";
 import { toast } from "sonner";
 import Link from "next/link";
+import { ShareNoteButton } from "@/components/notes/share-note-button";
 import { SaveStatus } from "@/components/ui/save-status";
 import { useAutoSave } from "@/hooks/use-auto-save";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
@@ -93,6 +94,8 @@ interface Note {
   is_pinned: boolean;
   created_at: string;
   updated_at: string;
+  /** False for a collaborator's note: only its author may share it. */
+  is_owner?: boolean | number;
 }
 
 interface Task {
@@ -666,27 +669,41 @@ export default function ProjectDetailPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {notes.map((note) => (
-                  <Link
-                    key={note.id}
-                    href={`/notes/${note.slug}`}
-                    className="block p-3 rounded-lg border hover:bg-muted/50 transition-colors min-h-14"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-sm md:text-base truncate">{note.title}</span>
-                      {note.is_pinned && (
-                        <Badge variant="secondary" className="text-xs shrink-0">
-                          Pinned
-                        </Badge>
+                {notes.map((note) => {
+                  // SQLite returns the comparison as 1/0.
+                  const mine = Boolean(note.is_owner);
+                  return (
+                    <div
+                      key={note.id}
+                      className="flex items-stretch rounded-lg border hover:bg-muted/50 transition-colors min-h-14"
+                    >
+                      <Link
+                        // Another member's note opens by id: slugs are unique only per author.
+                        href={`/notes/${mine ? note.slug : note.id}`}
+                        className="block flex-1 min-w-0 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-sm md:text-base truncate">{note.title}</span>
+                          {note.is_pinned && (
+                            <Badge variant="secondary" className="text-xs shrink-0">
+                              Pinned
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                          <span>{note.word_count} words</span>
+                          <span>·</span>
+                          <span>{format(new Date(note.updated_at), "MMM d")}</span>
+                        </div>
+                      </Link>
+                      {mine && (
+                        <div className="flex items-center pr-1">
+                          <ShareNoteButton noteId={note.id} slug={note.slug} title={note.title} />
+                        </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
-                      <span>{note.word_count} words</span>
-                      <span>·</span>
-                      <span>{format(new Date(note.updated_at), "MMM d")}</span>
-                    </div>
-                  </Link>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CollapsibleSection>

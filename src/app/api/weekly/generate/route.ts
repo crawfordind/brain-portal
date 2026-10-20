@@ -199,7 +199,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate review content using AI
-    const reviewContent = await generateWeeklyReview(context, { guardrails });
+    const reviewContent = await generateWeeklyReview(context, { guardrails, userId: user.id });
 
     // Create the review note
     const noteTitle = `Week ${weekNumber} Review - ${format(weekStart, "MMM d")} to ${format(weekEnd, "MMM d, yyyy")}`;

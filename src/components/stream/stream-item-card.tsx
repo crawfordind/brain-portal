@@ -19,7 +19,9 @@
  *   the app a hover-only secret on the one device that can hover.
  */
 
+import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { ShareDialog } from "@/components/notes/share-dialog";
 import { toChatItemType } from "@/hooks/use-ask-about";
 import { parseDbTimestamp, shortTimeLabel } from "@/lib/stream/grouping";
 import type { StreamDensity } from "@/lib/stream/density";
@@ -42,6 +44,7 @@ import {
   Check,
   Archive,
   BookOpen,
+  Share2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -198,6 +201,9 @@ export function StreamItemCard({
   const statusBadge = STATUS_BADGE[item.status] || STATUS_BADGE.active;
 
   const updatedAt = parseDbTimestamp(item.updatedAt);
+  // Notes and journal entries in the stream are always the viewer's own.
+  const canShare = item.type === "note" || item.type === "journal";
+  const [shareOpen, setShareOpen] = useState(false);
   const timeAgo = updatedAt ? formatDistanceToNow(updatedAt, { addSuffix: true }) : "";
   const timeShort = updatedAt ? shortTimeLabel(updatedAt, new Date()) : "";
 
@@ -307,6 +313,17 @@ export function StreamItemCard({
               Review output
             </DropdownMenuItem>
           )}
+          {canShare && (
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation();
+                setShareOpen(true);
+              }}
+            >
+              <Share2 className="h-3.5 w-3.5 mr-2" />
+              Share
+            </DropdownMenuItem>
+          )}
           {canAskAbout && (
             <DropdownMenuItem onClick={() => onAskAbout?.(item.id)}>
               <Sparkles className="h-3.5 w-3.5 mr-2" />
@@ -321,6 +338,13 @@ export function StreamItemCard({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {canShare && (
+        // React events bubble through the dialog's portal; stop them here so
+        // typing or tapping in it never opens the row underneath.
+        <div className="contents" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          <ShareDialog noteId={item.id} title={item.title} open={shareOpen} onOpenChange={setShareOpen} />
+        </div>
+      )}
     </div>
   );
 

@@ -28,6 +28,7 @@ import { VoiceSettingsPanel } from "@/components/voice";
 import { NotificationPreferencesPanel } from "@/components/notifications/notification-preferences";
 import { GuardrailsSettingsPanel } from "@/components/settings/guardrails-settings";
 import { ModelSettingsPanel } from "@/components/settings/model-settings";
+import { AiProviderSettingsPanel } from "@/components/settings/ai-provider-settings";
 import { McpKeysPanel } from "@/components/settings/mcp-keys-panel";
 import { SharingSettingsPanel } from "@/components/settings/sharing-settings";
 import { VaultExportDialog } from "@/components/export/vault-export-dialog";
@@ -284,15 +285,30 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      {/* AI provider: the account's own API keys */}
+      <Card id="ai-provider" className="scroll-mt-20">
+        <CardHeader>
+          <CardTitle className="text-base md:text-lg">AI provider</CardTitle>
+          <CardDescription className="text-xs md:text-sm">
+            Run AI on your own account: connect OpenRouter, or add an OpenRouter,
+            OpenAI or Claude API key.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AiProviderSettingsPanel />
+        </CardContent>
+      </Card>
+
       {/* AI Models */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base md:text-lg">AI Models</CardTitle>
           <CardDescription className="text-xs md:text-sm">
-            Choose which model handles each kind of work. The list comes live
-            from OpenRouter, so retired models disappear on their own — and if a
-            choice stops working, requests fall back automatically rather than
-            failing.
+            Choose which model handles each kind of work when OpenRouter runs it
+            (your OpenRouter key or this server&apos;s). The list comes live from
+            OpenRouter, so retired models disappear on their own, and if a choice
+            stops working, requests fall back automatically rather than failing.
+            With an OpenAI or Claude key, choose models under AI provider.
           </CardDescription>
         </CardHeader>
         <CardContent>

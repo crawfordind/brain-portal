@@ -157,7 +157,7 @@ export async function processEmbedding(
   }
 
   // Generate new embedding
-  const embedding = await generateEmbedding(text);
+  const embedding = await generateEmbedding(text, userId);
 
   // Cache result
   await setCache(userId, cacheKey, embedding, {

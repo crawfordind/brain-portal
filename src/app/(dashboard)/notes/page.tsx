@@ -12,6 +12,10 @@ import { format } from "date-fns";
 import type { Note } from "@/lib/db/schema";
 import type { SharedWithMeNote } from "@/lib/sharing/store";
 import { parseDbTimestamp } from "@/lib/stream/grouping";
+import { ShareNoteButton } from "@/components/notes/share-note-button";
+
+/** A listed note; `is_owner` is false for a collaborator's note in a shared project. */
+type ListedNote = Note & { is_owner?: boolean };
 
 type FilterType = "all" | "daily" | "regular" | "voice" | "shared";
 
@@ -47,7 +51,7 @@ export default function NotesPage() {
       const response = await fetch(url);
       if (!response.ok) throw new Error("Failed to fetch notes");
       const data = await response.json();
-      return data.notes as Note[];
+      return data.notes as ListedNote[];
     },
   });
 
@@ -236,38 +240,48 @@ export default function NotesPage() {
       ) : (
         <div className="space-y-2 lg:space-y-3">
           {notes.map((note) => (
-            <Link
-              key={note.id}
-              href={`/notes/${note.slug}`}
-              className="block p-3 lg:p-4 rounded-lg border hover:bg-muted/50 transition-colors"
-            >
-              <div className="flex items-start gap-2 lg:gap-3">
-                {note.note_type === "daily" ? (
-                  <Calendar className="h-4 w-4 lg:h-5 lg:w-5 text-primary mt-0.5 flex-shrink-0" />
-                ) : (() => {
-                  try {
-                    const meta = typeof note.metadata === 'string' ? JSON.parse(note.metadata || '{}') : (note.metadata || {});
-                    if (meta.source === 'voice') {
-                      return <Mic className="h-4 w-4 lg:h-5 lg:w-5 text-violet-500 mt-0.5 flex-shrink-0" />;
-                    }
-                  } catch {}
-                  return <FileText className="h-4 w-4 lg:h-5 lg:w-5 text-muted-foreground mt-0.5 flex-shrink-0" />;
-                })()}
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-medium text-sm lg:text-base mb-1 line-clamp-2">{note.title}</h3>
-                  {note.content_plain && (
-                    <p className="text-xs lg:text-sm text-muted-foreground line-clamp-2">
-                      {note.content_plain.length > 150
-                        ? `${note.content_plain.substring(0, 150)}...`
-                        : note.content_plain}
+            // The share button sits beside the link, not inside it: a click in
+            // its (portalled) dialog would otherwise bubble to the link.
+            <div key={note.id} className="flex items-stretch rounded-lg border hover:bg-muted/50 transition-colors">
+              <Link
+                // A collaborator's note is opened by id: slugs are unique only
+                // per author, and the viewer's own note wins a slug lookup.
+                href={`/notes/${note.is_owner === false ? note.id : note.slug}`}
+                className="block flex-1 min-w-0 p-3 lg:p-4"
+              >
+                <div className="flex items-start gap-2 lg:gap-3">
+                  {note.note_type === "daily" ? (
+                    <Calendar className="h-4 w-4 lg:h-5 lg:w-5 text-primary mt-0.5 flex-shrink-0" />
+                  ) : (() => {
+                    try {
+                      const meta = typeof note.metadata === 'string' ? JSON.parse(note.metadata || '{}') : (note.metadata || {});
+                      if (meta.source === 'voice') {
+                        return <Mic className="h-4 w-4 lg:h-5 lg:w-5 text-violet-500 mt-0.5 flex-shrink-0" />;
+                      }
+                    } catch {}
+                    return <FileText className="h-4 w-4 lg:h-5 lg:w-5 text-muted-foreground mt-0.5 flex-shrink-0" />;
+                  })()}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-medium text-sm lg:text-base mb-1 line-clamp-2">{note.title}</h3>
+                    {note.content_plain && (
+                      <p className="text-xs lg:text-sm text-muted-foreground line-clamp-2">
+                        {note.content_plain.length > 150
+                          ? `${note.content_plain.substring(0, 150)}...`
+                          : note.content_plain}
+                      </p>
+                    )}
+                    <p className="text-[10px] lg:text-xs text-muted-foreground mt-1 lg:mt-2">
+                      {format(new Date(note.updated_at), "MMM d, yyyy 'at' h:mm a")}
                     </p>
-                  )}
-                  <p className="text-[10px] lg:text-xs text-muted-foreground mt-1 lg:mt-2">
-                    {format(new Date(note.updated_at), "MMM d, yyyy 'at' h:mm a")}
-                  </p>
+                  </div>
                 </div>
-              </div>
-            </Link>
+              </Link>
+              {note.is_owner !== false && (
+                <div className="flex items-start p-1 lg:p-2">
+                  <ShareNoteButton noteId={note.id} slug={note.slug} title={note.title} />
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}

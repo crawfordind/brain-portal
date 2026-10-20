@@ -142,7 +142,13 @@ export async function GET(request: NextRequest) {
 
   // Total comes from COUNT(*) OVER () on each row. Empty page → 0.
   const total = rows[0]?._total_count ?? 0;
-  const notes = rows.map(({ _total_count, ...rest }) => rest);
+  // Notes in a shared project belong to someone else. Say which are the
+  // viewer's own (only those can be shared onward), and never hand a
+  // collaborator the owner's public-link token.
+  const notes = rows.map(({ _total_count, ...rest }) => {
+    const isOwner = rest.user_id === user.id;
+    return isOwner ? { ...rest, is_owner: true } : { ...rest, share_token: null, is_owner: false };
+  });
 
   return NextResponse.json({
     notes,

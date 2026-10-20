@@ -21,13 +21,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Copy, Globe, Link2, RefreshCw, UserPlus, Users, X } from "lucide-react";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { Copy, Globe, Link2, RefreshCw, Send, UserPlus, Users, X } from "lucide-react";
 import type { NoteShare } from "@/lib/sharing/store";
 import type { NoteSharePermission, SavedRecipient } from "@/lib/sharing/types";
 
 interface ShareDialogProps {
   noteId: string;
-  slug: string;
+  /** The note page caches by slug; without one, the id is used. */
+  slug?: string;
+  /** Shown in the header, so a dialog opened from a list says which note. */
+  title?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -49,16 +53,21 @@ async function send<T>(url: string, init: RequestInit): Promise<T> {
   return body as T;
 }
 
+/** Same shape the server accepts; checked here so a typo is caught before a round trip. */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /**
  * Two ways to share a note, kept visibly apart because they are not the same
  * thing: "People" gives another account access to the live note inside the
  * app; "Public link" shows a read-only page to anyone holding the URL.
  */
-export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogProps) {
+export function ShareDialog({ noteId, slug, title, open, onOpenChange }: ShareDialogProps) {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
   const queryKey = ["note-shares", noteId];
   const [email, setEmail] = useState("");
   const [permission, setPermission] = useState<NoteSharePermission>("view");
+  const [emailError, setEmailError] = useState("");
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
@@ -68,7 +77,7 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey });
-    queryClient.invalidateQueries({ queryKey: ["note", slug] });
+    queryClient.invalidateQueries({ queryKey: ["note", slug ?? noteId] });
   };
 
   const addShare = useMutation({
@@ -107,7 +116,13 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
       send(`/api/notes/${noteId}/shares/${share.id}`, { method: "DELETE" }),
     onSuccess: (_data, share) => {
       refresh();
-      toast.success(`Stopped sharing with ${share.recipient_name || share.recipient_email}`);
+      // Removing access is one tap, so it gets an exact undo.
+      toast.success(`Stopped sharing with ${share.recipient_name || share.recipient_email}`, {
+        action: {
+          label: "Undo",
+          onClick: () => addShare.mutate({ email: share.recipient_email, permission: share.permission }),
+        },
+      });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -129,7 +144,24 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
       await navigator.clipboard.writeText(url);
       toast.success("Link copied");
     } catch {
-      toast.error("Couldn't copy the link");
+      // No clipboard access (an insecure origin, or an in-app browser):
+      // select the text so a long-press copies it.
+      const field = document.getElementById("share-public-link") as HTMLInputElement | null;
+      field?.focus();
+      field?.select();
+      toast.error("Couldn't copy automatically. The link is selected: press and hold to copy it.");
+    }
+  };
+
+  // The phone's own share sheet (Messages, mail, Slack…), where there is one.
+  const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+  const nativeShare = async (url: string) => {
+    try {
+      await navigator.share({ title: title || "Shared note", url });
+    } catch (error) {
+      // Closing the sheet is not a failure worth telling anyone about.
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      copy(url);
     }
   };
 
@@ -140,15 +172,24 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
   const busy = addShare.isPending;
 
   const submit = (target: string) => {
-    if (!target.trim()) return;
-    addShare.mutate({ email: target.trim(), permission });
+    const address = target.trim();
+    if (!address) return;
+    if (!EMAIL_RE.test(address)) {
+      setEmailError("Enter a full email address, like name@example.com.");
+      return;
+    }
+    setEmailError("");
+    addShare.mutate({ email: address, permission });
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      {/* Capped to the screen and scrollable: with a few people and the public
+          link section the dialog is taller than a phone, and a fixed, centred
+          dialog would otherwise cut off its own top and bottom. */}
+      <DialogContent className="sm:max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Share note</DialogTitle>
+          <DialogTitle className="pr-8">{title ? <>Share “{title}”</> : "Share note"}</DialogTitle>
           <DialogDescription>
             Give another account access, or make a public read-only link.
           </DialogDescription>
@@ -197,7 +238,12 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
                       placeholder="Account email"
                       aria-label="Email of the account to share with"
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        if (emailError) setEmailError("");
+                      }}
+                      aria-invalid={emailError ? true : undefined}
+                      aria-describedby={emailError ? "share-email-error" : undefined}
                       className="flex-1 h-11 sm:h-10"
                     />
                     <div className="flex gap-2">
@@ -205,7 +251,7 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
                         value={permission}
                         onValueChange={(v) => setPermission(v as NoteSharePermission)}
                       >
-                        <SelectTrigger className="w-[110px] h-11 sm:h-10" aria-label="Permission">
+                        <SelectTrigger className="flex-1 sm:flex-none sm:w-[110px] h-11 sm:h-10" aria-label="Permission">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -213,12 +259,17 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
                           <SelectItem value="edit">Can edit</SelectItem>
                         </SelectContent>
                       </Select>
-                      <Button type="submit" disabled={busy || !email.trim()} className="h-11 sm:h-10">
-                        <UserPlus className="h-4 w-4 sm:mr-2" />
-                        <span className="hidden sm:inline">Share</span>
+                      <Button type="submit" disabled={busy || !email.trim()} className="flex-1 sm:flex-none h-11 sm:h-10">
+                        <UserPlus className="h-4 w-4 mr-2" />
+                        Share
                       </Button>
                     </div>
                   </form>
+                  {emailError && (
+                    <p id="share-email-error" role="alert" className="text-sm text-destructive">
+                      {emailError}
+                    </p>
+                  )}
 
                   {quickPicks.length > 0 && (
                     <div className="flex flex-wrap gap-2" aria-label="Saved recipients">
@@ -231,7 +282,7 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
                           disabled={busy}
                           onClick={() => submit(r.email)}
                           title={r.email}
-                          className="h-9"
+                          className="h-11 sm:h-9"
                         >
                           <UserPlus className="h-3.5 w-3.5 mr-1.5" />
                           {r.label}
@@ -280,7 +331,7 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
                               }
                             >
                               <SelectTrigger
-                                className="w-[110px] h-10"
+                                className="w-[104px] sm:w-[110px] h-11 sm:h-10 shrink-0"
                                 aria-label={`Permission for ${share.recipient_email}`}
                               >
                                 <SelectValue />
@@ -328,7 +379,7 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
                   </p>
                   <Button
                     variant="outline"
-                    className="w-full"
+                    className="w-full min-h-11 sm:min-h-9"
                     disabled={publicLink.isPending}
                     onClick={() => publicLink.mutate("POST")}
                   >
@@ -340,6 +391,7 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
                 <>
                   <div className="flex gap-2">
                     <Input
+                      id="share-public-link"
                       value={data.publicLink.url}
                       readOnly
                       aria-label="Public link"
@@ -349,28 +401,53 @@ export function ShareDialog({ noteId, slug, open, onOpenChange }: ShareDialogPro
                     <Button
                       variant="secondary"
                       size="icon"
-                      className="h-10 w-10 shrink-0"
+                      className="h-11 w-11 sm:h-10 sm:w-10 shrink-0"
                       aria-label="Copy public link"
                       onClick={() => copy(data.publicLink!.url)}
                     >
                       <Copy className="h-4 w-4" />
                     </Button>
                   </div>
+                  {canNativeShare && (
+                    <Button
+                      variant="secondary"
+                      className="w-full min-h-11 sm:min-h-9"
+                      onClick={() => nativeShare(data.publicLink!.url)}
+                    >
+                      <Send className="h-4 w-4 mr-2" />
+                      Send link…
+                    </Button>
+                  )}
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
-                      className="flex-1"
+                      className="flex-1 min-h-11 sm:min-h-9"
                       disabled={publicLink.isPending}
-                      onClick={() => publicLink.mutate("PUT")}
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: "Make a new public link?",
+                          description: "The current link stops working at once. Anyone you sent it to will need the new one.",
+                          confirmLabel: "New link",
+                        });
+                        if (ok) publicLink.mutate("PUT");
+                      }}
                     >
                       <RefreshCw className="h-4 w-4 mr-2" />
                       New link
                     </Button>
                     <Button
                       variant="destructive"
-                      className="flex-1"
+                      className="flex-1 min-h-11 sm:min-h-9"
                       disabled={publicLink.isPending}
-                      onClick={() => publicLink.mutate("DELETE")}
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: "Turn off the public link?",
+                          description: "Anyone with the link loses access at once. People you shared with by account keep theirs.",
+                          confirmLabel: "Turn off",
+                          destructive: true,
+                        });
+                        if (ok) publicLink.mutate("DELETE");
+                      }}
                     >
                       <X className="h-4 w-4 mr-2" />
                       Turn off

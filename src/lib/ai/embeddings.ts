@@ -1,9 +1,10 @@
 /**
  * Embedding generation and similarity computation
- * Uses OpenRouter for embeddings (openai/text-embedding-3-small)
+ * text-embedding-3-small, through the account's own key or the server's
  */
 
-import { openrouter } from "./client";
+import { openAiCompatibleClient } from "./transport";
+import { isAuthError, noteKeyRejected, resolveAiCredential } from "./credentials/resolve";
 import { db, queryOne, queryAll, mutate } from "@/lib/db/client";
 import type { Embedding, Note } from "@/lib/db/schema";
 import { hashContent } from "@/lib/processing/cache";
@@ -14,6 +15,8 @@ import { cosineSimilarity } from "./vector";
 export { cosineSimilarity };
 
 const EMBEDDING_MODEL = "openai/text-embedding-3-small";
+/** The same model, named as OpenAI's own API names it. */
+const DIRECT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 const EMBEDDING_DIMENSIONS = 1536;
 const MAX_INPUT_LENGTH = 8191; // Token limit for embedding model
 
@@ -31,16 +34,29 @@ export interface SimilarNote {
 }
 
 /**
- * Generate an embedding for text using OpenRouter
+ * Generate an embedding for text.
+ *
+ * Paid for by `userId`'s own OpenRouter or OpenAI key when they have one
+ * (Anthropic has no embeddings API), otherwise by the server's key, per
+ * `AI_KEY_POLICY`. Every route produces the same 1536-dimension
+ * text-embedding-3-small vectors, so stored vectors stay comparable whichever
+ * key made them.
  */
-export async function generateEmbedding(text: string): Promise<number[]> {
+export async function generateEmbedding(text: string, userId?: string | null): Promise<number[]> {
   // Truncate to max length
   const truncatedText = text.substring(0, MAX_INPUT_LENGTH);
 
-  const response = await openrouter.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: truncatedText,
-  });
+  const credential = await resolveAiCredential("embedding", { userId });
+  let response;
+  try {
+    response = await openAiCompatibleClient(credential).embeddings.create({
+      model: credential.provider === "openai" ? DIRECT_OPENAI_EMBEDDING_MODEL : EMBEDDING_MODEL,
+      input: truncatedText,
+    });
+  } catch (error) {
+    if (isAuthError(error)) await noteKeyRejected(credential, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
 
   if (!response.data?.[0]?.embedding) {
     throw new Error("Embedding API returned no data");
@@ -135,7 +151,7 @@ export async function embedNote(
   }
 
   // Generate new embedding
-  const embedding = await generateEmbedding(textToEmbed);
+  const embedding = await generateEmbedding(textToEmbed, userId);
 
   // Store it
   await storeEmbedding(userId, "note", noteId, embedding, contentHash);
@@ -286,7 +302,7 @@ export async function findSimilarToText(
   limit: number = 10
 ): Promise<SimilarNote[]> {
   // Generate embedding for the query text
-  const queryEmbedding = await generateEmbedding(text);
+  const queryEmbedding = await generateEmbedding(text, userId);
 
   // Get all note embeddings for this user
   const allEmbeddings = await queryAll<{

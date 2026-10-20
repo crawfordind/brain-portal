@@ -10,6 +10,7 @@ import {
 } from "@/lib/processing/queue";
 import { embedNote } from "@/lib/ai/embeddings";
 import { complete } from "@/lib/ai/client";
+import { runWithAiUser } from "@/lib/ai/credentials/context";
 import type { Note, Capture, ProcessingJob } from "@/lib/db/schema";
 
 // GET /api/process - Get queue stats
@@ -61,7 +62,8 @@ export async function POST(request: NextRequest) {
         if (!job) break;
 
         try {
-          await processJob(job);
+          // The job owner's own AI key pays, when they have one.
+          await runWithAiUser(job.user_id, () => processJob(job));
           await completeJob(job.id);
           results.push({
             jobId: job.id,

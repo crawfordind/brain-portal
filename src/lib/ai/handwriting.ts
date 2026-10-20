@@ -8,8 +8,7 @@
  * model formats its reply.
  */
 
-import { openrouter, parseJSONResponse } from "./client";
-import { getModelChain } from "./models";
+import { completeMessages, parseJSONResponse } from "./client";
 
 export interface HandwritingRecognition {
   /** True when any handwritten or printed text was found in the image. */
@@ -103,16 +102,11 @@ export async function recognizeHandwriting(
   const { maxTokens = 1500 } = options;
 
   // Resolved per call rather than pinned at module load: the vision slot
-  // reflects the user's setting, drops ids OpenRouter has retired, and carries
-  // fallbacks so a sketch still transcribes when the first choice is down.
-  const chain = options.model
-    ? [options.model]
-    : await getModelChain("vision", options.userId);
-
-  const response = await openrouter.chat.completions.create({
-    model: chain[0],
-    ...(chain.length > 1 ? { models: chain } : {}),
-    messages: [
+  // reflects the user's setting and key (OpenRouter, OpenAI or Claude), drops
+  // retired ids, and carries fallbacks so a sketch still transcribes when the
+  // first choice is down.
+  const response = await completeMessages(
+    [
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
@@ -125,11 +119,17 @@ export async function recognizeHandwriting(
         ],
       },
     ],
-    max_tokens: maxTokens,
-    temperature: 0.2,
-  });
+    {
+      capability: "vision",
+      slot: "vision",
+      model: options.model,
+      userId: options.userId,
+      maxTokens,
+      temperature: 0.2,
+    }
+  );
 
-  const content = response.choices[0]?.message?.content || "";
+  const content = response.content || "";
 
   try {
     const raw = parseJSONResponse<RawRecognition>(content);

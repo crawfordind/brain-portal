@@ -12,6 +12,18 @@ vi.mock("@/lib/ai/client", () => ({
   },
 }));
 
+// Embeddings go through whichever key resolves; here, the server's OpenRouter
+// key, served by the mocked client above.
+vi.mock("@/lib/ai/transport", async () => {
+  const { openrouter } = await import("@/lib/ai/client");
+  return { openAiCompatibleClient: () => openrouter };
+});
+vi.mock("@/lib/ai/credentials/resolve", () => ({
+  resolveAiCredential: vi.fn(async () => ({ provider: "openrouter", apiKey: "sk-or-test", source: "server", userId: null })),
+  isAuthError: () => false,
+  noteKeyRejected: vi.fn(),
+}));
+
 // Mock the database module
 vi.mock("@/lib/db/client", () => ({
   db: {

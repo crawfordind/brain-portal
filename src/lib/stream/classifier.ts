@@ -89,6 +89,8 @@ Respond with JSON:
 export async function classifyIntent(
   input: string,
   context?: {
+    /** Whose key pays for the classification. */
+    userId?: string | null;
     recentItems?: Array<{ type: string; title: string }>;
     activeProjects?: Array<{ slug: string; name: string }>;
     timeOfDay?: string;
@@ -120,6 +122,7 @@ export async function classifyIntent(
     const result = await completeJSON<IntentClassification>(prompt, {
       system: CLASSIFIER_SYSTEM_PROMPT,
       slot: "fast",
+      userId: context?.userId,
       maxTokens: 512,
     });
 

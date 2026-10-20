@@ -45,7 +45,7 @@ function cleanRawEntities(raw: unknown): ExtractedEntity[] {
 /**
  * Extract and clean entities from text. Returns a deduped, normalized list.
  */
-export async function extractEntities(text: string): Promise<ExtractedEntity[]> {
+export async function extractEntities(text: string, userId?: string | null): Promise<ExtractedEntity[]> {
   const trimmed = (text || "").slice(0, MAX_TEXT).trim();
   if (trimmed.length < 20) return [];
 
@@ -61,7 +61,7 @@ ${trimmed}
   try {
     const res = await completeJSON<{
       entities?: { name?: string; type?: string }[];
-    }>(prompt, { system: SYSTEM_PROMPT, maxTokens: 512 });
+    }>(prompt, { system: SYSTEM_PROMPT, maxTokens: 512, userId });
 
     return cleanRawEntities(res?.entities);
   } catch {
@@ -98,7 +98,8 @@ it out: a missing touch costs the user a click, a false one misleads them.`;
  */
 export async function extractKnowledge(
   text: string,
-  referenceDay: string
+  referenceDay: string,
+  userId?: string | null
 ): Promise<ExtractedKnowledge> {
   const trimmed = (text || "").slice(0, MAX_TEXT).trim();
   if (trimmed.length < 20) return { entities: [], touches: [] };
@@ -117,7 +118,7 @@ ${trimmed}
 
   const res = await completeJSON<{ entities?: unknown; touches?: unknown }>(
     prompt,
-    { system: TOUCH_SYSTEM_PROMPT, maxTokens: 900 }
+    { system: TOUCH_SYSTEM_PROMPT, maxTokens: 900, userId }
   );
 
   return {

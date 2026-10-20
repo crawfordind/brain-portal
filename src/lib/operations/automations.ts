@@ -16,6 +16,7 @@
  */
 
 import { query, queryOne } from "@/lib/db/client";
+import { AiCredentialError, resolveAiCredential } from "@/lib/ai/credentials/resolve";
 import type { AutomationHealth, AutomationStatus } from "./types";
 
 /** A job that should run every few minutes has missed runs after this long. */
@@ -275,6 +276,32 @@ async function skills(userId: string): Promise<AutomationHealth | null> {
   };
 }
 
+/**
+ * Can this account's AI steps run? Asks the resolver every model call uses, so
+ * it accounts for the person's own key as well as the server's.
+ */
+async function aiProviderHealth(userId: string): Promise<AutomationHealth[]> {
+  try {
+    await resolveAiCredential("chat", { userId });
+    return [];
+  } catch (error) {
+    if (!(error instanceof AiCredentialError)) return [];
+    return [
+      {
+        id: "ai-provider",
+        name: "AI provider",
+        purpose: "Summaries, agents, contact extraction and search all call an AI provider.",
+        status: "failing",
+        signal: `${error.message} Until then, every AI step fails.`,
+        lastSuccessAt: null,
+        lastRunAt: null,
+        owner: error.code === "server_key_missing" ? "Deployment settings" : "Settings → AI provider",
+        recentFailures: 0,
+      },
+    ];
+  }
+}
+
 function configuration(): AutomationHealth[] {
   const isProd = process.env.NODE_ENV === "production";
   const results: AutomationHealth[] = [];
@@ -285,19 +312,6 @@ function configuration(): AutomationHealth[] {
       purpose: "Every /api/cron/* run is authorised by CRON_SECRET.",
       status: "failing",
       signal: "CRON_SECRET is not set, so every scheduled run is refused. Nothing in the background is running.",
-      lastSuccessAt: null,
-      lastRunAt: null,
-      owner: "Deployment settings",
-      recentFailures: 0,
-    });
-  }
-  if (!process.env.OPENROUTER_API_KEY) {
-    results.push({
-      id: "ai-provider",
-      name: "AI provider",
-      purpose: "Summaries, agents, contact extraction and search all call OpenRouter.",
-      status: "failing",
-      signal: "OPENROUTER_API_KEY is not set, so every AI step fails.",
       lastSuccessAt: null,
       lastRunAt: null,
       owner: "Deployment settings",
@@ -363,6 +377,7 @@ export async function getAutomationHealth(userId: string): Promise<AutomationHea
   ]);
   const all = [
     ...configuration(),
+    ...(await aiProviderHealth(userId)),
     content,
     agents,
     ...rules,

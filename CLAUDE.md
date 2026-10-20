@@ -314,7 +314,11 @@ API routes follow RESTful conventions:
 
 Required for development (see `.env.example`):
 - `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` - Database
-- `OPENROUTER_API_KEY` - AI provider key
+- `OPENROUTER_API_KEY` - the server's AI key. With personal keys it pays only
+  for accounts without their own, and for work that belongs to no account.
+- `AI_KEY_POLICY` (`user_or_server` default, `user_only`, `server_only`) and
+  `AI_KEY_ENCRYPTION_SECRET` (falls back to `SESSION_SECRET`) - see *Personal
+  AI Keys*.
 - `OPENROUTER_MODEL`, `OPENROUTER_VISION_MODEL`, `OPENROUTER_EMBEDDING_MODEL` -
   optional per-slot overrides. A choice saved in Settings outranks these, and
   any id the live catalog no longer lists is skipped. See *Model Selection*.
@@ -377,6 +381,22 @@ Code: `src/lib/sharing/` (`types.ts` imports nothing; `access.ts`, `store.ts`,
   never published. In-app recipients see the note as the owner does.
 - **Toggling a public link leaves `updated_at` alone**, so sharing an old note
   no longer moves it to the top of the stream.
+- **Share is visible wherever a note is.** `ShareNoteButton` (icon, opens
+  `ShareDialog`) sits in the note page header, on each own note in the Notes
+  list and a project's notes, in the stream card menu and the stream detail
+  panel. It used to live only at the bottom of the note page's overflow menu,
+  under the inline project list, which on a phone put it off-screen. Render
+  it *beside* a row's link, never inside: React events bubble through the
+  dialog's portal, so a tap in the dialog would navigate the row.
+- **Lists say whose note it is.** `GET /api/notes` and `GET /api/projects/[id]`
+  return `is_owner`; only owners get the button (the API is owner-only
+  anyway). A collaborator's note is linked by id, since slugs are unique only
+  per author, and `GET /api/notes` nulls its `share_token`.
+- **The dialog fits a phone**: capped to `100dvh` and scrollable, 44px
+  targets, a labelled Share button, an inline check for a mistyped address,
+  **Send link…** through the native share sheet where there is one, Undo
+  after removing a person, and a confirmation before **New link** or
+  **Turn off** breaks a link someone was already given.
 
 ### "Share this with my work account" (MCP)
 
@@ -601,13 +621,15 @@ npx vitest run tests/lib/ai/embeddings.test.ts
 ## CI
 
 `.github/workflows/ci.yml` runs lint, typecheck, test and build on every PR,
-plus a `--audit-level=high` dependency audit. It needs **no secrets**:
+plus a `--audit-level=high --omit=dev` dependency audit (what ships; `braces`,
+reached only through `eslint-config-next`, has no patched release). It needs **no secrets**:
 `scripts/migrate.ts` skips itself when `CI=true` or `SKIP_MIGRATIONS=true`
 rather than failing the `prebuild` for want of a database.
 
 Lint policy (`eslint.config.mjs`): errors mean something is broken and gate the
-build; `no-unused-vars`, `no-explicit-any` and the
-`react-hooks/set-state-in-effect` backlog are warnings, so a first contribution
+build; `no-unused-vars`, `no-explicit-any` and the React Compiler backlog
+(`react-hooks/set-state-in-effect`, `static-components`, `immutability`,
+`preserve-manual-memoization`) are warnings, so a first contribution
 is not an unrelated type sweep.
 
 ## Asking About an Item (the chat)
@@ -836,6 +858,62 @@ On Hermes the type is a label only.
 
 Capturing a thought never starts delegated work; the classifier only *names* a
 suggestion. Legacy pending work is parked, not auto-sent.
+
+## Personal AI Keys
+
+Each account pays for its own AI: Settings → **AI provider** connects
+OpenRouter in one click (OAuth PKCE mints a key for this app) or takes a
+pasted OpenRouter, OpenAI or Claude key. Code: `src/lib/ai/credentials/`
+(`types.ts` imports nothing), `src/lib/ai/transport.ts`, `src/lib/ai/anthropic.ts`,
+`/api/ai-keys/*`, `ai-provider-settings.tsx`.
+
+- **One resolver decides whose key pays** (`resolveAiCredential`, over the pure
+  `chooseCredential`): the account's capable key (preferred provider first,
+  then OpenRouter, OpenAI, Anthropic), else the server key when
+  `AI_KEY_POLICY=user_or_server`. No account at all means the server key.
+  System Health, Operations and the Settings "What runs your AI" list all ask
+  this same function, so none can disagree with what a call actually does.
+- **Never a silent swap.** A key the provider rejects (401) fails the call with
+  "rejected your API key", is marked `invalid` in Settings, and surfaces as
+  `AI_USER_KEY_REJECTED`; it does not fall through to the server key. The
+  server key stands in only when the account has *no* key able to do the job.
+- **Every call says whose it is.** Request handlers pass `userId`. Background
+  work (`runJob`, `/api/process`, `executeSkill`) wraps each job in
+  `runWithAiUser(job.user_id, …)` (AsyncLocalStorage `run`, never `enterWith`,
+  so one account's key cannot leak into the next job). A new AI call site must
+  do one or the other, or it bills the server.
+- **Claude has no embeddings API.** A Claude-only account's search index uses
+  the server key (`capability_gap`) under `user_or_server`, or reports
+  `capability_missing` under `user_only`. OpenRouter's
+  `openai/text-embedding-3-small` and OpenAI's `text-embedding-3-small` are one
+  model, so vectors stay comparable whichever key made them.
+- **Claude is called through `@anthropic-ai/sdk`**, not an OpenAI-compatible
+  shim: no `temperature` (rejected by current models), no `thinking` field
+  (adaptive by default), `output_config.effort` per slot (`low` for
+  background, `high` for deep/agent), a 16k `max_tokens` floor because thinking
+  draws from it, `fallbacks: "default"` where accepted, and a surviving
+  `refusal` is an error, never empty output. Default model for every slot is
+  `claude-opus-5-5`; the person can pick a cheaper one per slot.
+- **OpenAI reasoning models** (`gpt-5*`, `o*`) get `max_completion_tokens` and
+  no `temperature`, which they reject.
+- **Direct providers' models** (`models/providers.ts`): their own ids
+  ("claude-opus-5-5"), validated against the key's own model list (cached an
+  hour per key hash). An OpenRouter-style id ("vendor/model") pinned by a
+  caller is skipped for the slot rather than guessed at. Choices live in
+  `users.preferences.models_by_provider`; OpenRouter choices stay in `models`.
+- **Storage** (`user_ai_keys`, `npm run db:migrate`): AES-256-GCM, key from
+  HKDF over `AI_KEY_ENCRYPTION_SECRET`/`SESSION_SECRET`, user id and provider
+  bound as associated data so a ciphertext moved to another row won't decrypt.
+  Changing the secret makes keys `unreadable` (re-enter), never wrong. Only a
+  hint (`sk-ant-…a1b2`) ever reaches a browser. Keys are cached 30s per account.
+- **Saving tests the key first** with the provider's free key/model-list
+  endpoint; a key that doesn't work is never stored. Session-only routes: no
+  MCP key can read or change AI keys.
+- **The standalone MCP server** uses the same code (it shares the DB client),
+  so `semantic_search` and `generate_insights` bill the key's owner too.
+- `AGENT_RUNTIME=openrouter` is ready without a server key unless
+  `AI_KEY_POLICY=server_only`; an account with no key fails its own task with a
+  diagnosis that points at Settings.
 
 ## Model Selection
 

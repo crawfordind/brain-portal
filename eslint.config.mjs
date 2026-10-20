@@ -51,6 +51,16 @@ const eslintConfig = defineConfig([
       // risk, not a lint cleanup. It is a warning so it stays visible and does
       // not block contributions in the meantime. See CONTRIBUTING.md.
       "react-hooks/set-state-in-effect": "warn",
+      // eslint-plugin-react-hooks 7.1 (with eslint-config-next 16.4) added
+      // three more React Compiler rules that flag 13 existing components: a
+      // component defined inside another (remounts on every render), a
+      // function used above its declaration, and memoization the compiler
+      // cannot keep. Real issues, but each fix changes render behaviour, so
+      // they join the backlog above as warnings rather than arriving as a
+      // build break inside an unrelated dependency upgrade.
+      "react-hooks/static-components": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/preserve-manual-memoization": "warn",
     },
   },
 

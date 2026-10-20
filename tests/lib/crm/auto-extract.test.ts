@@ -60,7 +60,9 @@ describe("extractContactsFromText", () => {
 
     expect(mockExtractKnowledge).toHaveBeenCalledWith(
       expect.stringContaining("Had coffee with Dana"),
-      "2026-09-24"
+      "2026-09-24",
+      // The note's owner pays for reading it, with their own key if they have one.
+      "u1"
     );
     expect(mockIngest).toHaveBeenCalledWith(
       { userId: "u1", sourceType: "note", sourceId: "n1", occurredAt: "2026-09-24" },
@@ -167,7 +169,8 @@ describe("extractContactsFromSource", () => {
     await extractContactsFromSource("u1", "note", "n1");
     expect(mockExtractKnowledge).toHaveBeenCalledWith(
       "Daily\n\nMet Dana Okonkwo",
-      "2026-09-24"
+      "2026-09-24",
+      "u1"
     );
   });
 
@@ -183,7 +186,8 @@ describe("extractContactsFromSource", () => {
     await extractContactsFromSource("u1", "capture", "c1");
     expect(mockExtractKnowledge).toHaveBeenCalledWith(
       "Met Dana Okonkwo at the expo",
-      "2026-09-24"
+      "2026-09-24",
+      "u1"
     );
   });
 
