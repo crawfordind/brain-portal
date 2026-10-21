@@ -969,9 +969,14 @@ Code: `src/lib/ai/chatgpt/` (`types.ts` imports nothing), `src/lib/ai/fallback.t
 - **Preview request rules**: `store: false`, `stream: true` always, system
   prompt in `instructions`, no `temperature`/`max_output_tokens`. A used-up
   plan (`subscription_sharing_usage_limit_exceeded`) can arrive mid-stream as
-  `response.failed`. Models come from `GET /v1/models` with the token; there is
-  no fixed list, so `chooseChatGptModels` picks a light one ("mini"/"nano")
-  for everyday jobs and the first listed for deep work.
+  `response.failed`. Models come from `GET /v1/models` with the token, which
+  for a plan returns `{ models: [{ slug, display_name, visibility }] }`, **not**
+  the platform's `{ data: [{ id }] }` (reading `data` made every plan look
+  model-less; `parseChatGptModelCatalog` reads both). Entries with
+  `visibility: "list"`, in server order. There is no fixed list, so
+  `chooseChatGptModels` picks a light one ("mini"/"nano") for everyday jobs
+  and the first listed for deep work. A list that can't be read says why
+  (`chatGptModelList`), and the reason is logged.
 - **Routing order** (`COST_ORDER`): preferred provider, then the flat-rate
   plan, OpenRouter, OpenAI, Anthropic. Connecting a plan makes it preferred.
 - **Backups** (`ai_routing.fallback`, on by default): the account's other

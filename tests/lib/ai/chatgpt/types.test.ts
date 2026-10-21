@@ -6,6 +6,7 @@ import {
   classifyChatGptError,
   needsRefresh,
   parseCallbackUrl,
+  parseChatGptModelCatalog,
   toResponsesRequest,
   CHATGPT_REDIRECT_URI,
 } from "@/lib/ai/chatgpt/types";
@@ -72,6 +73,30 @@ describe("who may use a ChatGPT plan here (OpenAI: only a runtime the person con
   });
 });
 
+describe("the plan's model catalog", () => {
+  it("keeps the picker entries in the server's order", () => {
+    expect(
+      parseChatGptModelCatalog({
+        models: [
+          { slug: "a", display_name: "A", visibility: "list" },
+          { slug: "b", display_name: "B", visibility: "hide" },
+          { slug: "c", visibility: "list" },
+          { slug: "a", display_name: "A again", visibility: "list" },
+        ],
+      })
+    ).toEqual([
+      { slug: "a", displayName: "A" },
+      { slug: "c", displayName: "c" },
+    ]);
+  });
+
+  it("uses every entry when none is marked for a picker, and still reads the platform shape", () => {
+    expect(parseChatGptModelCatalog({ models: [{ slug: "x", visibility: "hide" }] })).toEqual([{ slug: "x", displayName: "x" }]);
+    expect(parseChatGptModelCatalog({ data: [{ id: "gpt-y" }] })).toEqual([{ slug: "gpt-y", displayName: "gpt-y" }]);
+    expect(parseChatGptModelCatalog(null)).toEqual([]);
+  });
+});
+
 describe("plan models and requests", () => {
   const available = ["gpt-plan-pro", "gpt-plan-mini", "gpt-plan-nano"];
 
@@ -91,13 +116,15 @@ describe("plan models and requests", () => {
     ]);
     expect(instructions).toBe("Be brief.");
     expect(input).toEqual([
-      { role: "user", content: [{ type: "input_text", text: "What is this?" }, { type: "input_image", image_url: "data:image/png;base64,AA" }] },
-      { role: "assistant", content: [{ type: "output_text", text: "A cat." }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "What is this?" }, { type: "input_image", image_url: "data:image/png;base64,AA" }] },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "A cat." }] },
     ]);
   });
 
   it("treats a used-up plan as a reason to try the next provider", () => {
     expect(classifyChatGptError("subscription_sharing_usage_limit_exceeded")).toMatchObject({ fallback: true });
+    expect(classifyChatGptError("subscription_sharing_usage_unavailable")).toMatchObject({ fallback: true });
+    expect(classifyChatGptError("chatpass_v2_scope_not_authorized")).toMatchObject({ message: expect.stringMatching(/Sign in with ChatGPT again/) });
     expect(classifyChatGptError("something_else")).toBeNull();
   });
 
