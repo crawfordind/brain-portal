@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, queryAll } from "@/lib/db/client";
 import type { Capture } from "@/lib/db/schema";
 import { verifyCronSecret } from "@/lib/api/validation";
-import { runJob, SERVERLESS_OPERATIONS, type QueueJob } from "@/lib/processing/processors";
+import {
+  runJob,
+  settleAttachmentStatus,
+  SERVERLESS_OPERATIONS,
+  type QueueJob,
+} from "@/lib/processing/processors";
 import { sweepUnprocessedContent } from "@/lib/processing/sweep";
 
 /**
@@ -20,9 +25,9 @@ import { sweepUnprocessedContent } from "@/lib/processing/sweep";
  * Scheduled from vercel.json (every 5 minutes). For local testing:
  *   curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/process-queue
  *
- * Attachment media jobs (thumbnails, PDF/Office text extraction, image
- * descriptions) are NOT handled here — see SERVERLESS_OPERATIONS for why. Run
- * `npx tsx scripts/process-queue.ts` for those.
+ * Attachment media jobs (image metadata and thumbnails, PDF/Office text
+ * extraction, image descriptions, audio transcription) run here too; see
+ * SERVERLESS_OPERATIONS.
  */
 
 // Embedding and LLM calls take seconds each. Without an explicit maxDuration
@@ -173,9 +178,6 @@ export async function GET(request: NextRequest) {
       `SELECT id, user_id, entity_type, entity_id, operation, tier, metadata
        FROM processing_queue
        WHERE operation IN (${operations})
-       -- Attachment embeddings need an entity_type the embeddings table does
-       -- not allow; leave them to the CLI rather than burn their retries here.
-       AND NOT (operation = 'generate_embedding' AND entity_type = 'attachment')
        AND status = 'pending'
        AND attempts < max_attempts
        AND scheduled_at <= datetime('now')
@@ -205,6 +207,14 @@ export async function GET(request: NextRequest) {
         console.error(`[Cron] Error processing ${job.operation} job ${job.id}:`, error);
         await markJobFailed(job.id, error instanceof Error ? error.message : String(error));
         errors++;
+      }
+
+      if (job.entity_type === "attachment") {
+        try {
+          await settleAttachmentStatus(job.entity_id);
+        } catch (error) {
+          console.error(`[Cron] Could not settle attachment ${job.entity_id}:`, error);
+        }
       }
     }
 

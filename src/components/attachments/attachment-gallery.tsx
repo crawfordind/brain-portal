@@ -16,6 +16,7 @@ import { AttachmentViewer } from './attachment-viewer';
 import { cn } from '@/lib/utils';
 import { parseUTCDate } from '@/lib/utils/date';
 import type { Attachment } from '@/lib/db/schema';
+import { useDeleteAttachment } from '@/hooks/use-delete-attachment';
 
 interface AttachmentGalleryProps {
   projectId?: string | null;
@@ -36,6 +37,7 @@ export function AttachmentGallery({ projectId, noteId, className }: AttachmentGa
   const [fileTypeFilter, setFileTypeFilter] = useState<FileTypeFilter>('all');
   const [sortBy, setSortBy] = useState<SortBy>('created');
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
+  const deleteAttachment = useDeleteAttachment();
 
   // Fetch attachments
   useEffect(() => {
@@ -228,9 +230,11 @@ export function AttachmentGallery({ projectId, noteId, className }: AttachmentGa
           attachment={selectedAttachment}
           isOpen={true}
           onClose={() => setSelectedAttachment(null)}
-          onDelete={() => {
-            handleDelete(selectedAttachment.id);
-            setSelectedAttachment(null);
+          onDelete={async () => {
+            if (await deleteAttachment(selectedAttachment)) {
+              handleDelete(selectedAttachment.id);
+              setSelectedAttachment(null);
+            }
           }}
         />
       )}

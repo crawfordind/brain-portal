@@ -23,9 +23,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
-import { useConfirm } from '@/components/ui/confirm-dialog';
 import type { Attachment } from '@/lib/db/schema';
+import { useDeleteAttachment } from '@/hooks/use-delete-attachment';
+
+function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 interface AttachmentCardProps {
   attachment: Attachment;
@@ -46,7 +55,7 @@ export function AttachmentCard({
 }: AttachmentCardProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [thumbnailError, setThumbnailError] = useState(false);
-  const confirm = useConfirm();
+  const deleteAttachment = useDeleteAttachment();
 
   const getFileIcon = () => {
     switch (attachment.file_type) {
@@ -98,37 +107,27 @@ export function AttachmentCard({
   const handleDelete = async () => {
     if (!onDelete) return;
 
-    const ok = await confirm({ title: `Delete "${attachment.filename}"?`, description: "This file will be permanently removed.", destructive: true, confirmLabel: "Delete" });
-    if (!ok) return;
-
     setIsDeleting(true);
-    try {
-      const response = await fetch(`/api/attachments/${attachment.id}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to delete attachment');
-      }
-
+    const deleted = await deleteAttachment(attachment);
+    if (deleted) {
       onDelete(attachment.id);
-      toast.success('Attachment deleted');
-    } catch (error) {
-      console.error('Delete error:', error);
-      toast.error('Failed to delete attachment');
+    } else {
       setIsDeleting(false);
     }
   };
 
   const handleDownload = () => {
-    window.open(attachment.storage_url, '_blank');
+    window.open(attachment.storage_url, '_blank', 'noopener,noreferrer');
   };
 
   const Icon = getFileIcon();
 
   // Get thumbnail from metadata if available
-  const metadata = attachment.metadata ? JSON.parse(attachment.metadata) : {};
-  const thumbnail = metadata.thumbnail;
+  const metadata = parseJson<{ thumbnail?: string }>(attachment.metadata, {});
+  const thumbnail = typeof metadata.thumbnail === 'string' ? metadata.thumbnail : undefined;
+  const tags = parseJson<unknown[]>(attachment.tags, []).filter(
+    (tag): tag is string => typeof tag === 'string'
+  );
 
   if (variant === 'compact') {
     return (
@@ -156,7 +155,7 @@ export function AttachmentCard({
           </p>
         </div>
 
-        <div className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="shrink-0 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon-sm" onClick={(e) => e.stopPropagation()}>
@@ -168,7 +167,7 @@ export function AttachmentCard({
                 <Download className="size-4" />
                 Download
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => window.open(attachment.storage_url, '_blank')}>
+              <DropdownMenuItem onClick={() => window.open(attachment.storage_url, '_blank', 'noopener,noreferrer')}>
                 <ExternalLink className="size-4" />
                 Open in new tab
               </DropdownMenuItem>
@@ -258,9 +257,9 @@ export function AttachmentCard({
         </div>
 
         {/* Tags */}
-        {attachment.tags && JSON.parse(attachment.tags).length > 0 && (
+        {tags.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {JSON.parse(attachment.tags).map((tag: string, index: number) => (
+            {tags.map((tag, index) => (
               <Badge key={index} variant="secondary" className="text-xs">
                 {tag}
               </Badge>
@@ -270,7 +269,7 @@ export function AttachmentCard({
       </div>
 
       {/* Actions */}
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="absolute top-2 right-2 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="secondary" size="icon-sm" className="bg-background/80 backdrop-blur">
@@ -282,7 +281,7 @@ export function AttachmentCard({
               <Download className="size-4" />
               Download
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => window.open(attachment.storage_url, '_blank')}>
+            <DropdownMenuItem onClick={() => window.open(attachment.storage_url, '_blank', 'noopener,noreferrer')}>
               <ExternalLink className="size-4" />
               Open in new tab
             </DropdownMenuItem>

@@ -20,6 +20,8 @@ interface SearchResult {
   rank?: number;
 }
 
+const ATTACHMENT_FILE_TYPES = new Set(["image", "pdf", "document", "audio", "video", "other"]);
+
 // GET /api/search - Full-text search across notes, captures, tasks, and attachments
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
@@ -225,25 +227,13 @@ export async function GET(request: NextRequest) {
       attachmentArgs.push(projectId);
     }
 
-    // Filter by file type category
-    if (fileType) {
-      switch (fileType) {
-        case "image":
-          attachmentQuery += " AND a.file_type LIKE 'image/%'";
-          break;
-        case "pdf":
-          attachmentQuery += " AND a.file_type = 'application/pdf'";
-          break;
-        case "document":
-          attachmentQuery += " AND (a.file_type LIKE 'application/%' OR a.file_type LIKE 'text/%') AND a.file_type != 'application/pdf'";
-          break;
-        case "audio":
-          attachmentQuery += " AND a.file_type LIKE 'audio/%'";
-          break;
-        case "video":
-          attachmentQuery += " AND a.file_type LIKE 'video/%'";
-          break;
-      }
+    // Filter by file type category. `file_type` holds the category itself
+    // ('image', 'pdf', ...); this used to compare it to MIME patterns like
+    // 'image/%', so every type filter returned no attachments at all.
+    const attachmentFileType = fileType && ATTACHMENT_FILE_TYPES.has(fileType) ? fileType : null;
+    if (attachmentFileType) {
+      attachmentQuery += " AND a.file_type = ?";
+      attachmentArgs.push(attachmentFileType);
     }
 
     attachmentQuery += " ORDER BY rank LIMIT ?";
@@ -254,26 +244,7 @@ export async function GET(request: NextRequest) {
       results.push(...attachmentResults);
     } catch {
       // Fallback to LIKE search if FTS fails
-      let fileTypeFilter = "";
-      if (fileType) {
-        switch (fileType) {
-          case "image":
-            fileTypeFilter = "AND a.file_type LIKE 'image/%'";
-            break;
-          case "pdf":
-            fileTypeFilter = "AND a.file_type = 'application/pdf'";
-            break;
-          case "document":
-            fileTypeFilter = "AND (a.file_type LIKE 'application/%' OR a.file_type LIKE 'text/%') AND a.file_type != 'application/pdf'";
-            break;
-          case "audio":
-            fileTypeFilter = "AND a.file_type LIKE 'audio/%'";
-            break;
-          case "video":
-            fileTypeFilter = "AND a.file_type LIKE 'video/%'";
-            break;
-        }
-      }
+      const fileTypeFilter = attachmentFileType ? "AND a.file_type = ?" : "";
 
       const fallbackQuery = `
         SELECT
@@ -298,9 +269,10 @@ export async function GET(request: NextRequest) {
         ORDER BY a.updated_at DESC
         LIMIT ?
       `;
-      const fallbackArgs = projectId
-        ? [user.id, `%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`, projectId, limit]
-        : [user.id, `%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`, limit];
+      const fallbackArgs: (string | number)[] = [user.id, `%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`];
+      if (projectId) fallbackArgs.push(projectId);
+      if (attachmentFileType) fallbackArgs.push(attachmentFileType);
+      fallbackArgs.push(limit);
 
       const attachmentResults = await queryAll<SearchResult>(fallbackQuery, fallbackArgs);
       results.push(...attachmentResults);

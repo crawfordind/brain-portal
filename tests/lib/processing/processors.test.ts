@@ -28,15 +28,15 @@ describe("SERVERLESS_OPERATIONS", () => {
     }
   });
 
-  it("excludes attachment media operations, which need CLI-only dependencies", () => {
-    const excluded = [
+  it("includes attachment media operations, so uploads are processed in production", () => {
+    const media = [
       "extract_metadata",
       "generate_thumbnail",
       "extract_text",
       "generate_description",
     ];
-    for (const operation of excluded) {
-      expect(SERVERLESS_OPERATIONS).not.toContain(operation);
+    for (const operation of media) {
+      expect(SERVERLESS_OPERATIONS).toContain(operation);
     }
   });
 });

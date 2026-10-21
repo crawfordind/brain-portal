@@ -15,6 +15,7 @@ import { ShareDialog } from "@/components/notes/share-dialog";
 import { CleanupModal } from "@/components/notes/cleanup-modal";
 import { AnalysisModal } from "@/components/notes/analysis-modal";
 import type { Attachment } from '@/lib/db/schema';
+import { attachmentToHtml } from '@/lib/attachments/embed';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -180,16 +181,8 @@ export default function NoteDetailPage() {
   const handleInsertAttachment = (attachment: Attachment) => {
     if (!note) return;
 
-    // Insert at cursor in editor
-    let insertText = '';
-    if (attachment.file_type === 'image') {
-      insertText = `![${attachment.description || attachment.filename}](${attachment.storage_url})`;
-    } else {
-      insertText = `[${attachment.filename}](${attachment.storage_url})`;
-    }
-
-    // Append to content for now (editor will handle cursor position)
-    setContent((prev) => prev + '\n\n' + insertText);
+    // Notes are HTML; appending Markdown here showed up as literal text
+    setContent((prev) => prev + attachmentToHtml(attachment));
   };
 
   // Auto-save with debouncing

@@ -1,28 +1,74 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
-import { Upload, X, File as FileIcon, Image, FileText, Music, Video, Loader2 } from 'lucide-react';
+import { Upload, X, File as FileIcon, Image, FileText, Music, Video, Loader2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import imageCompression from 'browser-image-compression';
+import type { Attachment } from '@/lib/db/schema';
+import { uploadAttachment, UploadError } from '@/lib/attachments/upload-client';
+import { FILE_SIZE_LIMITS, formatFileSize } from '@/lib/storage/upload-policy';
 
 interface FileUploadProps {
-  onUploadComplete?: (attachment: any) => void;
+  onUploadComplete?: (attachment: Attachment) => void;
   onUploadError?: (error: string) => void;
   projectId?: string | null;
   noteId?: string | null;
+  /** Most files uploading at once. Finished files don't count against it. */
   maxFiles?: number;
   accept?: string;
   className?: string;
 }
 
 interface UploadingFile {
+  id: string;
   file: File;
   progress: number;
   status: 'pending' | 'uploading' | 'success' | 'error';
   error?: string;
-  attachment?: any;
+  retryable?: boolean;
+  attachment?: Attachment;
+}
+
+/**
+ * Images larger than this are not even tried in the browser: decoding a huge
+ * photo to compress it can exhaust a phone's memory. Smaller ones are scaled
+ * down and usually land far under the server's image limit.
+ */
+const MAX_IMAGE_BEFORE_COMPRESSION = 50 * 1024 * 1024;
+
+/** Types the browser can decode and re-encode. HEIC and GIF (maybe animated) are sent as they are. */
+const COMPRESSIBLE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+let nextUploadId = 0;
+
+async function compressImage(file: File): Promise<File> {
+  if (!COMPRESSIBLE_IMAGE_TYPES.has(file.type)) return file;
+  // Already small: re-encoding would only cost quality
+  if (file.size <= 1.5 * 1024 * 1024) return file;
+
+  try {
+    const { default: imageCompression } = await import('browser-image-compression');
+    const compressed = await imageCompression(file, {
+      maxSizeMB: 3, // Max 3MB
+      maxWidthOrHeight: 2048, // Max dimension 2048px
+      useWebWorker: true,
+      fileType: 'image/webp', // Convert to WebP
+      initialQuality: 0.9, // High quality
+    });
+
+    // Keep whichever is smaller; a re-encode is not guaranteed to win
+    if (compressed.size >= file.size) return file;
+
+    const newFileName = file.name.replace(/\.[^.]+$/, '') + '.webp';
+    return new File([compressed], newFileName, {
+      type: 'image/webp',
+      lastModified: file.lastModified,
+    });
+  } catch (error) {
+    console.error('Image compression failed, using original:', error);
+    return file;
+  }
 }
 
 export function FileUpload({
@@ -37,6 +83,8 @@ export function FileUpload({
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Read from inside async handlers, where state would be stale
+  const inFlightRef = useRef(0);
 
   const getFileIcon = (file: File) => {
     const type = file.type;
@@ -47,211 +95,85 @@ export function FileUpload({
     return FileIcon;
   };
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-  };
+  const update = useCallback((id: string, patch: Partial<UploadingFile>) => {
+    setUploadingFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  }, []);
 
-  const compressImage = async (file: File): Promise<File> => {
-    // Only compress images
-    if (!file.type.startsWith('image/')) {
-      return file;
-    }
+  /** Expects `inFlightRef` to already count this file (see handleFiles and retryFile). */
+  const runUpload = useCallback(
+    async (id: string, originalFile: File) => {
+      update(id, { status: 'uploading', progress: 0, error: undefined });
 
-    // Skip GIFs (might be animated)
-    if (file.type === 'image/gif') {
-      return file;
-    }
-
-    try {
-      const options = {
-        maxSizeMB: 3, // Max 3MB
-        maxWidthOrHeight: 2048, // Max dimension 2048px
-        useWebWorker: true,
-        fileType: 'image/webp', // Convert to WebP
-        initialQuality: 0.9, // High quality
-        preserveExif: true, // Keep EXIF metadata
-      };
-
-      const compressedFile = await imageCompression(file, options);
-
-      // Rename the file to have .webp extension
-      const newFileName = file.name.replace(/\.[^.]+$/, '.webp');
-      const renamedFile = new File([compressedFile], newFileName, {
-        type: 'image/webp',
-        lastModified: Date.now(),
-      });
-
-      console.log(`Compressed ${file.name}: ${formatFileSize(file.size)} → ${formatFileSize(renamedFile.size)}`);
-      return renamedFile;
-    } catch (error) {
-      console.error('Image compression failed, using original:', error);
-      return file;
-    }
-  };
-
-  const uploadFile = async (file: File) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    if (projectId) formData.append('projectId', projectId);
-    if (noteId) formData.append('noteId', noteId);
-
-    const response = await fetch('/api/attachments', {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!response.ok) {
-      // Get response text first (can parse as JSON later)
-      const text = await response.text();
-
-      // Try to parse as JSON
       try {
-        const error = JSON.parse(text);
-        throw new Error(error.error || 'Upload failed');
-      } catch (parseError) {
-        // If not JSON, use the text directly (might be HTML or plain text error)
-        const errorMsg = text.length > 200 ? text.substring(0, 200) + '...' : text;
-        throw new Error(errorMsg || `Upload failed (${response.status})`);
+        const file = originalFile.type.startsWith('image/')
+          ? await compressImage(originalFile)
+          : originalFile;
+
+        const result = await uploadAttachment(file, {
+          noteId,
+          projectId,
+          onProgress: (fraction) => update(id, { progress: Math.round(fraction * 100) }),
+        });
+
+        update(id, { status: 'success', progress: 100, attachment: result.attachment });
+        onUploadComplete?.(result.attachment);
+        toast.success(
+          result.deduplicated
+            ? `Already attached: ${originalFile.name}`
+            : `Uploaded: ${originalFile.name}`
+        );
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+        const retryable = error instanceof UploadError ? error.retryable : true;
+        update(id, { status: 'error', error: errorMessage, retryable });
+        onUploadError?.(errorMessage);
+        toast.error(`Failed to upload ${originalFile.name}: ${errorMessage}`);
+      } finally {
+        inFlightRef.current -= 1;
       }
-    }
-
-    // Try to parse success response as JSON
-    try {
-      return await response.json();
-    } catch (parseError) {
-      throw new Error('Server returned invalid JSON response');
-    }
-  };
-
-  const validateFileSize = (file: File): { valid: boolean; error?: string } => {
-    const maxSizes = {
-      image: 20 * 1024 * 1024, // 20MB for images (will be compressed)
-      pdf: 10 * 1024 * 1024,   // 10MB for PDFs
-      audio: 25 * 1024 * 1024, // 25MB for audio
-      video: 50 * 1024 * 1024, // 50MB for video
-      document: 10 * 1024 * 1024, // 10MB for documents
-      other: 10 * 1024 * 1024,    // 10MB for other files
-    };
-
-    let fileType: keyof typeof maxSizes = 'other';
-    if (file.type.startsWith('image/')) fileType = 'image';
-    else if (file.type === 'application/pdf') fileType = 'pdf';
-    else if (file.type.startsWith('audio/')) fileType = 'audio';
-    else if (file.type.startsWith('video/')) fileType = 'video';
-    else if (
-      file.type.includes('document') ||
-      file.type.includes('word') ||
-      file.type.includes('excel') ||
-      file.type.includes('spreadsheet')
-    ) fileType = 'document';
-
-    const maxSize = maxSizes[fileType];
-
-    if (file.size > maxSize) {
-      return {
-        valid: false,
-        error: `File too large. Maximum ${formatFileSize(maxSize)} allowed for ${fileType} files.`,
-      };
-    }
-
-    return { valid: true };
-  };
+    },
+    [noteId, projectId, onUploadComplete, onUploadError, update]
+  );
 
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
       const fileArray = Array.from(files);
 
-      // Check max files
-      if (uploadingFiles.length + fileArray.length > maxFiles) {
-        toast.error(`Maximum ${maxFiles} files allowed`);
+      if (inFlightRef.current + fileArray.length > maxFiles) {
+        toast.error(`Upload up to ${maxFiles} files at a time`);
         return;
       }
 
-      // Validate file sizes before adding to queue
+      // Refuse what cannot work before spending bandwidth on it. Images get
+      // headroom because they are compressed first.
       const validFiles: File[] = [];
       for (const file of fileArray) {
-        const validation = validateFileSize(file);
-        if (!validation.valid) {
-          toast.error(`${file.name}: ${validation.error}`);
+        if (file.size === 0) {
+          toast.error(`${file.name}: the file is empty`);
+        } else if (file.type.startsWith('image/') && file.size > MAX_IMAGE_BEFORE_COMPRESSION) {
+          toast.error(`${file.name}: images can be up to ${formatFileSize(FILE_SIZE_LIMITS.image)}`);
         } else {
           validFiles.push(file);
         }
       }
+      if (validFiles.length === 0) return;
 
-      // If no valid files, return early
-      if (validFiles.length === 0) {
-        return;
-      }
-
-      // Add only valid files to uploading state
-      const newUploadingFiles: UploadingFile[] = validFiles.map((file) => ({
+      const entries: UploadingFile[] = validFiles.map((file) => ({
+        id: `upload-${++nextUploadId}`,
         file,
         progress: 0,
         status: 'pending',
       }));
+      setUploadingFiles((prev) => [...prev, ...entries]);
+      // Counted now, not as each starts, so files waiting their turn count too
+      inFlightRef.current += entries.length;
 
-      setUploadingFiles((prev) => [...prev, ...newUploadingFiles]);
-
-      // Upload each valid file
-      for (let i = 0; i < validFiles.length; i++) {
-        const originalFile = validFiles[i];
-        const fileIndex = uploadingFiles.length + i;
-
-        try {
-          // Update status to uploading
-          setUploadingFiles((prev) =>
-            prev.map((f, idx) =>
-              idx === fileIndex ? { ...f, status: 'uploading', progress: 25 } : f
-            )
-          );
-
-          // Compress image if needed
-          const file = await compressImage(originalFile);
-
-          // Update progress after compression
-          setUploadingFiles((prev) =>
-            prev.map((f, idx) =>
-              idx === fileIndex ? { ...f, progress: 50 } : f
-            )
-          );
-
-          const result = await uploadFile(file);
-
-          // Update status to success
-          setUploadingFiles((prev) =>
-            prev.map((f, idx) =>
-              idx === fileIndex
-                ? { ...f, status: 'success', progress: 100, attachment: result.attachment }
-                : f
-            )
-          );
-
-          onUploadComplete?.(result.attachment);
-          toast.success(
-            result.deduplicated
-              ? `File already exists: ${file.name}`
-              : `Uploaded: ${file.name}`
-          );
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Upload failed';
-
-          // Update status to error
-          setUploadingFiles((prev) =>
-            prev.map((f, idx) =>
-              idx === fileIndex ? { ...f, status: 'error', error: errorMessage } : f
-            )
-          );
-
-          onUploadError?.(errorMessage);
-          toast.error(`Failed to upload ${originalFile.name}: ${errorMessage}`);
-        }
+      // One at a time: parallel uploads on a phone connection mostly slow each other down
+      for (const entry of entries) {
+        await runUpload(entry.id, entry.file);
       }
     },
-    [uploadingFiles.length, maxFiles, projectId, noteId, onUploadComplete, onUploadError]
+    [maxFiles, runUpload]
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -284,7 +206,8 @@ export function FileUpload({
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       if (files && files.length > 0) {
-        handleFiles(files);
+        // Copy before resetting the input, which empties the live FileList
+        handleFiles(Array.from(files));
       }
       // Reset input value to allow re-uploading the same file
       e.target.value = '';
@@ -292,22 +215,37 @@ export function FileUpload({
     [handleFiles]
   );
 
-  const removeFile = (index: number) => {
-    setUploadingFiles((prev) => prev.filter((_, idx) => idx !== index));
+  const removeFile = (id: string) => {
+    setUploadingFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const retryFile = (entry: UploadingFile) => {
+    inFlightRef.current += 1;
+    runUpload(entry.id, entry.file);
   };
 
   const clearCompleted = () => {
     setUploadingFiles((prev) => prev.filter((f) => f.status !== 'success'));
   };
 
+  const remaining = uploadingFiles.filter((f) => f.status === 'pending' || f.status === 'uploading').length;
+
   return (
     <div className={cn('space-y-4', className)}>
       {/* Drop Zone */}
       <div
+        role="button"
+        tabIndex={0}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            fileInputRef.current?.click();
+          }
+        }}
         className={cn(
           'relative border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors',
           isDragging
@@ -339,7 +277,7 @@ export function FileUpload({
               {isDragging ? 'Drop files here' : 'Click to upload or drag and drop'}
             </p>
             <p className="text-xs text-muted-foreground">
-              Images, PDFs, audio, video, and documents
+              Images, PDFs, audio, video, and documents (up to {formatFileSize(FILE_SIZE_LIMITS.video)})
             </p>
           </div>
         </div>
@@ -349,9 +287,10 @@ export function FileUpload({
       {uploadingFiles.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium">
-              Uploading {uploadingFiles.filter((f) => f.status !== 'success').length} of{' '}
-              {uploadingFiles.length} files
+            <p className="text-sm font-medium" aria-live="polite">
+              {remaining > 0
+                ? `Uploading ${remaining} of ${uploadingFiles.length} files`
+                : `${uploadingFiles.filter((f) => f.status === 'success').length} of ${uploadingFiles.length} uploaded`}
             </p>
             {uploadingFiles.some((f) => f.status === 'success') && (
               <Button variant="ghost" size="sm" onClick={clearCompleted}>
@@ -361,12 +300,12 @@ export function FileUpload({
           </div>
 
           <div className="space-y-2">
-            {uploadingFiles.map((uploadingFile, index) => {
+            {uploadingFiles.map((uploadingFile) => {
               const Icon = getFileIcon(uploadingFile.file);
 
               return (
                 <div
-                  key={index}
+                  key={uploadingFile.id}
                   className="flex items-center gap-3 p-3 border rounded-lg bg-card"
                 >
                   <div className="shrink-0">
@@ -377,11 +316,19 @@ export function FileUpload({
                     <p className="text-sm font-medium truncate">{uploadingFile.file.name}</p>
                     <p className="text-xs text-muted-foreground">
                       {formatFileSize(uploadingFile.file.size)}
+                      {uploadingFile.status === 'uploading' && ` · ${uploadingFile.progress}%`}
                     </p>
 
                     {/* Progress Bar */}
-                    {uploadingFile.status === 'uploading' && (
-                      <div className="mt-2 h-1 bg-muted rounded-full overflow-hidden">
+                    {(uploadingFile.status === 'uploading' || uploadingFile.status === 'pending') && (
+                      <div
+                        className="mt-2 h-1 bg-muted rounded-full overflow-hidden"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={uploadingFile.progress}
+                        aria-label={`Uploading ${uploadingFile.file.name}`}
+                      >
                         <div
                           className="h-full bg-primary transition-all duration-300"
                           style={{ width: `${uploadingFile.progress}%` }}
@@ -395,8 +342,8 @@ export function FileUpload({
                     )}
                   </div>
 
-                  <div className="shrink-0">
-                    {uploadingFile.status === 'uploading' && (
+                  <div className="shrink-0 flex items-center gap-1">
+                    {(uploadingFile.status === 'uploading' || uploadingFile.status === 'pending') && (
                       <Loader2 className="size-4 animate-spin text-primary" />
                     )}
                     {uploadingFile.status === 'success' && (
@@ -416,11 +363,22 @@ export function FileUpload({
                         </svg>
                       </div>
                     )}
+                    {uploadingFile.status === 'error' && uploadingFile.retryable && (
+                      <Button
+                        variant="ghost"
+                        size="touch-icon"
+                        aria-label={`Retry ${uploadingFile.file.name}`}
+                        onClick={() => retryFile(uploadingFile)}
+                      >
+                        <RotateCcw className="size-4" />
+                      </Button>
+                    )}
                     {uploadingFile.status === 'error' && (
                       <Button
                         variant="ghost"
-                        size="icon-sm"
-                        onClick={() => removeFile(index)}
+                        size="touch-icon"
+                        aria-label={`Dismiss ${uploadingFile.file.name}`}
+                        onClick={() => removeFile(uploadingFile.id)}
                       >
                         <X className="size-4" />
                       </Button>

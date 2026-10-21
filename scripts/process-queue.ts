@@ -21,29 +21,13 @@ interface Job {
   operation: string;
   tier: string;
   status: string;
+  metadata: string | null;
 }
 
 interface Note {
   id: string;
   title: string;
   content: string;
-}
-
-interface Attachment {
-  id: string;
-  user_id: string;
-  filename: string;
-  original_filename: string;
-  mime_type: string;
-  file_size: number;
-  storage_key: string;
-  storage_url: string;
-  file_type: string;
-  extracted_text: string | null;
-  description: string | null;
-  content_plain: string | null;
-  processing_status: string;
-  metadata: string;
 }
 
 interface Capture {
@@ -294,178 +278,22 @@ async function processConnections(job: Job): Promise<boolean> {
   }
 }
 
-async function processAttachmentMetadata(job: Job): Promise<boolean> {
-  const { processMetadataExtraction } = await import("../src/lib/processing/attachments");
-
-  // Get the attachment
-  const attachmentResult = await db.execute({
-    sql: "SELECT * FROM attachments WHERE id = ?",
-    args: [job.entity_id],
-  });
-
-  if (attachmentResult.rows.length === 0) {
-    console.log(`    Attachment ${job.entity_id} not found, skipping`);
-    return false;
-  }
-
-  const attachment = attachmentResult.rows[0] as unknown as Attachment;
-
-  try {
-    const { metadata } = await processMetadataExtraction(attachment);
-
-    // Update the attachment with metadata
-    await db.execute({
-      sql: "UPDATE attachments SET metadata = ? WHERE id = ?",
-      args: [JSON.stringify(metadata), job.entity_id],
-    });
-
-    return true;
-  } catch (error) {
-    console.error(`    Error extracting metadata for ${attachment.filename}:`, error);
-    return false;
-  }
+/**
+ * Attachment jobs run through the same handlers as the production cron, so
+ * the two can never disagree about what a job does. Throws on failure.
+ */
+async function processAttachmentJob(job: Job): Promise<boolean> {
+  const { runJob } = await import("../src/lib/processing/processors");
+  await runJob(job);
+  return true;
 }
 
-async function processAttachmentThumbnail(job: Job): Promise<boolean> {
-  const { processThumbnailGeneration } = await import("../src/lib/processing/attachments");
-
-  // Get the attachment
-  const attachmentResult = await db.execute({
-    sql: "SELECT * FROM attachments WHERE id = ?",
-    args: [job.entity_id],
-  });
-
-  if (attachmentResult.rows.length === 0) {
-    console.log(`    Attachment ${job.entity_id} not found, skipping`);
-    return false;
-  }
-
-  const attachment = attachmentResult.rows[0] as unknown as Attachment;
-
-  try {
-    const { thumbnail } = await processThumbnailGeneration(attachment);
-
-    // Store thumbnail in metadata
-    const metadata = attachment.metadata ? JSON.parse(attachment.metadata) : {};
-    metadata.thumbnail = thumbnail;
-
-    await db.execute({
-      sql: "UPDATE attachments SET metadata = ? WHERE id = ?",
-      args: [JSON.stringify(metadata), job.entity_id],
-    });
-
-    return true;
-  } catch (error) {
-    console.error(`    Error generating thumbnail for ${attachment.filename}:`, error);
-    return false;
-  }
-}
-
-async function processAttachmentTextExtraction(job: Job): Promise<boolean> {
-  const { processTextExtraction } = await import("../src/lib/processing/attachments");
-
-  // Get the attachment
-  const attachmentResult = await db.execute({
-    sql: "SELECT * FROM attachments WHERE id = ?",
-    args: [job.entity_id],
-  });
-
-  if (attachmentResult.rows.length === 0) {
-    console.log(`    Attachment ${job.entity_id} not found, skipping`);
-    return false;
-  }
-
-  const attachment = attachmentResult.rows[0] as unknown as Attachment;
-
-  try {
-    const { text, metadata } = await processTextExtraction(attachment);
-
-    // Update attachment with extracted text
-    const currentMetadata = attachment.metadata ? JSON.parse(attachment.metadata) : {};
-    const mergedMetadata = { ...currentMetadata, ...metadata };
-
-    await db.execute({
-      sql: "UPDATE attachments SET extracted_text = ?, content_plain = ?, metadata = ? WHERE id = ?",
-      args: [text, text, JSON.stringify(mergedMetadata), job.entity_id],
-    });
-
-    return true;
-  } catch (error) {
-    console.error(`    Error extracting text from ${attachment.filename}:`, error);
-    return false;
-  }
-}
-
-async function processAttachmentDescription(job: Job): Promise<boolean> {
-  const { processDescriptionGeneration } = await import("../src/lib/processing/attachments");
-
-  // Get the attachment
-  const attachmentResult = await db.execute({
-    sql: "SELECT * FROM attachments WHERE id = ?",
-    args: [job.entity_id],
-  });
-
-  if (attachmentResult.rows.length === 0) {
-    console.log(`    Attachment ${job.entity_id} not found, skipping`);
-    return false;
-  }
-
-  const attachment = attachmentResult.rows[0] as unknown as Attachment;
-
-  try {
-    const { description } = await processDescriptionGeneration(attachment);
-
-    // Update attachment with description
-    await db.execute({
-      sql: "UPDATE attachments SET description = ?, content_plain = ? WHERE id = ?",
-      args: [description, description, job.entity_id],
-    });
-
-    return true;
-  } catch (error) {
-    console.error(`    Error generating description for ${attachment.filename}:`, error);
-    return false;
-  }
-}
-
-async function processAttachmentEmbedding(job: Job): Promise<boolean> {
-  const { generateEmbedding, storeEmbedding } = await import("../src/lib/ai/embeddings");
-  const { hashContent } = await import("../src/lib/processing/cache");
-
-  // Get the attachment
-  const attachmentResult = await db.execute({
-    sql: "SELECT * FROM attachments WHERE id = ?",
-    args: [job.entity_id],
-  });
-
-  if (attachmentResult.rows.length === 0) {
-    console.log(`    Attachment ${job.entity_id} not found, skipping`);
-    return false;
-  }
-
-  const attachment = attachmentResult.rows[0] as unknown as Attachment;
-
-  // Build text for embedding
-  const parts: string[] = [attachment.filename];
-  if (attachment.description) parts.push(attachment.description);
-  if (attachment.content_plain) parts.push(attachment.content_plain);
-
-  const text = parts.join('\n\n');
-
-  if (!text.trim()) {
-    console.log(`    No text content for ${attachment.filename}, skipping embedding`);
-    return true; // Not an error, just nothing to embed yet
-  }
-
-  try {
-    const embedding = await generateEmbedding(text);
-    const contentHash = hashContent(text);
-    await storeEmbedding(job.user_id, "attachment", job.entity_id, embedding, contentHash);
-    return true;
-  } catch (error) {
-    console.error(`    Error generating embedding for ${attachment.filename}:`, error);
-    return false;
-  }
+async function settleAttachment(job: Job): Promise<void> {
+  if (job.entity_type !== "attachment") return;
+  const { settleAttachmentStatus } = await import("../src/lib/processing/processors");
+  await settleAttachmentStatus(job.entity_id).catch((error) =>
+    console.error(`    Could not settle attachment ${job.entity_id}:`, error)
+  );
 }
 
 async function processLinkScrapeAndEmbed(job: Job): Promise<boolean> {
@@ -592,9 +420,9 @@ async function processJobs(operation: string, limit: number = 50) {
     try {
       switch (operation) {
         case "generate_embedding":
-          // Handle both note and attachment embeddings
+          // Attachment embeddings are a no-op there (see SERVERLESS_OPERATIONS)
           if (job.entity_type === "attachment") {
-            result = await processAttachmentEmbedding(job);
+            result = await processAttachmentJob(job);
           } else {
             result = await processEmbedding(job);
           }
@@ -620,16 +448,16 @@ async function processJobs(operation: string, limit: number = 50) {
           break;
         }
         case "extract_metadata":
-          result = await processAttachmentMetadata(job);
+          result = await processAttachmentJob(job);
           break;
         case "generate_thumbnail":
-          result = await processAttachmentThumbnail(job);
+          result = await processAttachmentJob(job);
           break;
         case "extract_text":
-          result = await processAttachmentTextExtraction(job);
+          result = await processAttachmentJob(job);
           break;
         case "generate_description":
-          result = await processAttachmentDescription(job);
+          result = await processAttachmentJob(job);
           break;
         case "link-scrape-and-embed":
           result = await processLinkScrapeAndEmbed(job);
@@ -652,6 +480,8 @@ async function processJobs(operation: string, limit: number = 50) {
       failed++;
       process.stdout.write("x");
     }
+
+    await settleAttachment(job);
   }
 
   console.log(`\n  Completed: ${success}, Failed: ${failed}`);

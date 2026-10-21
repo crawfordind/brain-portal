@@ -26,6 +26,7 @@
     "mcp:start": "tsx src/mcp/server.ts",
     "mcp:migrate": "tsx scripts/migrate-add-mcp-api-keys.ts",
     "mcp:keygen": "tsx scripts/generate-mcp-key.ts",
+    "r2:cors": "tsx scripts/configure-r2-cors.ts",
     "migrate:insight-quality": "tsx scripts/migrate-add-insight-quality.ts",
     "migrate:entity-layer": "tsx scripts/migrate-add-entity-layer.ts",
     "migrate:crm-phase-0": "tsx scripts/migrate-add-crm-phase-0.ts",

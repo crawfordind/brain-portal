@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { query, mutate, queryOne } from '@/lib/db/client';
+import { mutate, queryOne } from '@/lib/db/client';
 import type { Attachment } from '@/lib/db/schema';
-import { deleteFromR2 } from '@/lib/storage/r2';
-import { enqueue } from '@/lib/processing/queue';
+import type { InValue } from '@libsql/client';
+import { deleteAttachment, parseTags, resolveAttachmentLinks } from '@/lib/attachments/create';
+import { attachmentErrorResponse } from '@/lib/attachments/http';
 
 // GET /api/attachments/[id] - Get single attachment
 export async function GET(
@@ -52,53 +53,61 @@ export async function PATCH(
       return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
     }
 
-    const body = await request.json();
-    const {
-      description,
-      tags,
-      projectId,
-      noteId,
-    } = body;
+    let body: Record<string, unknown>;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+    const { description, tags, projectId, noteId } = body;
 
     // Build update query dynamically
     const updates: string[] = [];
-    const values: any[] = [];
+    const values: InValue[] = [];
 
     if (description !== undefined) {
+      if (description !== null && typeof description !== 'string') {
+        return NextResponse.json({ error: "'description' must be a string" }, { status: 400 });
+      }
       updates.push('description = ?');
-      values.push(description);
+      values.push(description?.trim().slice(0, 5000) || null);
     }
 
     if (tags !== undefined) {
       updates.push('tags = ?');
-      values.push(Array.isArray(tags) ? JSON.stringify(tags) : tags);
+      values.push(JSON.stringify(parseTags(tags)));
     }
 
-    if (projectId !== undefined) {
-      updates.push('project_id = ?');
-      values.push(projectId);
-    }
-
-    if (noteId !== undefined) {
-      updates.push('note_id = ?');
-      values.push(noteId);
+    // Moving a file is checked like filing one: only to a note or project the
+    // user may write to. `null` unlinks.
+    if (projectId !== undefined || noteId !== undefined) {
+      const links = await resolveAttachmentLinks(user.id, {
+        noteId: typeof noteId === 'string' ? noteId : null,
+        projectId: typeof projectId === 'string' ? projectId : null,
+      });
+      if (projectId !== undefined) {
+        updates.push('project_id = ?');
+        values.push(links.projectId);
+      }
+      if (noteId !== undefined) {
+        updates.push('note_id = ?');
+        values.push(links.noteId);
+      }
     }
 
     if (updates.length === 0) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
     }
 
-    updates.push('updated_at = datetime(\'now\')');
+    updates.push("updated_at = datetime('now')");
 
-    const sql = `
-      UPDATE attachments
-      SET ${updates.join(', ')}
-      WHERE id = ? AND user_id = ?
-      RETURNING *
-    `;
-    values.push(id, user.id);
-
-    const attachment = await mutate<Attachment>(sql, values);
+    const attachment = await mutate<Attachment>(
+      `UPDATE attachments
+       SET ${updates.join(', ')}
+       WHERE id = ? AND user_id = ?
+       RETURNING *`,
+      [...values, id, user.id]
+    );
 
     if (!attachment) {
       return NextResponse.json(
@@ -107,29 +116,23 @@ export async function PATCH(
       );
     }
 
-    // If description changed, re-generate embedding
-    if (description !== undefined && description !== existing.description) {
-      try {
-        await enqueue({
-          userId: user.id,
-          entityType: 'attachment',
-          entityId: attachment.id,
-          operation: 'generate_embedding',
-          tier: 'embedding',
-          priority: 1,
-        });
-      } catch (queueError) {
-        console.error('Failed to queue re-embedding:', queueError);
-      }
+    // Search reads content_plain, which carries the description
+    if (description !== undefined) {
+      const refreshed = await mutate<Attachment>(
+        `UPDATE attachments
+         SET content_plain = NULLIF(trim(
+           COALESCE(description, '') || char(10) || char(10) || COALESCE(extracted_text, '')
+         ), '')
+         WHERE id = ? AND user_id = ?
+         RETURNING *`,
+        [id, user.id]
+      );
+      return NextResponse.json({ attachment: refreshed ?? attachment });
     }
 
     return NextResponse.json({ attachment });
   } catch (error) {
-    console.error('Failed to update attachment:', error);
-    return NextResponse.json(
-      { error: 'Failed to update attachment' },
-      { status: 500 }
-    );
+    return attachmentErrorResponse(error, 'Failed to update attachment');
   }
 }
 
@@ -156,20 +159,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
     }
 
-    // Delete from R2 storage
-    try {
-      await deleteFromR2(attachment.storage_key);
-    } catch (storageError) {
-      console.error('Failed to delete from R2:', storageError);
-      // Continue with database deletion even if R2 deletion fails
-      // This prevents orphaned database records
-    }
-
-    // Delete from database (will cascade to embeddings via foreign key)
-    await mutate(
-      'DELETE FROM attachments WHERE id = ? AND user_id = ?',
-      [id, user.id]
-    );
+    await deleteAttachment(attachment);
 
     return NextResponse.json({ success: true, message: 'Attachment deleted' });
   } catch (error) {
