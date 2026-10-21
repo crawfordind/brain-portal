@@ -186,6 +186,42 @@ export function chatGptPlanAccess(input: {
   };
 }
 
+export interface ChatGptModel {
+  slug: string;
+  displayName: string;
+}
+
+/**
+ * Read a plan's model catalog. With a ChatGPT plan token, `GET /v1/models`
+ * returns `{ models: [{ slug, display_name, visibility }] }`, not the
+ * platform API's `{ data: [{ id }] }`; reading `data` is what made every plan
+ * look like it had no models. OpenAI says to show the entries whose
+ * `visibility` is "list", in the server's order (best first). The platform
+ * shape is still accepted, in case the endpoint ever converges on it.
+ */
+export function parseChatGptModelCatalog(body: unknown): ChatGptModel[] {
+  const b = (body ?? {}) as { models?: unknown; data?: unknown };
+  const raw = Array.isArray(b.models) ? b.models : Array.isArray(b.data) ? b.data : Array.isArray(body) ? body : [];
+  const entries = (raw as Array<Record<string, unknown>>)
+    .map((m) => {
+      const slug = typeof m?.slug === "string" ? m.slug : typeof m?.id === "string" ? m.id : null;
+      if (!slug) return null;
+      return {
+        slug,
+        displayName: typeof m.display_name === "string" && m.display_name ? m.display_name : slug,
+        visibility: typeof m.visibility === "string" ? m.visibility : null,
+      };
+    })
+    .filter((m): m is { slug: string; displayName: string; visibility: string | null } => m !== null);
+  const listed = entries.filter((m) => m.visibility === null || m.visibility === "list");
+  // If nothing is marked for a picker, the account can still use what it has.
+  const chosen = listed.length > 0 ? listed : entries;
+  const seen = new Set<string>();
+  return chosen
+    .filter((m) => (seen.has(m.slug) ? false : (seen.add(m.slug), true)))
+    .map(({ slug, displayName }) => ({ slug, displayName }));
+}
+
 /** OpenAI's plan-usage error codes, and what each means for routing. */
 export function classifyChatGptError(code: string | null | undefined): {
   /** True when another provider should be tried. */
@@ -201,6 +237,16 @@ export function classifyChatGptError(code: string | null | undefined): {
       return { fallback: true, message: "Your ChatGPT plan can't do this kind of request." };
     case "subscription_sharing_route_not_supported":
       return { fallback: true, message: "Your ChatGPT plan can't be used for this request." };
+    case "subscription_sharing_usage_unavailable":
+    case "subscription_sharing_user_unavailable":
+      return { fallback: true, message: "ChatGPT plan usage is busy right now. Try again in a moment." };
+    case "subscription_sharing_invalid_user":
+    case "chatpass_v2_scope_not_authorized":
+    case "chatpass_v2_invalid_authorization_context":
+      return {
+        fallback: true,
+        message: "Your ChatGPT sign-in needs renewing. Sign in with ChatGPT again in Settings → AI provider.",
+      };
     default:
       return null;
   }
@@ -230,9 +276,9 @@ export function chooseChatGptModels(input: {
 /** The Responses API input for OpenAI-style chat messages. */
 export function toResponsesRequest(
   messages: Array<{ role: string; content?: unknown }>
-): { instructions: string | undefined; input: Array<{ role: "user" | "assistant"; content: unknown[] }> } {
+): { instructions: string | undefined; input: Array<{ type: "message"; role: "user" | "assistant"; content: unknown[] }> } {
   const instructions: string[] = [];
-  const input: Array<{ role: "user" | "assistant"; content: unknown[] }> = [];
+  const input: Array<{ type: "message"; role: "user" | "assistant"; content: unknown[] }> = [];
   for (const m of messages) {
     if (m.role === "system" || m.role === "developer") {
       const text = typeof m.content === "string" ? m.content : "";
@@ -252,7 +298,7 @@ export function toResponsesRequest(
         }
       }
     }
-    if (parts.length > 0) input.push({ role: m.role, content: parts });
+    if (parts.length > 0) input.push({ type: "message", role: m.role, content: parts });
   }
   return { instructions: instructions.length > 0 ? instructions.join("\n\n") : undefined, input };
 }

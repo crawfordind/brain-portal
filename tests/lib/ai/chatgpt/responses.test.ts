@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { chatGptComplete, chatGptModelIds, ChatGptPlanError } from "@/lib/ai/chatgpt/responses";
+import { chatGptComplete, chatGptModelIds, chatGptModelList, ChatGptPlanError } from "@/lib/ai/chatgpt/responses";
 import { shouldFallBack } from "@/lib/ai/fallback";
 
 const sse = (events: unknown[]) =>
@@ -49,10 +49,36 @@ describe("ChatGPT plan requests", () => {
     expect(e2).toMatchObject({ code: "subscription_sharing_usage_limit_exceeded", status: 429, fallback: true });
   });
 
-  it("lists the plan's models as a picker should show them", async () => {
+  it("reads the plan's catalog, which is a models array, not the platform's data array", async () => {
+    // The real shape for a ChatGPT plan token, per OpenAI's models-and-inference docs.
     const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify({ data: [{ slug: "gpt-a", visibility: "list" }, { slug: "gpt-hidden", visibility: "hide" }, { id: "gpt-b" }] }))
+      new Response(
+        JSON.stringify({
+          models: [
+            { slug: "gpt-plan-pro", display_name: "GPT Plan Pro", visibility: "list" },
+            { slug: "gpt-internal", display_name: "Internal", visibility: "hide" },
+            { slug: "gpt-plan-mini", display_name: "GPT Plan Mini", visibility: "list" },
+          ],
+        })
+      )
     );
-    expect(await chatGptModelIds("t", fetchImpl as unknown as typeof fetch)).toEqual(["gpt-a", "gpt-b"]);
+    expect(await chatGptModelIds("t", fetchImpl as unknown as typeof fetch)).toEqual(["gpt-plan-pro", "gpt-plan-mini"]);
+    expect(await chatGptModelList("t", fetchImpl as unknown as typeof fetch)).toEqual({
+      models: [
+        { slug: "gpt-plan-pro", displayName: "GPT Plan Pro" },
+        { slug: "gpt-plan-mini", displayName: "GPT Plan Mini" },
+      ],
+      error: null,
+    });
+  });
+
+  it("says why when the list can't be read, instead of claiming there are no models", async () => {
+    const refused = vi.fn(async () =>
+      new Response(JSON.stringify({ error: { code: "subscription_sharing_user_not_eligible", message: "no" } }), { status: 403 })
+    );
+    const result = await chatGptModelList("t", refused as unknown as typeof fetch);
+    expect(result.models).toEqual([]);
+    expect(result.error).toMatch(/Plus or Pro/);
+    expect(await chatGptModelIds("t", refused as unknown as typeof fetch)).toBeNull();
   });
 });

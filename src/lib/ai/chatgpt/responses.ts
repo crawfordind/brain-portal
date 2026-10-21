@@ -10,7 +10,13 @@
  * stream as well as from the status code.
  */
 
-import { CHATGPT_API_BASE, classifyChatGptError, toResponsesRequest } from "./types";
+import {
+  CHATGPT_API_BASE,
+  classifyChatGptError,
+  parseChatGptModelCatalog,
+  toResponsesRequest,
+  type ChatGptModel,
+} from "./types";
 import type { UsageTokens } from "../usage/types";
 import { tokenCount } from "../usage/types";
 
@@ -149,21 +155,42 @@ export async function chatGptComplete(
   return { content, model, finishReason: "stop", usage };
 }
 
-/** The models this plan offers, as OpenAI lists them for a picker. */
-export async function chatGptModelIds(accessToken: string, fetchImpl: typeof fetch = fetch): Promise<string[] | null> {
+/**
+ * The models this plan offers, as OpenAI lists them for a picker, or why
+ * they couldn't be read. The reason is logged and shown, so "no models"
+ * never again hides what actually went wrong.
+ */
+export async function chatGptModelList(
+  accessToken: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<{ models: ChatGptModel[]; error: string | null }> {
   try {
     const res = await fetchImpl(`${CHATGPT_API_BASE}/models`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { data?: Array<{ id?: string; slug?: string; visibility?: string }> };
-    const ids = (body.data ?? [])
-      .filter((m) => !m.visibility || m.visibility === "list")
-      .map((m) => m.slug ?? m.id)
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
-    return ids;
-  } catch {
-    return null;
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      const err = planError(res.status, body);
+      console.warn(`[chatgpt] model list failed (${res.status}${err.code ? `, ${err.code}` : ""}): ${err.message}`);
+      return { models: [], error: err.message };
+    }
+    const models = parseChatGptModelCatalog(body);
+    if (models.length === 0) {
+      const keys = body && typeof body === "object" ? Object.keys(body).join(", ") : typeof body;
+      console.warn(`[chatgpt] model list was empty (response keys: ${keys})`);
+      return { models, error: "ChatGPT returned an empty model list for this plan." };
+    }
+    return { models, error: null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[chatgpt] model list unreachable: ${message}`);
+    return { models: [], error: `Couldn't reach ChatGPT to list models (${message}).` };
   }
+}
+
+/** Just the slugs, best first; null when they couldn't be read. */
+export async function chatGptModelIds(accessToken: string, fetchImpl: typeof fetch = fetch): Promise<string[] | null> {
+  const { models, error } = await chatGptModelList(accessToken, fetchImpl);
+  return error && models.length === 0 ? null : models.map((m) => m.slug);
 }

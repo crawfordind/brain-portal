@@ -19,7 +19,7 @@ import { updateAiPreferences } from "@/lib/ai/credentials/store";
 import { isMissingUserAiKeysTable } from "@/lib/ai/credentials/schema";
 import { chatGptHostId, ChatGptAuthError, exchangeChatGptCode } from "@/lib/ai/chatgpt/oauth";
 import { saveChatGptSession } from "@/lib/ai/chatgpt/session";
-import { chatGptModelIds } from "@/lib/ai/chatgpt/responses";
+import { chatGptModelList } from "@/lib/ai/chatgpt/responses";
 import { parseCallbackUrl } from "@/lib/ai/chatgpt/types";
 import { accessFor, decodePending, PENDING_COOKIE, PENDING_COOKIE_PATH } from "@/lib/ai/chatgpt/access";
 import { timingSafeEqual } from "crypto";
@@ -86,10 +86,10 @@ export async function POST(request: NextRequest) {
   }
 
   // A plan that lists no models can't run anything; say so now, not later.
-  const models = await chatGptModelIds(session.accessToken);
+  const { models, error: modelError } = await chatGptModelList(session.accessToken);
 
   try {
-    await saveChatGptSession(db, user.id, session, Boolean(models && models.length > 0));
+    await saveChatGptSession(db, user.id, session, models.length > 0);
   } catch (error) {
     if (isMissingUserAiKeysTable(error)) {
       return NextResponse.json({ error: "Personal AI keys need a database update on this server (npm run db:migrate)." }, { status: 503 });
@@ -104,9 +104,9 @@ export async function POST(request: NextRequest) {
     {
       saved: "chatgpt",
       message:
-        models && models.length > 0
-          ? `You're using your ChatGPT plan${session.email ? ` (${session.email})` : ""}. Brain Portal tries it first.`
-          : "Signed in, but your ChatGPT plan didn't list any models it can use here. Your other keys stay in charge.",
+        models.length > 0
+          ? `You're using your ChatGPT plan${session.email ? ` (${session.email})` : ""}, with ${models.length} model${models.length === 1 ? "" : "s"}. Brain Portal tries it first.`
+          : `Signed in, but couldn't read your plan's models: ${modelError ?? "none were listed"} Press Test on the ChatGPT card to try again.`,
       status: await getAiKeysStatus(user.id),
     },
     { headers: { "Cache-Control": "no-store" } }

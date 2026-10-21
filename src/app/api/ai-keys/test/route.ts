@@ -17,7 +17,7 @@ import { isAiProvider, PROVIDER_INFO } from "@/lib/ai/credentials/types";
 import { verifyApiKey } from "@/lib/ai/credentials/verify";
 import { ChatGptAuthError } from "@/lib/ai/chatgpt/oauth";
 import { chatGptAccessToken } from "@/lib/ai/chatgpt/session";
-import { chatGptModelIds } from "@/lib/ai/chatgpt/responses";
+import { chatGptModelList } from "@/lib/ai/chatgpt/responses";
 import { parseChatGptSession } from "@/lib/ai/chatgpt/types";
 
 export async function POST(request: NextRequest) {
@@ -48,11 +48,11 @@ export async function POST(request: NextRequest) {
     try {
       if (!session) throw new ChatGptAuthError("This sign-in can't be read. Sign in with ChatGPT again.", { needsSignIn: true, status: 401 });
       const token = await chatGptAccessToken(db, user.id, session);
-      const models = await chatGptModelIds(token);
-      ok = Boolean(models && models.length > 0);
+      const { models, error: modelError } = await chatGptModelList(token);
+      ok = models.length > 0;
       message = ok
-        ? `Your ChatGPT plan is connected and offers ${models!.length} model${models!.length === 1 ? "" : "s"}.`
-        : "Signed in, but ChatGPT didn't list any models for this plan right now.";
+        ? `Your ChatGPT plan is connected: ${models.slice(0, 4).map((m) => m.displayName).join(", ")}${models.length > 4 ? ` and ${models.length - 4} more` : ""}.`
+        : `Signed in, but couldn't read your plan's models: ${modelError ?? "none were listed"}`;
       if (ok) await recordKeyStatus(db, user.id, provider, "ok");
     } catch (error) {
       message = error instanceof Error ? error.message : "Couldn't check the ChatGPT sign-in.";
