@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { mutate, query } from '@/lib/db/client';
+import { mutate, queryOne } from '@/lib/db/client';
 import type { Attachment } from '@/lib/db/schema';
 
 // POST /api/attachments/[id]/pin - Toggle pin status
@@ -17,7 +17,7 @@ export async function POST(
 
   try {
     // Get current attachment
-    const [attachment] = await query<Attachment>(
+    const attachment = await queryOne<Attachment>(
       'SELECT * FROM attachments WHERE id = ? AND user_id = ?',
       [id, user.id]
     );
@@ -26,11 +26,13 @@ export async function POST(
       return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
     }
 
-    // Toggle pin status
+    // Toggle pin status. `datetime('now')` in single quotes: a double-quoted
+    // "now" is an identifier in SQLite, and only works by a legacy fallback
+    // that strict builds turn off.
     const newPinStatus = !attachment.is_pinned;
     const updated = await mutate<Attachment>(
-      'UPDATE attachments SET is_pinned = ?, updated_at = datetime("now") WHERE id = ? RETURNING *',
-      [newPinStatus, id]
+      "UPDATE attachments SET is_pinned = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ? RETURNING *",
+      [newPinStatus ? 1 : 0, id, user.id]
     );
 
     return NextResponse.json({ attachment: updated, pinned: newPinStatus });

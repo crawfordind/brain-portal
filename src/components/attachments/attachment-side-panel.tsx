@@ -7,6 +7,10 @@ import { Plus, Star } from 'lucide-react';
 import type { Attachment } from '@/lib/db/schema';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import {
+  ATTACHMENTS_CHANGED_EVENT,
+  type AttachmentsChangedDetail,
+} from '@/lib/attachments/upload-client';
 
 interface AttachmentSidePanelProps {
   noteId: string;
@@ -28,6 +32,14 @@ export function AttachmentSidePanel({
 
   useEffect(() => {
     fetchAttachments();
+    // Uploads happen in the picker, not here; refresh when one lands
+    const onChanged = (event: Event) => {
+      const detail = (event as CustomEvent<AttachmentsChangedDetail>).detail;
+      if (!detail?.noteId || detail.noteId === noteId) fetchAttachments();
+    };
+    window.addEventListener(ATTACHMENTS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(ATTACHMENTS_CHANGED_EVENT, onChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId]);
 
   const fetchAttachments = async () => {
@@ -142,12 +154,15 @@ export function AttachmentSidePanel({
                 </div>
 
                 {/* Pin indicator */}
-                {attachment.is_pinned && (
+                {/* is_pinned is 0/1 from SQLite; a bare 0 would render as text */}
+                {Boolean(attachment.is_pinned) && (
                   <Star className="absolute top-1 right-1 size-4 text-yellow-500 fill-yellow-500" />
                 )}
 
                 {/* Pin button (on hover) */}
                 <button
+                  type="button"
+                  aria-label={attachment.is_pinned ? 'Unpin' : 'Pin'}
                   onClick={(e) => handlePin(attachment.id, e)}
                   className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity bg-background/80 rounded p-1"
                 >

@@ -93,17 +93,24 @@ export function AttachmentPicker({
   };
 
   const handleUploadComplete = (attachment: Attachment) => {
-    // Auto-select newly uploaded file
-    setSelectedIds(new Set([attachment.id]));
-    // Add to list
-    setAttachments((prev) => [attachment, ...prev]);
-    // Switch to browse tab to show it
-    setActiveTab('browse');
+    // Auto-select newly uploaded files; several uploaded together all stay selected
+    setSelectedIds((prev) => {
+      const next = allowMultiple ? new Set(prev) : new Set<string>();
+      next.add(attachment.id);
+      return next;
+    });
+    // Add to list (a deduplicated upload is already in it)
+    setAttachments((prev) =>
+      prev.some((a) => a.id === attachment.id) ? prev : [attachment, ...prev]
+    );
   };
 
   const recentAttachments = attachments.slice(0, 10);
 
-  const PickerContent = () => (
+  // Rendered by calling, not as <PickerContent />: a component defined inside
+  // render is a new type every render, so React remounted it (and the
+  // uploader inside it, mid-upload) whenever the picker re-rendered.
+  const renderPickerContent = () => (
     <>
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'upload' | 'browse' | 'recent')}>
           <TabsList>
@@ -233,7 +240,7 @@ export function AttachmentPicker({
               />
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              <PickerContent />
+              {renderPickerContent()}
             </div>
           </div>
         </SheetContent>
@@ -247,7 +254,7 @@ export function AttachmentPicker({
       <DialogContent size="standard">
         <DialogTitle className="sr-only">Add Attachment</DialogTitle>
         <ModalHeader title="Add Attachment" onClose={onClose} showClose={false} />
-        <PickerContent />
+        {renderPickerContent()}
       </DialogContent>
     </Dialog>
   );

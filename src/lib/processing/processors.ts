@@ -6,14 +6,14 @@
  * produced when somebody ran the script by hand — in production the jobs were
  * enqueued and nothing ever picked them up. The handlers live here so the
  * Vercel cron (`/api/cron/process-queue`) can run them in production. The CLI
- * keeps its own copies for now because it also handles the attachment media
- * operations excluded below.
+ * keeps its own copies of the note handlers and delegates attachment jobs here.
  *
  * Each handler throws on failure; the caller records the message on the job so
  * the reason a job failed survives in `processing_queue.error_message`.
  */
 
 import { db, queryOne } from "@/lib/db/client";
+import type { Attachment } from "@/lib/db/schema";
 import { runWithAiUser } from "@/lib/ai/credentials/context";
 import { jobPurpose } from "@/lib/ai/usage/types";
 
@@ -37,13 +37,17 @@ interface NoteRow {
  * Operations this module can run inside a serverless function.
  *
  * Attachment media operations (`extract_metadata`, `generate_thumbnail`,
- * `extract_text`, `generate_description`) are deliberately absent: they pull in
- * sharp, pdf-parse, xlsx and the S3 client, none of which are declared as
- * `serverExternalPackages` in next.config.ts. Attachment *embeddings* are
- * excluded for a different reason: the `embeddings` table's CHECK constraint
- * only permits 'note', 'capture' and 'task_candidate', so an attachment vector
- * has nowhere to go until that schema is widened. All of it stays with the CLI
- * (`npx tsx scripts/process-queue.ts`).
+ * `extract_text`, `generate_description`) used to be excluded and left to the
+ * CLI, so in production every upload queued three or four jobs nothing ever
+ * ran: PDFs were never read, images never described, and the stranded jobs
+ * counted toward the sweeper's backlog cap until note processing stopped too.
+ * sharp, pdf-parse and xlsx are now `serverExternalPackages`, so they run here.
+ *
+ * Attachment *embeddings* are still not computed: the `embeddings` table's
+ * CHECK constraint only permits 'note', 'capture' and 'task_candidate'.
+ * Attachments are found by full-text search over their filename, description
+ * and extracted text instead, and a leftover attachment `generate_embedding`
+ * job completes as a no-op rather than sitting in the queue forever.
  */
 export const SERVERLESS_OPERATIONS = [
   "generate_embedding",
@@ -52,7 +56,35 @@ export const SERVERLESS_OPERATIONS = [
   "find_connections",
   "scan_for_tasks",
   "extract-interactions",
+  "extract_metadata",
+  "generate_thumbnail",
+  "extract_text",
+  "generate_description",
 ] as const;
+
+const ATTACHMENT_OPERATIONS = new Set([
+  "extract_metadata",
+  "generate_thumbnail",
+  "extract_text",
+  "generate_description",
+]);
+
+/**
+ * sharp's prebuilt binaries cannot decode HEIC (the HEVC codec is not
+ * bundled), so an iPhone photo can be stored and opened but not thumbnailed.
+ * That is a property of the file, not a failure: retrying cannot change it, and
+ * reporting it would raise a background-failure alert for every iPhone photo.
+ */
+async function unlessUndecodable<T>(attachment: Attachment, work: () => Promise<T>): Promise<T | null> {
+  try {
+    return await work();
+  } catch (error) {
+    if (attachment.mime_type === "image/heic" || attachment.mime_type === "image/heif") {
+      return null;
+    }
+    throw error;
+  }
+}
 
 async function getNote(entityId: string): Promise<NoteRow> {
   const note = await queryOne<NoteRow>(
@@ -198,6 +230,13 @@ export async function runJob(job: QueueJob): Promise<void> {
 }
 
 async function runJobForOwner(job: QueueJob): Promise<void> {
+  if (
+    job.entity_type === "attachment" &&
+    (ATTACHMENT_OPERATIONS.has(job.operation) || job.operation === "generate_embedding")
+  ) {
+    return processAttachmentJob(job);
+  }
+
   switch (job.operation) {
     case "generate_embedding":
       return processNoteEmbedding(job);
@@ -214,4 +253,129 @@ async function runJobForOwner(job: QueueJob): Promise<void> {
     default:
       throw new Error(`Operation '${job.operation}' is not handled by this worker`);
   }
+}
+
+// ── Attachments ───────────────────────────────────────────────────────────
+
+/**
+ * `content_plain` is what full-text search reads: the description and the
+ * extracted text together. Rebuilt in SQL so neither job overwrites the
+ * other's half (the CLI version set it to the description alone, erasing a
+ * PDF's text).
+ */
+const REFRESH_CONTENT_PLAIN = `content_plain = NULLIF(trim(
+  COALESCE(description, '') || char(10) || char(10) || COALESCE(extracted_text, '')
+), '')`;
+
+async function processAttachmentJob(job: QueueJob): Promise<void> {
+  if (!ATTACHMENT_OPERATIONS.has(job.operation)) {
+    // Attachment embeddings: nowhere to store them (see SERVERLESS_OPERATIONS).
+    return;
+  }
+
+  const attachment = await queryOne<Attachment>(
+    "SELECT * FROM attachments WHERE id = ? AND user_id = ?",
+    [job.entity_id, job.user_id]
+  );
+  // Deleted since it was queued: nothing left to do, and nothing failed.
+  if (!attachment) return;
+
+  const media = await import("@/lib/processing/attachments");
+
+  switch (job.operation) {
+    case "extract_metadata": {
+      if (attachment.file_type !== "image") return;
+      const buffer = await media.downloadAttachment(attachment);
+      const metadata = await unlessUndecodable(attachment, () => media.extractImageMetadata(buffer));
+      if (!metadata) return;
+      await db.execute({
+        sql: `UPDATE attachments SET metadata = json_patch(COALESCE(NULLIF(metadata, ''), '{}'), ?)
+              WHERE id = ?`,
+        args: [JSON.stringify(metadata), attachment.id],
+      });
+      return;
+    }
+
+    case "generate_thumbnail": {
+      if (attachment.file_type !== "image") return;
+      const buffer = await media.downloadAttachment(attachment);
+      const thumbnail = await unlessUndecodable(attachment, () => media.generateThumbnail(buffer));
+      if (!thumbnail) return;
+      await db.execute({
+        sql: `UPDATE attachments SET metadata = json_patch(COALESCE(NULLIF(metadata, ''), '{}'), ?)
+              WHERE id = ?`,
+        args: [JSON.stringify({ thumbnail }), attachment.id],
+      });
+      return;
+    }
+
+    case "extract_text": {
+      const buffer = await media.downloadAttachment(attachment);
+      const { text, metadata } = await media.extractTextContent(attachment, buffer);
+      await db.execute({
+        sql: `UPDATE attachments
+              SET extracted_text = ?,
+                  metadata = json_patch(COALESCE(NULLIF(metadata, ''), '{}'), ?)
+              WHERE id = ?`,
+        args: [text || null, JSON.stringify(metadata), attachment.id],
+      });
+      await db.execute({
+        sql: `UPDATE attachments SET ${REFRESH_CONTENT_PLAIN} WHERE id = ?`,
+        args: [attachment.id],
+      });
+      return;
+    }
+
+    case "generate_description": {
+      if (attachment.file_type !== "image") return;
+      // A description the user wrote is never replaced by a generated one
+      if (attachment.description?.trim()) return;
+      const buffer = await media.downloadAttachment(attachment);
+      const description = await media.generateImageDescription(
+        buffer,
+        attachment.mime_type,
+        job.user_id
+      );
+      if (!description) return;
+      await db.execute({
+        sql: `UPDATE attachments SET description = ?
+              WHERE id = ? AND (description IS NULL OR trim(description) = '')`,
+        args: [description, attachment.id],
+      });
+      await db.execute({
+        sql: `UPDATE attachments SET ${REFRESH_CONTENT_PLAIN} WHERE id = ?`,
+        args: [attachment.id],
+      });
+      return;
+    }
+  }
+}
+
+/**
+ * Move an attachment out of 'pending' once none of its jobs is waiting or
+ * running: 'failed' (with the reason) when one gave up, else 'completed'.
+ * Call after a job's own status has been written.
+ */
+export async function settleAttachmentStatus(attachmentId: string): Promise<void> {
+  await db.execute({
+    sql: `UPDATE attachments
+          SET processing_status = CASE WHEN EXISTS (
+                SELECT 1 FROM processing_queue q
+                WHERE q.entity_type = 'attachment' AND q.entity_id = attachments.id
+                  AND q.status = 'failed'
+              ) THEN 'failed' ELSE 'completed' END,
+              processing_error = (
+                SELECT q.error_message FROM processing_queue q
+                WHERE q.entity_type = 'attachment' AND q.entity_id = attachments.id
+                  AND q.status = 'failed'
+                ORDER BY q.completed_at DESC LIMIT 1
+              )
+          WHERE id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM processing_queue q
+              WHERE q.entity_type = 'attachment' AND q.entity_id = attachments.id
+                AND q.status IN ('pending', 'processing')
+            )`,
+    args: [attachmentId],
+  });
 }

@@ -43,6 +43,9 @@ npm run mcp:start    # Start MCP server (requires env vars)
 npm run mcp:migrate  # Create mcp_api_keys table
 npm run mcp:keygen   # Generate API key: npx tsx scripts/generate-mcp-key.ts <email>
 
+# File storage (Cloudflare R2)
+npm run r2:cors      # Once per bucket: let browsers upload files over 4 MB directly
+
 # Testing
 npm test             # Run tests once
 npm run test:watch   # Run tests in watch mode
@@ -234,8 +237,10 @@ A canvas-based sketch pad with OneNote-style tools plus AI handwriting transcrip
   and returns `{ hasText, text, markdown, description, confidence }`.
 - **API** (`POST /api/ink/recognize`): body `{ image: dataURL, recognize?, persist?, strokes?, noteId?, projectId? }`.
   Recognizes synchronously; when `persist` is true, stores the sketch as an **image attachment**
-  with `extracted_text` = transcription and `metadata.ink` = vector strokes (re-editable), then
-  enqueues an embedding so sketches are semantically searchable. No new DB table — reuses `attachments`.
+  with `extracted_text` = transcription and `metadata.ink` = vector strokes (re-editable), through
+  the same `createAttachment` as every upload. It is found by full-text search over the
+  transcription (attachments have no embeddings; see *Uploads*). No new DB table — reuses `attachments`.
+  A drawing whose request would pass 4 MB is saved without its strokes rather than not at all.
 - **Editor integration**: the PenTool button inserts a `<figure>` (image) plus, optionally, the
   transcription as editable markdown below it.
 
@@ -300,8 +305,8 @@ This is a Next.js 16 (App Router) personal knowledge management system with AI f
 **Authentication**: Magic link flow via SMTP. Sessions stored in HTTP-only cookies.
 
 **Background Processing**: Jobs enqueued to `processing_queue`, drained in production by
-`/api/cron/process-queue`; `scripts/process-queue.ts` is the manual/CLI equivalent and the
-only thing that runs attachment media jobs. See *Content Processing Queue*.
+`/api/cron/process-queue`, attachment media jobs included; `scripts/process-queue.ts` is the
+manual/CLI equivalent. See *Content Processing Queue*.
 
 ### API Route Patterns
 
@@ -591,11 +596,58 @@ over.
 
 ## Uploads
 
-`validateFile` checks the declared MIME type against the allowlist **and** the
-file's magic bytes (`file-type`), because the declared type is a client claim,
-not a fact — and it is what gets written to R2 as the object's Content-Type.
-`image/svg+xml` is deliberately not accepted: an SVG is a script-bearing
-document, and served from the attachment host it executes in that origin.
+Files live in Cloudflare R2 (`R2_*`; without them every upload route answers
+503 `STORAGE_NOT_CONFIGURED` naming the missing variables, not a bare 500).
+Code: `src/lib/storage/` (`upload-policy.ts` imports nothing), `src/lib/attachments/`,
+`/api/attachments`, `/api/attachments/uploads[/complete]`, `components/attachments/`.
+
+- **Two paths, chosen by size** (`uploadAttachment`, `upload-client.ts`). Up to
+  `DIRECT_UPLOAD_THRESHOLD` (4 MB) the browser posts to `/api/attachments`.
+  Larger files cannot: Vercel refuses a function request over 4.5 MB before the
+  route runs, and Next's middleware buffers at most 10 MB of one anywhere else.
+  They are PUT straight to R2 with a presigned URL (`/api/attachments/uploads`,
+  Content-Type signed in), then `/uploads/complete` reads the object back and
+  puts it through the same checks. Anything refused is deleted from the bucket.
+  Every upload over ~4 MB used to fail with an unreadable platform error.
+- **The bucket needs a CORS rule for that PUT**: `npm run r2:cors` (or paste the
+  JSON it prints into R2 → bucket → Settings → CORS policy). Without it the
+  browser reports only "network error", which the client explains.
+- **R2 presigning needs `requestChecksumCalculation: 'WHEN_REQUIRED'`.** AWS SDK
+  v3.729+ otherwise signs a checksum of an empty body into the URL.
+- **One rulebook, two readers.** `upload-policy.ts` holds the allowlist, size
+  limits and type resolution for the browser and the server; they used to keep
+  separate tables and disagree. The declared type is normalised (`audio/x-m4a`
+  → `audio/mp4`) and, when empty or wrong in a known way (Windows labels a
+  `.csv` as Excel, Chrome sends `""` for `.heic`), taken from the extension.
+- `validateFile` then checks that type against the file's magic bytes
+  (`file-type`), because the declared type is a client claim, not a fact, and
+  it is what R2 serves as Content-Type. Container names the sniffer reports
+  differently (WebM voice notes sniff as `video/webm`) are equivalences in
+  `validation.ts`; text types must contain no NUL bytes. `image/svg+xml` is
+  deliberately not accepted: an SVG is a script-bearing document, and served
+  from the attachment host it executes in that origin.
+- **Every path ends in `createAttachment`** (`attachments/create.ts`): small
+  uploads, direct uploads and sketches validate, deduplicate, link and queue
+  alike. Links are checked (`resolveAttachmentLinks`: a note or project the
+  user may edit), or the list's note-title join showed another account's title.
+  Deduplication reuses a file only when it is filed under the **same note**;
+  otherwise the upload "appeared" and vanished on reload. Storage keys carry a
+  random part, so two rows never share an object.
+- **Processing runs in the cron** (see *Content Processing Queue*): image
+  metadata, thumbnail and description; PDF, Word, Excel and text extraction;
+  audio transcription (≤20 MB, the vision slot's model, which must say it heard
+  audio, so a provider that drops audio stores nothing rather than a made-up
+  transcript). Model calls go through `completeMessages`, so they bill the
+  owner's key and appear in AI usage. `content_plain` (what search reads) is
+  rebuilt from description + extracted text; a user-written description is
+  never replaced. `processing_status` settles to `completed`/`failed` once no
+  job is pending. Attachments have **no embeddings** (the `embeddings` CHECK
+  allows none); they are found by FTS.
+- **Delete** removes queued jobs, the row, then the object; the viewer's Delete
+  used to only drop the file from the screen. `useDeleteAttachment` is the one
+  way to do it from the UI.
+- Inserting a file into a note uses `attachmentToHtml` (escaped HTML; notes are
+  HTML, and appended Markdown showed as literal text).
 
 ## Testing
 
@@ -1204,14 +1256,16 @@ Two properties keep that from recurring:
 `maxDuration = 300`, and the run stops claiming new jobs 45s short of that
 ceiling so it is never terminated mid-job.
 
-**Not handled by the cron** (`SERVERLESS_OPERATIONS` lists what is): attachment
-media jobs — `extract_metadata`, `generate_thumbnail`, `extract_text`,
-`generate_description` — because they pull sharp, pdf-parse, xlsx and the S3
-client, none of which are declared as `serverExternalPackages` in
-`next.config.ts`. Attachment *embeddings* are excluded for a separate reason:
-the `embeddings` table's CHECK constraint permits only `note`, `capture` and
-`task_candidate`, so an attachment vector has nowhere to be stored. Both stay
-with `npx tsx scripts/process-queue.ts` until those are addressed.
+**Attachment media jobs run here too** — `extract_metadata`,
+`generate_thumbnail`, `extract_text`, `generate_description` — now that sharp,
+pdf-parse and xlsx are `serverExternalPackages`. They used to be CLI-only, so
+in production every upload queued jobs nothing ran, and those stranded jobs
+counted toward the sweeper's `MAX_PENDING_BACKLOG` until note processing
+stopped as well. After each attachment job the cron calls
+`settleAttachmentStatus`. Attachment *embeddings* are still not computed (the
+`embeddings` CHECK permits only `note`, `capture` and `task_candidate`); a
+leftover attachment `generate_embedding` job completes as a no-op, and nothing
+queues new ones.
 
 ### The sweeper: every note gets processed, whoever wrote it
 

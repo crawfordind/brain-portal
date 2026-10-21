@@ -50,6 +50,7 @@ import { ImageFloatingMenu } from './image-floating-menu';
 import { AnnotationToolbarButton, AnnotationBubbleMenu } from './annotation-menu';
 import { AttachmentPicker } from '@/components/attachments/attachment-picker';
 import type { Attachment } from '@/lib/db/schema';
+import { safeAttachmentUrl } from '@/lib/attachments/embed';
 import { EditorVoiceButton } from '@/components/voice/editor-voice-button';
 import { SketchDialog, type SketchResult } from '@/components/sketch/sketch-dialog';
 
@@ -249,10 +250,15 @@ export function MarkdownEditor({
           caption: '',
         });
       } else {
-        // Insert as link
-        editor.commands.insertContent(
-          `<a href="${attachment.storage_url}">${attachment.filename}</a> `
-        );
+        // Insert as link. Structured content, not an HTML string built from the
+        // filename, which a quote or a tag in the name could break out of.
+        const href = safeAttachmentUrl(attachment.storage_url);
+        editor.commands.insertContent([
+          href
+            ? { type: 'text', text: attachment.filename, marks: [{ type: 'link', attrs: { href } }] }
+            : { type: 'text', text: attachment.filename },
+          { type: 'text', text: ' ' },
+        ]);
       }
     });
   }, [editor]);

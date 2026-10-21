@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { query, mutate } from "@/lib/db/client";
 import type { Attachment } from "@/lib/db/schema";
-import { uploadToR2 } from "@/lib/storage/r2";
-import {
-  validateFile,
-  calculateHash,
-  generateStorageKey,
-} from "@/lib/storage/validation";
+import { isR2Configured } from "@/lib/storage/r2";
 import { parseDataUrl, extensionForMime } from "@/lib/storage/data-url";
-import { enqueue } from "@/lib/processing/queue";
 import { recognizeHandwriting } from "@/lib/ai/handwriting";
+import { createAttachment, resolveAttachmentLinks } from "@/lib/attachments/create";
+import { attachmentErrorResponse, storageNotConfigured } from "@/lib/attachments/http";
 
 interface RecognizeBody {
   /** Image as a base64 data URL (e.g. canvas.toDataURL output). Required. */
@@ -61,6 +56,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Refuse before spending a model call on a sketch that cannot be saved
+  let links: { noteId: string | null; projectId: string | null } = { noteId: null, projectId: null };
+  if (shouldPersist) {
+    if (!isR2Configured()) return storageNotConfigured();
+    try {
+      links = await resolveAttachmentLinks(user.id, { noteId, projectId });
+    } catch (error) {
+      return attachmentErrorResponse(error, "Could not save the sketch");
+    }
+  }
+
   // 1. Recognize handwriting (synchronous so the user gets immediate feedback).
   let recognition = null;
   if (shouldRecognize) {
@@ -73,100 +79,46 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // 2. Optionally persist the rasterized sketch as an attachment.
+  // 2. Optionally persist the rasterized sketch as an attachment. It arrives
+  // already processed (the transcription is its text), so no jobs are queued,
+  // and it is found by full-text search over that transcription.
   let attachment: Attachment | null = null;
   if (shouldPersist) {
     const { mimeType, buffer } = parsed;
-
-    const validation = await validateFile(buffer, mimeType, `sketch.${extensionForMime(mimeType)}`);
-    if (!validation.valid) {
-      return NextResponse.json({ error: validation.error }, { status: 400 });
-    }
 
     const baseName = (title?.trim() || "Sketch")
       .replace(/[\n\r]+/g, " ")
       .slice(0, 80);
     const filename = `${baseName}.${extensionForMime(mimeType)}`;
-    const contentHash = calculateHash(buffer);
 
-    // Dedupe against an identical sketch already uploaded by this user.
-    const existing = await query<Attachment>(
-      "SELECT * FROM attachments WHERE user_id = ? AND content_hash = ? LIMIT 1",
-      [user.id, contentHash]
-    );
+    const transcription = recognition?.text || "";
+    const description =
+      recognition?.description ||
+      (recognition?.hasText ? "Handwritten note" : "Hand-drawn sketch");
+    const contentPlain = [description, transcription].filter(Boolean).join("\n\n");
 
-    if (existing.length > 0) {
-      attachment = existing[0];
-    } else {
-      const storageKey = generateStorageKey(user.id, contentHash, filename);
-
-      let storageUrl: string;
-      try {
-        storageUrl = await uploadToR2(storageKey, buffer, mimeType);
-      } catch (error) {
-        console.error("R2 upload failed:", error);
-        return NextResponse.json(
-          { error: "Failed to upload sketch to storage" },
-          { status: 500 }
-        );
-      }
-
-      const transcription = recognition?.text || "";
-      const description =
-        recognition?.description ||
-        (recognition?.hasText ? "Handwritten note" : "Hand-drawn sketch");
-      const contentPlain = [transcription, recognition?.description]
-        .filter(Boolean)
-        .join("\n\n");
-
-      const metadata = JSON.stringify({
-        isSketch: true,
-        source: "sketch_pad",
-        ink: strokes ?? null,
-        handwriting: recognition ?? null,
-      });
-
-      attachment = await mutate<Attachment>(
-        `INSERT INTO attachments (
-          user_id, filename, original_filename, mime_type, file_size,
-          storage_key, storage_url, file_type, project_id, note_id,
-          extracted_text, description, content_plain, content_hash,
-          metadata, tags, processing_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'image', ?, ?, ?, ?, ?, ?, ?, '["sketch"]', 'completed')
-        RETURNING *`,
-        [
-          user.id,
-          filename,
-          filename,
-          mimeType,
-          buffer.length,
-          storageKey,
-          storageUrl,
-          projectId || null,
-          noteId || null,
-          transcription || null,
-          description,
-          contentPlain || null,
-          contentHash,
-          metadata,
-        ]
-      );
-
-      // Make the sketch + its transcription semantically searchable.
-      if (attachment && contentPlain.trim()) {
-        try {
-          await enqueue({
-            userId: user.id,
-            entityType: "attachment",
-            entityId: attachment.id,
-            operation: "generate_embedding",
-            tier: "embedding",
-            priority: 0,
-          });
-        } catch (queueError) {
-          console.error("Failed to enqueue sketch embedding:", queueError);
-        }
-      }
+    try {
+      ({ attachment } = await createAttachment({
+        userId: user.id,
+        buffer,
+        declaredType: mimeType,
+        filename,
+        ...links,
+        description,
+        tags: ["sketch"],
+        preprocessed: {
+          extractedText: transcription || null,
+          contentPlain: contentPlain || null,
+          metadata: {
+            isSketch: true,
+            source: "sketch_pad",
+            ink: strokes ?? null,
+            handwriting: recognition ?? null,
+          },
+        },
+      }));
+    } catch (error) {
+      return attachmentErrorResponse(error, "Failed to save the sketch");
     }
   }
 

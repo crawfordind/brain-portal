@@ -1,85 +1,33 @@
 import crypto from 'crypto';
 import { fileTypeFromBuffer } from 'file-type';
 
-// File size limits in bytes
-export const FILE_SIZE_LIMITS = {
-  image: 10 * 1024 * 1024, // 10MB
-  pdf: 50 * 1024 * 1024, // 50MB
-  audio: 100 * 1024 * 1024, // 100MB
-  video: 100 * 1024 * 1024, // 100MB
-  document: 25 * 1024 * 1024, // 25MB
-  other: 25 * 1024 * 1024, // 25MB
-} as const;
+import {
+  FILE_SIZE_LIMITS,
+  TEXT_MIME_TYPES,
+  TYPE_NOT_ALLOWED_MESSAGE,
+  classifyFileType,
+  formatFileSize,
+  isAllowedMimeType,
+  normalizeMimeType,
+  resolveMimeType,
+  type FileType,
+} from './upload-policy';
 
-// Allowed MIME types.
-//
-// image/svg+xml is deliberately absent. An SVG is a script-bearing document,
-// not a picture: served from the attachment host it executes JavaScript in
-// that origin. If you need SVG, serve attachments from a domain that shares
-// no cookies with the app and add it back knowingly.
-export const ALLOWED_MIME_TYPES = [
-  // Images
-  'image/jpeg',
-  'image/png',
-  'image/gif',
-  'image/webp',
-  'image/heic',
-  'image/heif',
-  // PDFs
-  'application/pdf',
-  // Audio
-  'audio/mpeg',
-  'audio/mp3',
-  'audio/wav',
-  'audio/x-m4a',
-  'audio/m4a',
-  'audio/ogg',
-  'audio/webm',
-  // Video
-  'video/mp4',
-  'video/webm',
-  'video/quicktime',
-  'video/x-msvideo',
-  // Documents
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'text/plain',
-  'text/markdown',
-  'text/csv',
-] as const;
-
-export type FileType = 'image' | 'pdf' | 'audio' | 'video' | 'document' | 'other';
-
-/**
- * Classify a file based on its MIME type
- */
-export function classifyFileType(mimeType: string): FileType {
-  if (mimeType.startsWith('image/')) return 'image';
-  if (mimeType === 'application/pdf') return 'pdf';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType.startsWith('video/')) return 'video';
-  if (
-    mimeType.startsWith('text/') ||
-    mimeType.includes('document') ||
-    mimeType.includes('word') ||
-    mimeType.includes('excel') ||
-    mimeType.includes('powerpoint') ||
-    mimeType.includes('spreadsheet')
-  ) {
-    return 'document';
-  }
-  return 'other';
-}
+// The rules themselves live in upload-policy.ts so the browser can apply them
+// too; re-exported for the server code that has always imported them here.
+export {
+  ALLOWED_MIME_TYPES,
+  FILE_SIZE_LIMITS,
+  classifyFileType,
+  formatFileSize,
+  type FileType,
+} from './upload-policy';
 
 /**
  * Validate file MIME type
  */
 export function isValidMimeType(mimeType: string): boolean {
-  return ALLOWED_MIME_TYPES.includes(mimeType as any);
+  return isAllowedMimeType(normalizeMimeType(mimeType));
 }
 
 /**
@@ -123,7 +71,12 @@ export function sanitizeFilename(filename: string): string {
 
 /**
  * Generate a unique storage key for R2
- * Format: user_id/hash-filename.ext
+ * Format: user_id/hash-nonce-filename.ext
+ *
+ * The random part means two rows never share an object, even for identical
+ * bytes: deleting one attachment must not pull the file out from under
+ * another, and two simultaneous uploads of the same file must not collide on
+ * `UNIQUE(user_id, storage_key)`.
  */
 export function generateStorageKey(
   userId: string,
@@ -131,65 +84,64 @@ export function generateStorageKey(
   filename: string
 ): string {
   const sanitized = sanitizeFilename(filename);
-  // Use first 12 chars of hash for uniqueness
+  const name = sanitized.startsWith('.') || !sanitized ? `file${sanitized}` : sanitized;
+  // Use first 12 chars of hash to keep keys readable when browsing the bucket
   const shortHash = hash.substring(0, 12);
-  return `${userId}/${shortHash}-${sanitized}`;
+  const nonce = crypto.randomBytes(4).toString('hex');
+  return `${userId}/${shortHash}-${nonce}-${name}`;
 }
-
-/**
- * Get human-readable file size
- */
-export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-}
-
-/**
- * Types whose bytes carry no reliable magic number, so sniffing cannot confirm
- * them. Plain text really is "anything", and a sniff returning `undefined` for
- * these is the expected result rather than a failure.
- */
-const UNSNIFFABLE_MIME_TYPES = new Set<string>([
-  'text/plain',
-  'text/markdown',
-  'text/csv',
-]);
 
 /**
  * Some containers are shared by several formats, so the sniffer names the
- * container while the browser names the codec. Treat these as agreeing.
+ * container while the browser names the codec. Treat these as agreeing. Keys
+ * are canonical types (see `normalizeMimeType`); values are what `file-type`
+ * actually reports for them.
  */
 const EQUIVALENT_MIME_TYPES: Record<string, string[]> = {
-  'audio/mpeg': ['audio/mpeg', 'audio/mp3'],
-  'audio/mp3': ['audio/mpeg', 'audio/mp3'],
-  'audio/m4a': ['audio/m4a', 'audio/x-m4a', 'audio/mp4', 'video/mp4'],
-  'audio/x-m4a': ['audio/m4a', 'audio/x-m4a', 'audio/mp4', 'video/mp4'],
-  'video/mp4': ['video/mp4', 'audio/mp4', 'video/quicktime'],
-  'video/quicktime': ['video/quicktime', 'video/mp4'],
-  'application/msword': ['application/msword', 'application/x-cfb'],
-  'application/vnd.ms-excel': ['application/vnd.ms-excel', 'application/x-cfb'],
-  'application/vnd.ms-powerpoint': ['application/vnd.ms-powerpoint', 'application/x-cfb'],
-  // OOXML files are ZIP containers; the sniffer usually says so.
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': [
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/zip',
-  ],
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': [
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/zip',
-  ],
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation': [
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'application/zip',
-  ],
+  'image/png': ['image/apng'],
+  'image/heic': ['image/heif', 'image/heic-sequence', 'image/heif-sequence'],
+  'image/heif': ['image/heic', 'image/heic-sequence', 'image/heif-sequence'],
+  'audio/mp4': ['audio/x-m4a', 'audio/m4a', 'video/mp4', 'video/quicktime'],
+  'audio/aac': ['audio/x-aac', 'audio/mp4', 'audio/x-m4a'],
+  'audio/flac': ['audio/x-flac'],
+  'audio/wav': ['audio/vnd.wave', 'audio/x-wav', 'audio/wave'],
+  // Ogg is a container: Vorbis and Opus voice notes both sniff as one of these.
+  'audio/ogg': ['audio/opus', 'application/ogg', 'video/ogg'],
+  // MediaRecorder voice notes are WebM, which the sniffer calls video.
+  'audio/webm': ['video/webm', 'video/matroska'],
+  'video/webm': ['video/matroska'],
+  'video/mp4': ['audio/mp4', 'video/quicktime', 'video/x-m4v'],
+  'video/quicktime': ['video/mp4'],
+  'video/x-msvideo': ['video/vnd.avi', 'video/avi'],
+  'application/msword': ['application/x-cfb'],
+  'application/vnd.ms-excel': ['application/x-cfb'],
+  'application/vnd.ms-powerpoint': ['application/x-cfb'],
+  // OOXML files are ZIP containers; the sniffer sometimes says only that.
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['application/zip'],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['application/zip'],
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['application/zip'],
 };
 
-function mimeTypesAgree(declared: string, sniffed: string): boolean {
-  if (declared === sniffed) return true;
+export function mimeTypesAgree(declared: string, sniffed: string): boolean {
+  if (declared === sniffed || normalizeMimeType(sniffed) === declared) return true;
   return (EQUIVALENT_MIME_TYPES[declared] ?? []).includes(sniffed);
+}
+
+/**
+ * Text has no magic number, so "is it text" is the check: no NUL bytes in the
+ * first 64 KB. A PDF or an executable renamed `.txt` fails it.
+ */
+function looksLikeText(buffer: Buffer): boolean {
+  const sample = buffer.subarray(0, 64 * 1024);
+  return !sample.includes(0);
+}
+
+export interface FileValidation {
+  valid: boolean;
+  error?: string;
+  fileType?: FileType;
+  /** The canonical type to store and serve the file as. */
+  mimeType?: string;
 }
 
 /**
@@ -197,26 +149,27 @@ function mimeTypesAgree(declared: string, sniffed: string): boolean {
  *
  * `mimeType` is whatever the *client* said the file was, which is a claim, not
  * a fact — a browser sends what it inferred from the extension and a script can
- * send anything at all. So the declared type is checked against the allowlist
- * and then against the file's own magic bytes; a file whose contents disagree
- * with its label is rejected rather than stored and later served under the
- * attacker's chosen Content-Type.
+ * send anything at all. So the declared type (or, when it says nothing useful,
+ * the extension) is checked against the allowlist and then against the file's
+ * own magic bytes; a file whose contents disagree with its label is rejected
+ * rather than stored and later served under the attacker's chosen Content-Type.
  */
 export async function validateFile(
   buffer: Buffer,
   mimeType: string,
   filename: string
-): Promise<{ valid: boolean; error?: string; fileType?: FileType }> {
-  // Check the declared MIME type against the allowlist
-  if (!isValidMimeType(mimeType)) {
-    return {
-      valid: false,
-      error: `File type not allowed. Allowed types: images, PDFs, audio, video, and documents.`,
-    };
+): Promise<FileValidation> {
+  if (buffer.length === 0) {
+    return { valid: false, error: 'The file is empty.' };
+  }
+
+  const resolved = resolveMimeType(mimeType, filename);
+  if (!resolved) {
+    return { valid: false, error: TYPE_NOT_ALLOWED_MESSAGE };
   }
 
   // Classify file
-  const fileType = classifyFileType(mimeType);
+  const fileType = classifyFileType(resolved);
 
   // Check file size
   if (!isValidFileSize(buffer.length, fileType)) {
@@ -229,25 +182,34 @@ export async function validateFile(
   }
 
   // Confirm the bytes match the label
-  if (!UNSNIFFABLE_MIME_TYPES.has(mimeType)) {
-    const sniffed = await fileTypeFromBuffer(buffer);
-
-    if (!sniffed) {
+  if (TEXT_MIME_TYPES.has(resolved)) {
+    if (!looksLikeText(buffer)) {
       return {
         valid: false,
-        error: 'Could not verify the file contents. Upload rejected.',
+        error: `File contents do not match its type (declared ${resolved}, but the file is not text).`,
         fileType,
       };
     }
-
-    if (!mimeTypesAgree(mimeType, sniffed.mime)) {
-      return {
-        valid: false,
-        error: `File contents do not match its type (declared ${mimeType}, detected ${sniffed.mime}).`,
-        fileType,
-      };
-    }
+    return { valid: true, fileType, mimeType: resolved };
   }
 
-  return { valid: true, fileType };
+  const sniffed = await fileTypeFromBuffer(buffer);
+
+  if (!sniffed) {
+    return {
+      valid: false,
+      error: 'Could not verify the file contents. Upload rejected.',
+      fileType,
+    };
+  }
+
+  if (!mimeTypesAgree(resolved, sniffed.mime)) {
+    return {
+      valid: false,
+      error: `File contents do not match its type (declared ${resolved}, detected ${sniffed.mime}).`,
+      fileType,
+    };
+  }
+
+  return { valid: true, fileType, mimeType: resolved };
 }

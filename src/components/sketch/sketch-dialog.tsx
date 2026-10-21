@@ -17,6 +17,10 @@ import { SketchPad } from "./sketch-pad";
 import type { SketchPadHandle } from "./types";
 import type { HandwritingRecognition } from "@/lib/ai/handwriting";
 import type { Attachment } from "@/lib/db/schema";
+import { describeUploadFailure } from "@/lib/attachments/upload-client";
+
+/** Kept under Vercel's 4.5 MB request cap, with room for headers. */
+const SKETCH_REQUEST_LIMIT = 4 * 1024 * 1024;
 
 export interface SketchResult {
   attachment: Attachment | null;
@@ -66,22 +70,34 @@ export function SketchDialog({
       return null;
     }
 
+    const payload = {
+      image,
+      recognize: true,
+      persist,
+      strokes: persist ? pad.getStrokes() : undefined,
+      noteId: noteId ?? undefined,
+      projectId: projectId ?? undefined,
+    };
+    let body = JSON.stringify(payload);
+    // Vercel refuses a request over 4.5 MB before the route runs. A long
+    // drawing's vector strokes can push past that; the picture and its
+    // transcription matter more than keeping it re-editable.
+    if (body.length > SKETCH_REQUEST_LIMIT && payload.strokes) {
+      body = JSON.stringify({ ...payload, strokes: undefined });
+      toast.info("This drawing is large, so it will be saved as an image only (not re-editable).");
+    }
+    if (body.length > SKETCH_REQUEST_LIMIT) {
+      throw new Error("This drawing is too large to save. Try a smaller canvas or fewer strokes.");
+    }
+
     const res = await fetch("/api/ink/recognize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        image,
-        recognize: true,
-        persist,
-        strokes: persist ? pad.getStrokes() : undefined,
-        noteId: noteId ?? undefined,
-        projectId: projectId ?? undefined,
-      }),
+      body,
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || "Request failed");
+      throw new Error(describeUploadFailure(res.status, await res.text()));
     }
     return res.json();
   };
