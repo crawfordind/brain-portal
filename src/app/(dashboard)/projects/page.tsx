@@ -25,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, FolderOpen, Star, FileText, CheckSquare, ChevronRight, ChevronDown, Folder, Users } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
+import { PmDashboard } from "@/components/projects/dashboard/pm-dashboard";
 
 interface Project {
   id: string;
@@ -321,7 +322,7 @@ export default function ProjectsPage() {
           {/* RESPONSIVE: Smaller title on mobile */}
           <h1 className="text-xl font-bold lg:text-2xl">Projects</h1>
           <p className="text-xs lg:text-sm text-muted-foreground">
-            Organize your notes and tasks by project
+            Health, schedule and workload across every project
           </p>
         </div>
         {/* TOUCH: min-h-11 for comfortable tapping on mobile */}
@@ -340,87 +341,95 @@ export default function ProjectsPage() {
         loader={() => import('@/components/projects/project-create-dialog').then(m => ({ default: m.ProjectCreateDialog }))}
       />
 
-      {/* Pinned Projects - shown as cards */}
-      {pinnedProjects.length > 0 && (
-        <section>
-          <h2 className="text-base lg:text-lg font-semibold mb-3 lg:mb-4 flex items-center gap-2">
-            <Star className="h-3 w-3 lg:h-4 lg:w-4 fill-yellow-400 text-yellow-400" />
-            Pinned
-          </h2>
-          <div className="grid gap-3 lg:gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {pinnedProjects.map(renderProjectCard)}
-          </div>
-        </section>
-      )}
-
-      {/* Project Tree */}
-      {activeTree.length > 0 && (
-        <section>
-          <h2 className="text-base lg:text-lg font-semibold mb-3 lg:mb-4">Projects</h2>
-          <Card>
-            <CardContent className="p-1 lg:p-2">
-              {activeTree.map(renderProjectNode)}
-            </CardContent>
-          </Card>
-        </section>
-      )}
-
-      {/* Shared With Me */}
-      {sharedProjects.length > 0 && (
-        <section>
-          <h2 className="text-base lg:text-lg font-semibold mb-3 lg:mb-4 flex items-center gap-2">
-            <Users className="h-3 w-3 lg:h-4 lg:w-4 text-muted-foreground" />
-            Shared With Me
-          </h2>
-          <Card>
-            <CardContent className="p-1 lg:p-2">
-              {sharedProjects.map((sp) => (
-                <div key={sp.id}>
-                  <div className="group flex items-center gap-2 py-1.5 lg:py-2 px-2 lg:px-3 rounded-lg hover:bg-muted/50 transition-colors min-h-11 lg:min-h-10">
-                    <span className="w-7 lg:w-5" />
-                    <Folder className="h-3 w-3 lg:h-4 lg:w-4 text-muted-foreground shrink-0" />
-                    <Link
-                      href={`/projects/${sp.slug}`}
-                      className="flex-1 flex items-center gap-2 min-w-0"
-                    >
-                      <span className="font-medium truncate text-xs lg:text-sm">{sp.name}</span>
-                      <span className={`h-2 w-2 rounded-full shrink-0 sm:hidden ${STATUS_DOT_COLORS[sp.status] || "bg-gray-400"}`} title={sp.status} />
-                      <Badge variant="outline" className={`${STATUS_COLORS[sp.status]} shrink-0 text-[10px] lg:text-xs hidden sm:inline-flex`}>
-                        {sp.status}
-                      </Badge>
-                      <Badge variant="secondary" className="shrink-0 text-[10px] lg:text-xs capitalize">
-                        {sp.collab_role}
-                      </Badge>
-                    </Link>
-                    <div className="flex items-center gap-1.5 lg:gap-2 text-xs text-muted-foreground shrink-0">
-                      <span className="text-[10px] lg:text-xs truncate max-w-[100px] hidden sm:inline">
-                        {sp.owner_email}
-                      </span>
-                      <div className="flex items-center gap-0.5 lg:gap-1">
-                        <FileText className="h-3 w-3" />
-                        <span className="text-[10px] lg:text-xs">{(sp as unknown as { note_count: number }).note_count}</span>
-                      </div>
-                    </div>
-                  </div>
+      {(projects.length > 0 || sharedProjects.length > 0) && (
+        <PmDashboard
+          directory={
+            <div className="space-y-4 lg:space-y-6">
+            {/* Pinned Projects - shown as cards */}
+            {pinnedProjects.length > 0 && (
+              <section>
+                <h2 className="text-base lg:text-lg font-semibold mb-3 lg:mb-4 flex items-center gap-2">
+                  <Star className="h-3 w-3 lg:h-4 lg:w-4 fill-yellow-400 text-yellow-400" />
+                  Pinned
+                </h2>
+                <div className="grid gap-3 lg:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {pinnedProjects.map(renderProjectCard)}
                 </div>
-              ))}
-            </CardContent>
-          </Card>
-        </section>
-      )}
+              </section>
+            )}
 
-      {/* Archived Projects */}
-      {archivedTree.length > 0 && (
-        <section>
-          <h2 className="text-base lg:text-lg font-semibold mb-3 lg:mb-4 text-muted-foreground">
-            Archived
-          </h2>
-          <Card>
-            <CardContent className="p-1 lg:p-2">
-              {archivedTree.map(renderProjectNode)}
-            </CardContent>
-          </Card>
-        </section>
+            {/* Project Tree */}
+            {activeTree.length > 0 && (
+              <section>
+                <h2 className="text-base lg:text-lg font-semibold mb-3 lg:mb-4">Projects</h2>
+                <Card>
+                  <CardContent className="p-1 lg:p-2">
+                    {activeTree.map(renderProjectNode)}
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {/* Shared With Me */}
+            {sharedProjects.length > 0 && (
+              <section>
+                <h2 className="text-base lg:text-lg font-semibold mb-3 lg:mb-4 flex items-center gap-2">
+                  <Users className="h-3 w-3 lg:h-4 lg:w-4 text-muted-foreground" />
+                  Shared With Me
+                </h2>
+                <Card>
+                  <CardContent className="p-1 lg:p-2">
+                    {sharedProjects.map((sp) => (
+                      <div key={sp.id}>
+                        <div className="group flex items-center gap-2 py-1.5 lg:py-2 px-2 lg:px-3 rounded-lg hover:bg-muted/50 transition-colors min-h-11 lg:min-h-10">
+                          <span className="w-7 lg:w-5" />
+                          <Folder className="h-3 w-3 lg:h-4 lg:w-4 text-muted-foreground shrink-0" />
+                          <Link
+                            href={`/projects/${sp.slug}`}
+                            className="flex-1 flex items-center gap-2 min-w-0"
+                          >
+                            <span className="font-medium truncate text-xs lg:text-sm">{sp.name}</span>
+                            <span className={`h-2 w-2 rounded-full shrink-0 sm:hidden ${STATUS_DOT_COLORS[sp.status] || "bg-gray-400"}`} title={sp.status} />
+                            <Badge variant="outline" className={`${STATUS_COLORS[sp.status]} shrink-0 text-[10px] lg:text-xs hidden sm:inline-flex`}>
+                              {sp.status}
+                            </Badge>
+                            <Badge variant="secondary" className="shrink-0 text-[10px] lg:text-xs capitalize">
+                              {sp.collab_role}
+                            </Badge>
+                          </Link>
+                          <div className="flex items-center gap-1.5 lg:gap-2 text-xs text-muted-foreground shrink-0">
+                            <span className="text-[10px] lg:text-xs truncate max-w-[100px] hidden sm:inline">
+                              {sp.owner_email}
+                            </span>
+                            <div className="flex items-center gap-0.5 lg:gap-1">
+                              <FileText className="h-3 w-3" />
+                              <span className="text-[10px] lg:text-xs">{(sp as unknown as { note_count: number }).note_count}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {/* Archived Projects */}
+            {archivedTree.length > 0 && (
+              <section>
+                <h2 className="text-base lg:text-lg font-semibold mb-3 lg:mb-4 text-muted-foreground">
+                  Archived
+                </h2>
+                <Card>
+                  <CardContent className="p-1 lg:p-2">
+                    {archivedTree.map(renderProjectNode)}
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+            </div>
+          }
+        />
       )}
 
       {/* Empty State */}

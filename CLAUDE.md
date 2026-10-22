@@ -152,6 +152,36 @@ two quick "Load more" clicks could append the same page twice.
 
 Design and the rest of the roadmap: `docs/plans/2026-09-14-stream-dashboard-v2-design.md`.
 
+### Project Dashboard (`/projects`)
+
+The Projects page opens on a project manager's dashboard; the old list is the
+last tab. The open tab is the URL hash (`/projects#timeline`).
+
+| Tab | Shows |
+|-----|-------|
+| Overview | one-sentence verdict, KPI tiles, portfolio health table (worst first) |
+| Timeline | Gantt: planned span with completed share, dashed forecast past plan, due-date diamonds, today line |
+| Look-ahead | workload heatmap (projects × next 8 weeks), everything overdue or due in 30 days |
+| Throughput | added vs completed per week, burn-up (scope vs done), last 12 weeks |
+| All projects | the pinned / tree / shared / archived list |
+
+- **Pure core** (`src/lib/projects/dashboard.ts`, unit-tested): one
+  `buildProjectDashboard(projects, tasks, today)` call computes everything.
+  `GET /api/projects/dashboard` only loads rows (owned, non-completed,
+  non-archived projects) and the user's `today`. No tables, no migration.
+- **No invented dates.** A plan ends at the latest open task's due date; no due
+  dates means no plan end, shown as such.
+- **Forecasts need evidence.** Pace = completions in the last 28 days ÷ 4.
+  Zero pace means "no recent pace", never a projection.
+- **Health always carries its reason** (`assessPmHealth`): any blocked task
+  (`metadata.ops.blocked_by`), ≥3 or ≥25% of open work overdue, or a forecast
+  >7 days past plan is *At risk*; anything late, stale (14d) or paceless is
+  *Watch*.
+- **Charts are hand-drawn** (no chart library), coloured by the `.pm-viz`
+  roles in `globals.css` (validated categorical pairs, fixed status colours,
+  each status shown with an icon and a word). At-risk rows offer **Send to
+  <agent>** for a recovery plan.
+
 ### Settings (`/settings`)
 
 One section at a time, chosen from named groups (Account, Preferences, AI,

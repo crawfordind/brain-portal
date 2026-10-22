@@ -939,3 +939,48 @@ mark[data-intent][data-note] {
     border-bottom-color: var(--border);
   }
 }
+
+/* Project dashboard charts (/projects). Roles, not raw hex, so light and dark
+   swap in one place. Categorical pair blue/aqua and blue/orange pass the
+   colour-vision checks in both modes; status colours are fixed and always
+   travel with an icon and a word. */
+.pm-viz {
+  --pm-done: #2a78d6;
+  --pm-progress: #eb6834;
+  --pm-created: #1baf7a;
+  --pm-track: #e1e0d9;
+  --pm-plan: #b7d3f6;
+  --pm-grid: #e1e0d9;
+  --pm-axis: #c3c2b7;
+  --pm-ink-muted: #898781;
+  --pm-today: #0b0b0b;
+  --pm-good: #0ca30c;
+  --pm-warning: #fab219;
+  --pm-serious: #ec835a;
+  --pm-critical: #d03b3b;
+  --pm-heat-1: #cde2fb;
+  --pm-heat-2: #9ec5f4;
+  --pm-heat-3: #5598e7;
+  --pm-heat-4: #256abf;
+  --pm-heat-5: #104281;
+  --pm-heat-ink-low: #0b0b0b;
+  --pm-heat-ink-high: #ffffff;
+}
+
+.dark .pm-viz {
+  --pm-done: #3987e5;
+  --pm-progress: #d95926;
+  --pm-created: #199e70;
+  --pm-track: #2c2c2a;
+  --pm-plan: #184f95;
+  --pm-grid: #2c2c2a;
+  --pm-axis: #383835;
+  --pm-today: #f0efec;
+  --pm-heat-1: #104281;
+  --pm-heat-2: #184f95;
+  --pm-heat-3: #256abf;
+  --pm-heat-4: #3987e5;
+  --pm-heat-5: #86b6ef;
+  --pm-heat-ink-low: #f0efec;
+  --pm-heat-ink-high: #0b0b0b;
+}
