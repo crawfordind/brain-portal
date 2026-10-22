@@ -61,6 +61,13 @@ npm run test:coverage # Generate coverage report
   - Keyboard shortcuts: Cmd+Shift+C (Quick Capture), Cmd+Shift+D (Daily Note)
   - Quick Actions: Shown by default when search is empty for discoverability
   - Mobile-optimized: 56px touch targets, full-screen overlay
+- **Search previews are text, never HTML** (`src/lib/search/snippet.ts`, pure,
+  unit-tested). `/api/search` returns `content` as cleaned plain text and
+  `snippet` with matches wrapped in two control characters (not `<mark>`), from
+  FTS5 `snippet()` or `buildSnippet`. Render with `SearchSnippet` /
+  `HighlightedText` (`src/components/search/`), which build React text nodes,
+  so a note containing markup cannot inject it. The dropdown used to print a
+  note's stored TipTap HTML verbatim.
 
 ### Dashboard (`/` → `StreamPage`)
 

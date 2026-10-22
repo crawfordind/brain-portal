@@ -3,7 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { sanitizeHtml } from "@/lib/sanitize";
+import { queryTerms } from "@/lib/search/snippet";
+import { parseDbTimestamp } from "@/lib/stream/grouping";
+import { HighlightedText, SearchSnippet } from "@/components/search/search-snippet";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -55,14 +57,22 @@ const formatFileSize = (bytes: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const getFileTypeIcon = (fileType: string | undefined) => {
-  if (!fileType) return '📎';
-  if (fileType.startsWith('image/')) return '🖼️';
-  if (fileType === 'application/pdf') return '📑';
-  if (fileType.startsWith('application/') || fileType.startsWith('text/')) return '📄';
-  if (fileType.startsWith('audio/')) return '🎵';
-  if (fileType.startsWith('video/')) return '🎬';
-  return '📎';
+// `file_type` is the category ('image', 'pdf', ...), not a MIME type.
+const FILE_TYPE_ICONS: Record<string, string> = {
+  image: '🖼️',
+  pdf: '📑',
+  document: '📄',
+  audio: '🎵',
+  video: '🎬',
+};
+
+const getFileTypeIcon = (fileType: string | undefined) =>
+  (fileType && FILE_TYPE_ICONS[fileType]) || '📎';
+
+// SQLite timestamps carry no zone and are UTC; `new Date()` would read them as local.
+const formatDate = (raw: string) => {
+  const date = parseDbTimestamp(raw);
+  return date ? format(date, "MMM d, yyyy") : "";
 };
 
 function SearchContent() {
@@ -112,6 +122,7 @@ function SearchContent() {
   });
 
   const results = data?.results as SearchResult[] || [];
+  const terms = queryTerms(debouncedQuery);
   const total = data?.total || 0;
 
   // Group results by type
@@ -127,7 +138,7 @@ function SearchContent() {
       case "capture":
         return `/captures`;
       case "task":
-        return `/tasks`;
+        return `/tasks?task=${encodeURIComponent(result.id)}`;
       default:
         return "#";
     }
@@ -233,7 +244,7 @@ function SearchContent() {
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-1.5 md:gap-2 mb-1">
                             <h3 className="font-medium truncate text-sm md:text-base">
-                              {result.title}
+                              <HighlightedText text={result.title} terms={terms} />
                             </h3>
                             {result.project_name && (
                               <Badge variant="secondary" className="text-xs shrink-0">
@@ -241,17 +252,12 @@ function SearchContent() {
                               </Badge>
                             )}
                           </div>
-                          <p
+                          <SearchSnippet
+                            snippet={result.snippet}
                             className="text-xs md:text-sm text-muted-foreground line-clamp-2"
-                            dangerouslySetInnerHTML={{
-                              __html: sanitizeHtml(result.snippet).replace(
-                                /<mark>/g,
-                                '<mark class="bg-yellow-200 dark:bg-yellow-800 px-0.5 rounded">'
-                              ),
-                            }}
                           />
                           <p className="text-xs text-muted-foreground mt-2">
-                            {format(new Date(result.updated_at), "MMM d, yyyy")}
+                            {formatDate(result.updated_at)}
                           </p>
                         </div>
                       </div>
@@ -276,15 +282,12 @@ function SearchContent() {
                           {getFileTypeIcon(attachment.file_type)}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-medium truncate">{attachment.title}</h3>
-                          <p
+                          <h3 className="font-medium truncate">
+                            <HighlightedText text={attachment.title} terms={terms} />
+                          </h3>
+                          <SearchSnippet
+                            snippet={attachment.snippet}
                             className="text-sm text-muted-foreground mt-1 line-clamp-2"
-                            dangerouslySetInnerHTML={{
-                              __html: sanitizeHtml(attachment.snippet).replace(
-                                /<mark>/g,
-                                '<mark class="bg-yellow-200 dark:bg-yellow-800 px-0.5 rounded">'
-                              ),
-                            }}
                           />
                           {(attachment.project_name || attachment.note_title) && (
                             <p className="text-xs text-muted-foreground mt-1">
@@ -339,7 +342,7 @@ function SearchContent() {
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-1.5 md:gap-2 mb-1">
                             <h3 className="font-medium truncate text-sm md:text-base">
-                              {result.content.substring(0, 50)}
+                              <HighlightedText text={result.title} terms={terms} />
                             </h3>
                             {result.project_name && (
                               <Badge variant="secondary" className="text-xs shrink-0">
@@ -347,17 +350,12 @@ function SearchContent() {
                               </Badge>
                             )}
                           </div>
-                          <p
+                          <SearchSnippet
+                            snippet={result.snippet}
                             className="text-xs md:text-sm text-muted-foreground line-clamp-2"
-                            dangerouslySetInnerHTML={{
-                              __html: sanitizeHtml(result.snippet).replace(
-                                /<mark>/g,
-                                '<mark class="bg-yellow-200 dark:bg-yellow-800 px-0.5 rounded">'
-                              ),
-                            }}
                           />
                           <p className="text-xs text-muted-foreground mt-2">
-                            {format(new Date(result.updated_at), "MMM d, yyyy")}
+                            {formatDate(result.updated_at)}
                           </p>
                         </div>
                       </div>
@@ -388,7 +386,7 @@ function SearchContent() {
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-1.5 md:gap-2 mb-1">
                             <h3 className="font-medium truncate text-sm md:text-base">
-                              {result.content.substring(0, 50)}
+                              <HighlightedText text={result.title} terms={terms} />
                             </h3>
                             {result.project_name && (
                               <Badge variant="secondary" className="text-xs shrink-0">
@@ -396,17 +394,12 @@ function SearchContent() {
                               </Badge>
                             )}
                           </div>
-                          <p
+                          <SearchSnippet
+                            snippet={result.snippet}
                             className="text-xs md:text-sm text-muted-foreground line-clamp-2"
-                            dangerouslySetInnerHTML={{
-                              __html: sanitizeHtml(result.snippet).replace(
-                                /<mark>/g,
-                                '<mark class="bg-yellow-200 dark:bg-yellow-800 px-0.5 rounded">'
-                              ),
-                            }}
                           />
                           <p className="text-xs text-muted-foreground mt-2">
-                            {format(new Date(result.updated_at), "MMM d, yyyy")}
+                            {formatDate(result.updated_at)}
                           </p>
                         </div>
                       </div>

@@ -2,16 +2,32 @@ import { NextRequest, NextResponse } from "next/server";
 import { queryAll } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import { findSimilarToText } from "@/lib/ai/embeddings";
+import {
+  ELLIPSIS,
+  HIGHLIGHT_END,
+  HIGHLIGHT_START,
+  buildSnippet,
+  cleanFtsSnippet,
+  hasHighlight,
+  queryTerms,
+  toSearchText,
+} from "@/lib/search/snippet";
 
 interface SearchResult {
   id: string;
   type: "note" | "capture" | "task" | "attachment";
   title: string;
+  /** Readable plain text, trimmed. Never the stored HTML. */
   content: string;
+  /**
+   * Plain text around the match, matched words wrapped in HIGHLIGHT_START /
+   * HIGHLIGHT_END (see src/lib/search/snippet.ts). Never HTML.
+   */
   snippet: string;
   slug?: string;
   project_name?: string;
   note_title?: string;
+  capture_type?: string;
   file_type?: string;
   file_size?: number;
   storage_url?: string;
@@ -20,7 +36,42 @@ interface SearchResult {
   rank?: number;
 }
 
+/** What the queries select; the raw bodies are cleaned before they leave. */
+interface RawRow extends Omit<SearchResult, "content" | "snippet"> {
+  body?: string | null;
+  fts_snippet?: string | null;
+}
+
 const ATTACHMENT_FILE_TYPES = new Set(["image", "pdf", "document", "audio", "video", "other"]);
+
+/** How much plain text each result carries in `content`. */
+const CONTENT_PREVIEW_LENGTH = 300;
+const TITLE_LENGTH = 80;
+
+// FTS5 snippet() markers: the same control characters the client splits on.
+// Bound as parameters (they come first, since snippet() precedes MATCH ?).
+const FTS_SNIPPET_ARGS = "?, ?, ?, 24";
+const FTS_SNIPPET_PARAMS = [HIGHLIGHT_START, HIGHLIGHT_END, ELLIPSIS];
+
+function truncate(text: string, length: number): string {
+  if (text.length <= length) return text;
+  const cut = text.slice(0, length);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > length / 2 ? cut.slice(0, space) : cut).trimEnd()}${ELLIPSIS}`;
+}
+
+function finish(row: RawRow, terms: string[]): SearchResult {
+  const { body, fts_snippet, ...rest } = row;
+  const text = toSearchText(body);
+  const fromFts = cleanFtsSnippet(fts_snippet);
+  return {
+    ...rest,
+    content: truncate(text, CONTENT_PREVIEW_LENGTH),
+    // FTS knows where the match was; when it matched only the title, its
+    // snippet is just the opening, so look for the words ourselves.
+    snippet: hasHighlight(fromFts) ? fromFts : buildSnippet(text, terms),
+  };
+}
 
 // GET /api/search - Full-text search across notes, captures, tasks, and attachments
 export async function GET(request: NextRequest) {
@@ -34,13 +85,15 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get("type"); // note, capture, task, attachment, or all
   const projectId = searchParams.get("projectId");
   const fileType = searchParams.get("fileType"); // image, pdf, document, audio, video
-  const limit = Math.min(Math.max(1, parseInt(searchParams.get("limit") || "20")), 100);
+  const limit = Math.min(Math.max(1, parseInt(searchParams.get("limit") || "20") || 20), 100);
 
   if (!query?.trim()) {
     return NextResponse.json({ error: "Search query is required" }, { status: 400 });
   }
 
   const searchTerm = query.trim();
+  const terms = queryTerms(searchTerm);
+  const like = `%${searchTerm}%`;
   const results: SearchResult[] = [];
 
   // Search notes using FTS5
@@ -50,8 +103,8 @@ export async function GET(request: NextRequest) {
         n.id,
         'note' as type,
         n.title,
-        n.content,
-        snippet(notes_fts, 1, '<mark>', '</mark>', '...', 32) as snippet,
+        COALESCE(n.content_plain, n.content) as body,
+        snippet(notes_fts, 1, ${FTS_SNIPPET_ARGS}) as fts_snippet,
         n.slug,
         p.name as project_name,
         n.created_at,
@@ -62,7 +115,7 @@ export async function GET(request: NextRequest) {
       LEFT JOIN projects p ON n.project_id = p.id
       WHERE notes_fts MATCH ? AND n.user_id = ?
     `;
-    const noteArgs: (string | number)[] = [searchTerm, user.id];
+    const noteArgs: (string | number)[] = [...FTS_SNIPPET_PARAMS, searchTerm, user.id];
 
     if (projectId) {
       noteQuery += " AND n.project_id = ?";
@@ -73,8 +126,8 @@ export async function GET(request: NextRequest) {
     noteArgs.push(limit);
 
     try {
-      const noteResults = await queryAll<SearchResult>(noteQuery, noteArgs);
-      results.push(...noteResults);
+      const noteResults = await queryAll<RawRow>(noteQuery, noteArgs);
+      results.push(...noteResults.map((r) => finish(r, terms)));
     } catch {
       // Fallback to LIKE search if FTS fails (e.g., syntax error in query)
       const fallbackQuery = `
@@ -82,8 +135,7 @@ export async function GET(request: NextRequest) {
           n.id,
           'note' as type,
           n.title,
-          n.content,
-          substr(n.content, 1, 200) as snippet,
+          COALESCE(n.content_plain, n.content) as body,
           n.slug,
           p.name as project_name,
           n.created_at,
@@ -96,11 +148,11 @@ export async function GET(request: NextRequest) {
         LIMIT ?
       `;
       const fallbackArgs = projectId
-        ? [user.id, `%${searchTerm}%`, `%${searchTerm}%`, projectId, limit]
-        : [user.id, `%${searchTerm}%`, `%${searchTerm}%`, limit];
+        ? [user.id, like, like, projectId, limit]
+        : [user.id, like, like, limit];
 
-      const noteResults = await queryAll<SearchResult>(fallbackQuery, fallbackArgs);
-      results.push(...noteResults);
+      const noteResults = await queryAll<RawRow>(fallbackQuery, fallbackArgs);
+      results.push(...noteResults.map((r) => finish(r, terms)));
     }
 
     // HYBRID SEARCH: Add semantic search results using vector embeddings
@@ -117,18 +169,17 @@ export async function GET(request: NextRequest) {
       for (const similar of semanticResults) {
         // Only add if not already in results (deduplicate)
         if (!results.some(r => r.id === similar.id)) {
-          results.push({
+          results.push(finish({
             id: similar.id,
-            type: "note" as const,
+            type: "note",
             title: similar.title,
-            content: similar.content_plain || '',
-            snippet: similar.content_plain ? similar.content_plain.substring(0, 200) : '',
+            body: similar.content_plain,
             slug: similar.slug,
             project_name: similar.project_name || undefined,
             created_at: similar.created_at,
             updated_at: similar.updated_at,
             rank: similar.similarity * -10 // Convert similarity to BM25-like score
-          });
+          }, terms));
         }
       }
 
@@ -142,29 +193,28 @@ export async function GET(request: NextRequest) {
 
   // Search captures
   if (!type || type === "capture" || type === "all") {
-    let captureQuery = `
+    const captureQuery = `
       SELECT
         c.id,
         'capture' as type,
-        c.capture_type as title,
-        c.content,
-        substr(c.content, 1, 200) as snippet,
+        c.capture_type,
+        c.content as body,
         c.created_at,
         c.created_at as updated_at
       FROM captures c
       WHERE c.user_id = ? AND c.content LIKE ?
+      ORDER BY c.created_at DESC LIMIT ?
     `;
-    const captureArgs: (string | number)[] = [user.id, `%${searchTerm}%`];
-
     // Note: Captures don't have a direct project_id - they use linked_projects JSON array
     // Filtering by project for captures would require JSON parsing, skip for now
-    // if (projectId) { ... }
 
-    captureQuery += " ORDER BY c.created_at DESC LIMIT ?";
-    captureArgs.push(limit);
-
-    const captureResults = await queryAll<SearchResult>(captureQuery, captureArgs);
-    results.push(...captureResults);
+    const captureResults = await queryAll<RawRow>(captureQuery, [user.id, like, limit]);
+    for (const row of captureResults) {
+      const result = finish(row, terms);
+      // A capture has no title of its own; its opening words are the best one.
+      result.title = truncate(result.content, TITLE_LENGTH) || row.capture_type || "Capture";
+      results.push(result);
+    }
   }
 
   // Search tasks
@@ -173,17 +223,19 @@ export async function GET(request: NextRequest) {
       SELECT
         t.id,
         'task' as type,
-        t.content as title,
-        t.content,
-        t.content as snippet,
+        COALESCE(NULLIF(t.title, ''), t.content) as title,
+        CASE
+          WHEN NULLIF(t.title, '') IS NULL THEN t.description
+          ELSE t.content || ' ' || COALESCE(t.description, '')
+        END as body,
         p.name as project_name,
         t.created_at,
         t.updated_at
       FROM tasks t
       LEFT JOIN projects p ON t.project_id = p.id
-      WHERE t.user_id = ? AND t.content LIKE ?
+      WHERE t.user_id = ? AND (t.content LIKE ? OR t.title LIKE ? OR t.description LIKE ?)
     `;
-    const taskArgs: (string | number)[] = [user.id, `%${searchTerm}%`];
+    const taskArgs: (string | number)[] = [user.id, like, like, like];
 
     if (projectId) {
       taskQuery += " AND t.project_id = ?";
@@ -193,19 +245,24 @@ export async function GET(request: NextRequest) {
     taskQuery += " ORDER BY t.created_at DESC LIMIT ?";
     taskArgs.push(limit);
 
-    const taskResults = await queryAll<SearchResult>(taskQuery, taskArgs);
-    results.push(...taskResults);
+    const taskResults = await queryAll<RawRow>(taskQuery, taskArgs);
+    for (const row of taskResults) {
+      const result = finish(row, terms);
+      result.title = truncate(toSearchText(row.title), TITLE_LENGTH * 2);
+      results.push(result);
+    }
   }
 
   // Search attachments using FTS5
   if (!type || type === "attachment" || type === "all") {
+    // Column 2 is the extracted text; column 0 (the filename) is already the title.
     let attachmentQuery = `
       SELECT
         a.id,
         'attachment' as type,
         a.filename as title,
-        COALESCE(a.description, a.extracted_text, a.filename) as content,
-        snippet(attachments_fts, 0, '<mark>', '</mark>', '...', 32) as snippet,
+        TRIM(COALESCE(a.description, '') || ' ' || COALESCE(a.extracted_text, '')) as body,
+        snippet(attachments_fts, 2, ${FTS_SNIPPET_ARGS}) as fts_snippet,
         a.file_type,
         a.file_size,
         a.storage_url,
@@ -220,7 +277,7 @@ export async function GET(request: NextRequest) {
       LEFT JOIN notes n ON a.note_id = n.id
       WHERE attachments_fts MATCH ? AND a.user_id = ?
     `;
-    const attachmentArgs: (string | number)[] = [searchTerm, user.id];
+    const attachmentArgs: (string | number)[] = [...FTS_SNIPPET_PARAMS, searchTerm, user.id];
 
     if (projectId) {
       attachmentQuery += " AND a.project_id = ?";
@@ -240,8 +297,8 @@ export async function GET(request: NextRequest) {
     attachmentArgs.push(limit);
 
     try {
-      const attachmentResults = await queryAll<SearchResult>(attachmentQuery, attachmentArgs);
-      results.push(...attachmentResults);
+      const attachmentResults = await queryAll<RawRow>(attachmentQuery, attachmentArgs);
+      results.push(...attachmentResults.map((r) => finish(r, terms)));
     } catch {
       // Fallback to LIKE search if FTS fails
       const fileTypeFilter = attachmentFileType ? "AND a.file_type = ?" : "";
@@ -251,8 +308,7 @@ export async function GET(request: NextRequest) {
           a.id,
           'attachment' as type,
           a.filename as title,
-          COALESCE(a.description, a.extracted_text, a.filename) as content,
-          substr(COALESCE(a.description, a.extracted_text, a.filename), 1, 200) as snippet,
+          TRIM(COALESCE(a.description, '') || ' ' || COALESCE(a.extracted_text, '')) as body,
           a.file_type,
           a.file_size,
           a.storage_url,
@@ -269,13 +325,13 @@ export async function GET(request: NextRequest) {
         ORDER BY a.updated_at DESC
         LIMIT ?
       `;
-      const fallbackArgs: (string | number)[] = [user.id, `%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`];
+      const fallbackArgs: (string | number)[] = [user.id, like, like, like];
       if (projectId) fallbackArgs.push(projectId);
       if (attachmentFileType) fallbackArgs.push(attachmentFileType);
       fallbackArgs.push(limit);
 
-      const attachmentResults = await queryAll<SearchResult>(fallbackQuery, fallbackArgs);
-      results.push(...attachmentResults);
+      const attachmentResults = await queryAll<RawRow>(fallbackQuery, fallbackArgs);
+      results.push(...attachmentResults.map((r) => finish(r, terms)));
     }
   }
 
