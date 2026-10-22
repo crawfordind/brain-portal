@@ -210,7 +210,8 @@ export function NotificationPreferencesPanel() {
         title="Quiet Hours"
         description="No email notifications during these hours"
       >
-        <div className="flex items-center gap-3">
+        {/* Stacked on a phone: two selects side by side overflowed 360px. */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3 [&>*]:sm:flex-1">
           <SelectRow
             label="Start"
             value={String(prefs.quiet_hours_start)}
@@ -220,7 +221,7 @@ export function NotificationPreferencesPanel() {
             }))}
             onChange={(v) => update("quiet_hours_start", parseInt(v))}
           />
-          <span className="text-muted-foreground text-sm mt-5">to</span>
+          <span className="hidden text-sm text-muted-foreground sm:block sm:flex-none">to</span>
           <SelectRow
             label="End"
             value={String(prefs.quiet_hours_end)}

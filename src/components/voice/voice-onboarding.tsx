@@ -2,17 +2,10 @@
 
 import * as React from "react";
 import { useState, useEffect } from "react";
-import { Mic, X, ArrowRight, Sparkles } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { X, ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useVoiceStore } from "@/lib/stores/voice-store";
-import { useVoiceShortcutInfo } from "./hooks/use-voice-shortcuts";
-
-interface VoiceOnboardingProps {
-  onComplete?: () => void;
-  autoShow?: boolean;
-}
 
 const TIPS = [
   {
@@ -37,31 +30,22 @@ const TIPS = [
   },
 ];
 
-export function VoiceOnboarding({ onComplete, autoShow = true }: VoiceOnboardingProps) {
+/**
+ * Progressive voice tips, shown after the user has started using voice.
+ *
+ * The first-visit welcome used to be a full-screen modal here. It is now the
+ * dismissible `VoiceIntroCard` on the dashboard, which is what sets
+ * `onboardingComplete`, so tips only begin once the user has met the feature.
+ */
+export function VoiceOnboarding() {
   const {
     onboardingComplete,
     tipsShown,
     captureCount,
-    markOnboardingComplete,
     addTipShown,
   } = useVoiceStore();
 
-  const { formatShortcut } = useVoiceShortcutInfo();
-
-  const [showWelcome, setShowWelcome] = useState(false);
   const [currentTip, setCurrentTip] = useState<typeof TIPS[0] | null>(null);
-
-  // Show welcome dialog on first visit
-  useEffect(() => {
-    if (!onboardingComplete && autoShow) {
-      // Show after a short delay
-      const timer = setTimeout(() => {
-        setShowWelcome(true);
-      }, 1000);
-
-      return () => clearTimeout(timer);
-    }
-  }, [onboardingComplete, autoShow]);
 
   // Show progressive tips after successful captures
   useEffect(() => {
@@ -84,19 +68,6 @@ export function VoiceOnboarding({ onComplete, autoShow = true }: VoiceOnboarding
     }
   }, [captureCount, onboardingComplete, tipsShown]);
 
-  const handleTryIt = () => {
-    setShowWelcome(false);
-    markOnboardingComplete();
-    if (onComplete) {
-      onComplete();
-    }
-  };
-
-  const handleMaybeLater = () => {
-    setShowWelcome(false);
-    markOnboardingComplete();
-  };
-
   const handleDismissTip = () => {
     if (currentTip) {
       addTipShown(currentTip.id);
@@ -112,56 +83,6 @@ export function VoiceOnboarding({ onComplete, autoShow = true }: VoiceOnboarding
     // This could open the command palette
     // For now, just dismiss
   };
-
-  // Welcome dialog
-  if (showWelcome) {
-    return (
-      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in">
-        <Card className="w-full max-w-md mx-4 shadow-lg animate-in zoom-in-95">
-          <CardHeader>
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                <Mic className="h-5 w-5 text-primary" />
-              </div>
-              <CardTitle>Try Voice Capture</CardTitle>
-            </div>
-            <CardDescription className="text-base">
-              Tap the mic button and say anything — it&apos;s the fastest way to capture your thoughts.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium">Quick tips:</h4>
-              <ul className="space-y-1 text-sm text-muted-foreground">
-                <li className="flex items-start gap-2">
-                  <span className="text-primary">•</span>
-                  <span>Say commands like &quot;create task to...&quot; or &quot;new note about...&quot;</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-primary">•</span>
-                  <span>Use punctuation commands: &quot;period&quot;, &quot;comma&quot;, &quot;question mark&quot;</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-primary">•</span>
-                  <span>Press {formatShortcut('mod+shift+v')} for quick capture</span>
-                </li>
-              </ul>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <Button onClick={handleTryIt} className="flex-1">
-                <Mic className="h-4 w-4 mr-2" />
-                Try It Now
-              </Button>
-              <Button onClick={handleMaybeLater} variant="outline" className="flex-1">
-                Maybe Later
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
 
   // Progressive tip
   if (currentTip) {

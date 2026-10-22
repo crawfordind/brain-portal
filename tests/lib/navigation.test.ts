@@ -30,12 +30,15 @@ describe("contentWidthClass", () => {
     expect(contentWidthClass("/operationsx")).toBe("max-w-4xl");
   });
 
+  it("gives Settings room for its section sidebar beside the reading column", () => {
+    expect(contentWidthClass("/settings")).toBe("max-w-5xl");
+  });
+
   it("keeps the reading measure everywhere prose is read or written", () => {
     for (const route of [
       "/notes",
       "/notes/some-note",
       "/journal",
-      "/settings",
       "/projects",
       "/crm",
       "/review",
