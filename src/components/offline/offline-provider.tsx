@@ -21,6 +21,20 @@ export function useOfflineContext() {
   return useContext(OfflineContext);
 }
 
+/**
+ * Pages a signed-out visitor sees. The session cookie is httpOnly, so the
+ * browser cannot ask whether anyone is signed in; the page they are on is the
+ * honest proxy. Without this, every anonymous visit to the landing page fired
+ * five account-wide fetches (notes, captures, tasks, projects, tags), each
+ * bounced to the login page, and repeated them every five minutes.
+ */
+const SIGNED_OUT_PAGES = ["/waitlist", "/auth", "/shared"];
+
+function onSignedOutPage(): boolean {
+  const path = window.location.pathname;
+  return SIGNED_OUT_PAGES.some((page) => path === page || path.startsWith(`${page}/`));
+}
+
 interface OfflineProviderProps {
   children: React.ReactNode;
 }
@@ -48,6 +62,11 @@ export function OfflineProvider({ children }: OfflineProviderProps) {
   const hydrateOfflineData = useCallback(async () => {
     if (hydrationAttemptedRef.current) return;
     hydrationAttemptedRef.current = true;
+
+    if (onSignedOutPage()) {
+      setIsHydrated(true);
+      return;
+    }
 
     try {
       // Check if we've ever synced

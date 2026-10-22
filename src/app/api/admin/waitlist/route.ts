@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { query, db } from "@/lib/db/client";
+import { query, queryOne, db } from "@/lib/db/client";
 import { requireAdmin } from "@/lib/auth/admin";
 import { sendEmail, isEmailConfigured } from "@/lib/email/index";
 import { getAppUrl } from "@/lib/app-url";
+import { renderWaitlistApprovedEmail } from "@/lib/waitlist/emails";
 
 interface WaitlistEntry {
   id: string;
@@ -28,6 +29,8 @@ export async function GET() {
   return NextResponse.json({ entries });
 }
 
+const STATUSES = new Set(["pending", "approved", "rejected"]);
+
 export async function PATCH(request: NextRequest) {
   try {
     await requireAdmin();
@@ -35,15 +38,26 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const body = await request.json();
-  const { id, status, notes } = body as {
-    id: string;
-    status?: string;
-    notes?: string;
-  };
+  let body: { id?: unknown; status?: unknown; notes?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const id = typeof body.id === "string" ? body.id : "";
+  const status = typeof body.status === "string" ? body.status : undefined;
+  const notes = typeof body.notes === "string" ? body.notes : undefined;
 
   if (!id) {
     return NextResponse.json({ error: "ID required" }, { status: 400 });
+  }
+  if (status !== undefined && !STATUSES.has(status)) {
+    return NextResponse.json({ error: "Unknown status" }, { status: 400 });
+  }
+
+  const entry = await queryOne<WaitlistEntry>("SELECT * FROM waitlist WHERE id = ?", [id]);
+  if (!entry) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   // Build update
@@ -67,74 +81,30 @@ export async function PATCH(request: NextRequest) {
     args,
   });
 
-  // If approving, send approval email with login link
-  if (status === "approved") {
-    const entry = await query<WaitlistEntry>(
-      "SELECT * FROM waitlist WHERE id = ?",
-      [id]
-    );
-
-    if (entry[0] && isEmailConfigured()) {
-      const appUrl = getAppUrl();
-      const loginUrl = `${appUrl}/auth/login`;
-
-      await sendEmail({
-        to: entry[0].email,
-        subject: "You're in — Brain Portal",
-        html: `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body style="margin:0;padding:0;background:#05050a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-  <div style="max-width:560px;margin:0 auto;padding:48px 24px;">
-
-    <!-- Logo mark -->
-    <div style="margin-bottom:40px;">
-      <div style="display:inline-flex;align-items:center;gap:10px;">
-        <div style="width:32px;height:32px;background:linear-gradient(135deg,#0f766e,#0d9488);border-radius:8px;"></div>
-        <span style="color:#fff;font-size:15px;font-weight:600;letter-spacing:-0.02em;">Brain Portal</span>
-      </div>
-    </div>
-
-    <!-- Headline -->
-    <h1 style="color:#fff;font-size:28px;font-weight:700;letter-spacing:-0.03em;margin:0 0 16px;">
-      Your access is ready.
-    </h1>
-    <p style="color:#a1a1aa;font-size:16px;line-height:1.7;margin:0 0 32px;">
-      You've been approved for early access to Brain Portal. Your private, AI-powered knowledge system is waiting for you.
-    </p>
-
-    <!-- CTA Button -->
-    <div style="margin-bottom:40px;">
-      <a href="${loginUrl}" style="display:inline-block;background:linear-gradient(135deg,#0f766e,#0d9488);color:#fff;font-size:16px;font-weight:600;text-decoration:none;padding:14px 32px;border-radius:10px;letter-spacing:-0.01em;">
-        Sign In to Get Started
-      </a>
-    </div>
-
-    <p style="color:#71717a;font-size:14px;line-height:1.7;margin:0 0 40px;">
-      Click the button above, enter your email, and we'll send you a magic link — no password needed.
-    </p>
-
-    <!-- Divider -->
-    <div style="height:1px;background:#1c1c2e;margin-bottom:32px;"></div>
-
-    <!-- Footer -->
-    <p style="color:#3f3f46;font-size:12px;line-height:1.6;margin:0;">
-      You're receiving this because you requested early access at ${appUrl}/waitlist.<br>
-      Brain Portal &middot; Think clearly. Connect everything.
-    </p>
-
-  </div>
-</body>
-</html>
-        `.trim(),
-        text: `Your access is ready — Brain Portal\n\nYou've been approved for early access. Sign in to get started:\n\n${loginUrl}\n\nClick the link, enter your email, and we'll send you a magic link — no password needed.\n\nBrain Portal · Think clearly. Connect everything.`,
-      });
-    }
+  if (status !== "approved") {
+    return NextResponse.json({ success: true });
   }
 
-  return NextResponse.json({ success: true });
+  // Approval creates the account. Signups are closed by default
+  // (signup-policy.ts) and only existing users may sign in under `closed`, so
+  // approving used to send "your access is ready" to someone the login route
+  // would then silently refuse. Creating the row is what `npm run user:create`
+  // does; an admin approving an address is the same deliberate act.
+  const address = entry.email.trim().toLowerCase();
+  await db.execute({
+    sql: "INSERT INTO users (email) SELECT ? WHERE NOT EXISTS (SELECT 1 FROM users WHERE lower(email) = ?)",
+    args: [address, address],
+  });
+
+  let emailed = false;
+  if (isEmailConfigured()) {
+    emailed = await sendEmail({
+      to: address,
+      ...renderWaitlistApprovedEmail({ appUrl: getAppUrl(), email: address }),
+    });
+  }
+
+  // `emailed` lets the admin page say what actually happened instead of
+  // claiming a message was sent when SMTP is not configured or failed.
+  return NextResponse.json({ success: true, accountCreated: true, emailed });
 }

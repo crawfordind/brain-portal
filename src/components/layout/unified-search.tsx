@@ -225,22 +225,43 @@ export function UnifiedSearch({ variant = "desktop" }: UnifiedSearchProps) {
   // Register global shortcuts for creation commands
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      // With Shift held, `key` is "C" on Windows and Linux; comparing against
+      // "c" alone meant these shortcuts only ever fired on a Mac.
+      const key = e.key.toLowerCase();
+      const mod = e.metaKey || e.ctrlKey;
+
+      // Cmd+K / Ctrl+K opens search. It was advertised (landing page, voice
+      // button) long before anything listened for it. Both variants are
+      // mounted and CSS hides one, so only the one on screen answers.
+      if (mod && !e.shiftKey && !e.altKey && key === 'k') {
+        const wide = window.matchMedia('(min-width: 1024px)').matches;
+        if (variant === 'desktop' && wide) {
+          e.preventDefault();
+          inputRef.current?.focus();
+          setIsOpen(true);
+        } else if (variant === 'mobile' && !wide) {
+          e.preventDefault();
+          setIsMobileOverlayOpen(true);
+        }
+        return;
+      }
+
       // Cmd+Shift+C for Quick Capture
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'c') {
+      if (mod && e.shiftKey && key === 'c') {
         e.preventDefault();
         const captureCmd = commands.find(cmd => cmd.id === 'quick-capture');
         captureCmd?.handler();
       }
 
       // Cmd+Shift+D for Daily Note / Journal
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'd') {
+      if (mod && e.shiftKey && key === 'd') {
         e.preventDefault();
         const dailyCmd = commands.find(cmd => cmd.id === 'daily-note');
         dailyCmd?.handler();
       }
 
       // Cmd+Shift+J for Journal Entry
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'j') {
+      if (mod && e.shiftKey && key === 'j') {
         e.preventDefault();
         const journalCmd = commands.find(cmd => cmd.id === 'journal-entry');
         journalCmd?.handler();
@@ -249,7 +270,7 @@ export function UnifiedSearch({ variant = "desktop" }: UnifiedSearchProps) {
 
     document.addEventListener('keydown', handleGlobalShortcuts);
     return () => document.removeEventListener('keydown', handleGlobalShortcuts);
-  }, [commands]);
+  }, [commands, variant]);
 
   // Reset selected index when results change
   useEffect(() => {
