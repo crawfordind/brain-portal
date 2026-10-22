@@ -63,6 +63,7 @@ export interface ContactListRow {
   compartments: string[];
   resolution: "confirmed" | "unresolved";
   needsReview: boolean;
+  ambiguous?: boolean;
   channels: { kind: string; value: string; is_primary: number }[];
   roles: { ventureId: string; ventureName: string; edgeType: string }[];
   lastInteractionAt: string | null;

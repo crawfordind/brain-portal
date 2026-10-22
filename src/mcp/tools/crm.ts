@@ -27,6 +27,7 @@ import { errorResult, type ToolContext } from "../guard";
 import type { ContactChannel, Entity, Interaction } from "@/lib/db/schema";
 import { isChannelKind, normalizeChannelValue } from "@/lib/crm/channels";
 import {
+  getAmbiguousMention,
   getCompartments,
   getCrmFields,
   getMergeCandidate,
@@ -49,6 +50,7 @@ import {
 } from "@/lib/crm/structure";
 import { logInteraction } from "@/lib/crm/interactions";
 import { ingestSingleEntity } from "@/lib/crm/ingest";
+import { updateContact } from "@/lib/crm/edit";
 import {
   listMergeCandidates,
   mergeEntities,
@@ -531,7 +533,7 @@ export function registerCrmTools(server: McpServer, ctx: ToolContext) {
   // ─── list_review_queue ─────────────────────────────────
   server.tool(
     "list_review_queue",
-    "Contacts awaiting a human decision: unresolved event captures, and possible duplicates the merge gate refused to fuse automatically. Use before bulk-cleaning contacts after an event.",
+    "Contacts awaiting a human decision: unresolved event captures, first names that match several contacts (\"which Justin?\", answered with resolve_contact merge_into_id), and possible duplicates the merge gate refused to fuse automatically. Use before bulk-cleaning contacts after an event.",
     {},
     async () => {
       const guard = ctx.guard("crm:read");
@@ -550,11 +552,23 @@ export function registerCrmTools(server: McpServer, ctx: ToolContext) {
       return ok({
         unresolved: unresolved
           .filter((e) => getResolution(e) === "unresolved")
-          .map((e) => ({
-            id: e.id,
-            name: e.canonical_name,
-            hint: readEntityMetadata(e).resolution_hint ?? null,
-          })),
+          .map((e) => {
+            const ambiguous = getAmbiguousMention(e);
+            return {
+              id: e.id,
+              name: e.canonical_name,
+              hint: readEntityMetadata(e).resolution_hint ?? null,
+              ...(ambiguous
+                ? {
+                    which_one: {
+                      source_type: ambiguous.source_type,
+                      source_id: ambiguous.source_id,
+                      candidate_ids: ambiguous.candidate_ids,
+                    },
+                  }
+                : {}),
+            };
+          }),
         possible_duplicates: candidates.map((c) => ({
           id: c.entity.id,
           name: c.entity.canonical_name,
@@ -590,6 +604,42 @@ export function registerCrmTools(server: McpServer, ctx: ToolContext) {
           confirmedName: params.confirmed_name ?? null,
         });
         return ok(result);
+      } catch (e) {
+        return failure(e);
+      }
+    }
+  );
+
+  // ─── update_contact ────────────────────────────────────
+  server.tool(
+    "update_contact",
+    "Edit a contact: give it a full name (\"Justin\" → \"Justin Smith\"), change its type, or set a short 'about'. The old name is kept as an alias so notes using it still resolve, and the edited name is locked against renaming by later extraction. Add email/phone with add_contact_channel.",
+    {
+      contact_id: z.string(),
+      name: z.string().optional().describe("New full name"),
+      entity_type: z
+        .enum(["person", "org", "place", "project", "product", "input", "other"])
+        .optional(),
+      about: z
+        .string()
+        .optional()
+        .describe("Who they are, how the user knows them. Empty string clears it."),
+    },
+    async (params) => {
+      const guard = ctx.guard("crm:write");
+      if (!guard.ok) return errorResult(guard);
+      try {
+        const entity = await updateContact(guard.userId, params.contact_id, {
+          name: params.name,
+          type: params.entity_type,
+          about: params.about,
+        });
+        return ok({
+          id: entity.id,
+          name: entity.canonical_name,
+          type: entity.entity_type,
+          about: readEntityMetadata(entity).about ?? null,
+        });
       } catch (e) {
         return failure(e);
       }

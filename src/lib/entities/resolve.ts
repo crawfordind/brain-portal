@@ -380,3 +380,93 @@ export function assessMerge(
     reason: `"${existing.name}" and "${incoming.name}" match only after dropping a business suffix.`,
   };
 }
+
+// =====================================================
+// FIRST-NAME DISAMBIGUATION
+// =====================================================
+
+/**
+ * Notes usually call people by their first name. "Justin" and "Justin Smith"
+ * do not share a normalized key, so without this a bare first name either
+ * created a second contact or, once an alias existed, attached silently to
+ * whichever Justin happened to own it, even after a second Justin turned up.
+ *
+ * These helpers decide whether a bare first name points at exactly one known
+ * person (attach), several (ask the user), or none (the ordinary path).
+ */
+
+/** Keys of each name token, in order: "Justin O'Neil" → ["justin", "oneil"]. */
+function tokenKeys(name: string): string[] {
+  return cleanEntityName(name)
+    .split(" ")
+    .map((t) => normalizeEntityKeyStrict(t))
+    .filter(Boolean);
+}
+
+/** True for a one-word name such as "Justin". */
+export function isSingleTokenName(name: string): boolean {
+  return tokenKeys(name).length === 1;
+}
+
+/** The key of a multi-word name's first word, or null for a one-word name. */
+export function firstNameKey(name: string): string | null {
+  const keys = tokenKeys(name);
+  return keys.length >= 2 ? keys[0] : null;
+}
+
+/**
+ * Scoped key for "this first name, in this one source". A placeholder awaiting
+ * the user's answer is stored under it, and once they answer, an alias with
+ * this key remembers the answer, so re-reading the same note never asks twice.
+ * `@` and `:` cannot appear in a normalized key, so it never collides with one.
+ */
+export function scopedMentionKey(
+  key: string,
+  sourceType: string,
+  sourceId: string
+): string {
+  return `${key}@${sourceType}:${sourceId}`;
+}
+
+/** True for a key written by `scopedMentionKey`. */
+export function isScopedMentionKey(key: string): boolean {
+  return key.includes("@");
+}
+
+export interface PersonCandidate {
+  id: string;
+  name: string;
+  /** Normalized keys of the person's aliases. */
+  aliasKeys?: string[];
+}
+
+/**
+ * The known people a bare first name could mean: a person whose own name is
+ * that one word, whose first word it is, or who holds it as an alias (which a
+ * rename leaves behind: "Justin" edited to "Justin Smith" keeps "Justin").
+ * Returns an empty list for a multi-word name, which resolves by exact key.
+ */
+export function matchFirstName(
+  name: string,
+  people: PersonCandidate[]
+): PersonCandidate[] {
+  const keys = tokenKeys(name);
+  if (keys.length !== 1) return [];
+  const key = keys[0];
+
+  const seen = new Set<string>();
+  const matches: PersonCandidate[] = [];
+  for (const person of people) {
+    if (seen.has(person.id)) continue;
+    const own = tokenKeys(person.name);
+    const hit =
+      own[0] === key ||
+      normalizeEntityKey(person.name) === key ||
+      (person.aliasKeys ?? []).includes(key);
+    if (hit) {
+      seen.add(person.id);
+      matches.push(person);
+    }
+  }
+  return matches;
+}

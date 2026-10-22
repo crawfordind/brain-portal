@@ -3,7 +3,8 @@
  *
  * Filters: ?venture= ?type= ?compartment= ?resolution= ?q= ?limit=
  *
- * Unresolved contacts are excluded by default. They are placeholders like
+ * Unresolved contacts are excluded by default; resolution=unresolved is the
+ * "Needs review" tab and also carries possible duplicates. They are placeholders like
  * "Rascal" or "Matt in Carlisle" captured at an event, and surfacing them in
  * the ordinary list would make it look full of junk. Ask for them explicitly
  * with resolution=unresolved, or resolution=all.
@@ -18,6 +19,7 @@ import {
   getCompartments,
   getResolution,
   getMergeCandidate,
+  getAmbiguousMention,
   isVenture,
 } from "@/lib/crm/metadata";
 
@@ -26,6 +28,7 @@ export interface ContactListItem {
   compartments: string[];
   resolution: "unresolved" | "confirmed";
   needsReview: boolean;
+  ambiguous: boolean;
   channels: { kind: string; value: string; is_primary: number }[];
   roles: { ventureId: string; ventureName: string; edgeType: string }[];
   lastInteractionAt: string | null;
@@ -80,7 +83,15 @@ export async function GET(request: NextRequest) {
       if (isVenture(entity)) return false;
       const state = getResolution(entity);
       if (resolution === "confirmed" && state !== "confirmed") return false;
-      if (resolution === "unresolved" && state !== "unresolved") return false;
+      // "Needs review" means a decision is waiting: an unresolved capture, a
+      // "which Justin?" question, or a possible duplicate.
+      if (
+        resolution === "unresolved" &&
+        state !== "unresolved" &&
+        getMergeCandidate(entity) === null
+      ) {
+        return false;
+      }
       if (compartment && !getCompartments(entity).includes(compartment)) {
         return false;
       }
@@ -132,6 +143,7 @@ export async function GET(request: NextRequest) {
       compartments: getCompartments(entity),
       resolution: getResolution(entity),
       needsReview: getMergeCandidate(entity) !== null,
+      ambiguous: getAmbiguousMention(entity) !== null,
       channels: channels
         .filter((c) => c.entity_id === entity.id)
         .map(({ kind, value, is_primary }) => ({ kind, value, is_primary })),

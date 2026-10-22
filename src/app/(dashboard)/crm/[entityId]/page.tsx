@@ -28,6 +28,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   FileText,
+  Pencil,
   Plus,
   Send,
   Trash2,
@@ -41,6 +42,13 @@ import {
   UnresolvedBadge,
 } from "@/components/crm/crm-badges";
 import { SendToAgentLabel } from "@/components/agents/send-to-agent-label";
+import { EditContactDialog } from "@/components/crm/edit-contact-dialog";
+import {
+  DuplicateCard,
+  WhichOneCard,
+  WhoIsThisCard,
+  type Ambiguity,
+} from "@/components/crm/review-cards";
 
 interface Brief {
   entity: {
@@ -49,6 +57,9 @@ interface Brief {
     entity_type: string;
     mention_count: number;
   };
+  about: string | null;
+  aliases: string[];
+  ambiguity: Ambiguity | null;
   compartments: string[];
   resolution: "confirmed" | "unresolved";
   mergeCandidate: { targetName: string | null; reason: string } | null;
@@ -94,6 +105,7 @@ export default function ContactBriefPage({
   const { sendToAgent } = useSendToAgent();
   const [channelKind, setChannelKind] = useState("email");
   const [channelValue, setChannelValue] = useState("");
+  const [editing, setEditing] = useState(false);
 
   const { data, isLoading } = useQuery<Brief>({
     queryKey: ["crm", "contact", entityId],
@@ -173,10 +185,21 @@ export default function ContactBriefPage({
           {data.resolution === "unresolved" && <UnresolvedBadge />}
           {data.mergeCandidate && <MergeCandidateBadge />}
           <CompartmentBadges compartments={data.compartments} />
+          {!data.ambiguity && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto min-h-11 md:min-h-9"
+              onClick={() => setEditing(true)}
+            >
+              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+              Edit
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
-            className="ml-auto min-h-11 md:min-h-9"
+            className={`${data.ambiguity ? "ml-auto " : ""}min-h-11 md:min-h-9`}
             onClick={() =>
               sendToAgent({ id: data.entity.id, type: "contact", title: `About ${data.entity.canonical_name}` })
             }
@@ -189,6 +212,14 @@ export default function ContactBriefPage({
           {data.entity.entity_type} · {data.counts.interactions} touches ·{" "}
           {data.counts.mentions} mentions in your notes
         </p>
+        {data.aliases.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Also known as {data.aliases.join(", ")}
+          </p>
+        )}
+        {data.about && (
+          <p className="whitespace-pre-line text-sm">{data.about}</p>
+        )}
         {data.roles.length > 0 && (
           <div className="flex flex-wrap gap-1 pt-1">
             {data.roles.map((r) => (
@@ -202,21 +233,23 @@ export default function ContactBriefPage({
         )}
       </header>
 
+      {data.ambiguity ? (
+        <WhichOneCard contactId={data.entity.id} ambiguity={data.ambiguity} />
+      ) : (
+        data.resolution === "unresolved" && (
+          <WhoIsThisCard
+            contactId={data.entity.id}
+            name={data.entity.canonical_name}
+          />
+        )
+      )}
+
       {data.mergeCandidate && (
-        <Card className="border-orange-500/40">
-          <CardContent className="space-y-1 py-4 text-sm">
-            <p className="font-medium">
-              Possibly the same as
-              {data.mergeCandidate.targetName
-                ? ` "${data.mergeCandidate.targetName}"`
-                : " another contact"}
-            </p>
-            <p className="text-muted-foreground">{data.mergeCandidate.reason}</p>
-            <p className="text-xs text-muted-foreground">
-              Both records are kept until you decide. Nothing was merged.
-            </p>
-          </CardContent>
-        </Card>
+        <DuplicateCard
+          contactId={data.entity.id}
+          targetName={data.mergeCandidate.targetName}
+          reason={data.mergeCandidate.reason}
+        />
       )}
 
       <Card>
@@ -322,9 +355,15 @@ export default function ContactBriefPage({
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex flex-wrap items-baseline gap-2">
                       <span className="font-medium">
-                        {item.kind === "interaction"
-                          ? (item.subject ?? item.channel)
-                          : `Mentioned in a ${item.sourceType}`}
+                        {item.kind === "interaction" ? (
+                          (item.subject ?? item.channel)
+                        ) : item.sourceType === "note" ? (
+                          <Link href={`/notes/${item.sourceId}`} className="hover:underline">
+                            Mentioned in a note
+                          </Link>
+                        ) : (
+                          `Mentioned in a ${item.sourceType}`
+                        )}
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {item.at.slice(0, 10)}
@@ -348,6 +387,17 @@ export default function ContactBriefPage({
           )}
         </CardContent>
       </Card>
+
+      <EditContactDialog
+        contact={{
+          id: data.entity.id,
+          canonical_name: data.entity.canonical_name,
+          entity_type: data.entity.entity_type,
+          about: data.about,
+        }}
+        open={editing}
+        onOpenChange={setEditing}
+      />
     </div>
   );
 }

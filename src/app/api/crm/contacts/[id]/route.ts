@@ -1,5 +1,7 @@
 /**
  * GET /api/crm/contacts/[id] — the contact brief.
+ * PATCH /api/crm/contacts/[id] — edit name, type and "about"
+ *   (`{ name?, type?, about? }`). See `src/lib/crm/edit.ts`.
  *
  * Everything needed before a call: who they are, how to reach them, which
  * ventures they are attached to and in what role, and one chronological
@@ -15,12 +17,17 @@ import { queryOne, queryAll } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
 import type { ContactChannel, Entity, Interaction } from "@/lib/db/schema";
 import {
+  getAbout,
+  getAmbiguousMention,
   getCompartments,
   getCrmFields,
   getMergeCandidate,
   getResolution,
   readEntityMetadata,
 } from "@/lib/crm/metadata";
+import { isScopedMentionKey } from "@/lib/entities/resolve";
+import { ContactNameTakenError, updateContact } from "@/lib/crm/edit";
+import { StructureError } from "@/lib/crm/structure";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -152,8 +159,58 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       mergeCandidateName = other?.canonical_name ?? null;
     }
 
+    // Names this contact also answers to. Per-note answers ("in this note,
+    // Justin meant this Justin") are bookkeeping, not names, and stay hidden.
+    const aliases = (
+      await queryAll<{ alias: string; normalized_key: string }>(
+        `SELECT alias, normalized_key FROM entity_aliases
+         WHERE entity_id = ? AND user_id = ? ORDER BY created_at`,
+        [id, user.id]
+      )
+    )
+      .filter((a) => !isScopedMentionKey(a.normalized_key))
+      .map((a) => a.alias);
+
+    const ambiguous = getAmbiguousMention(entity);
+    let ambiguity = null;
+    if (ambiguous) {
+      const ids = ambiguous.candidate_ids;
+      const candidates = ids.length
+        ? await queryAll<{ id: string; canonical_name: string; mention_count: number; about: string | null }>(
+            `SELECT id, canonical_name, mention_count,
+                    CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.about') END AS about
+             FROM entities
+             WHERE user_id = ? AND id IN (${ids.map(() => "?").join(",")})
+             ORDER BY canonical_name COLLATE NOCASE`,
+            [user.id, ...ids]
+          )
+        : [];
+      const source =
+        ambiguous.source_type === "note"
+          ? await queryOne<{ title: string | null }>(
+              `SELECT title FROM notes WHERE id = ? AND user_id = ?`,
+              [ambiguous.source_id, user.id]
+            )
+          : null;
+      ambiguity = {
+        name: ambiguous.name,
+        sourceType: ambiguous.source_type,
+        sourceId: ambiguous.source_id,
+        sourceTitle: source?.title ?? null,
+        candidates: candidates.map((c) => ({
+          id: c.id,
+          name: c.canonical_name,
+          mentionCount: c.mention_count,
+          about: c.about,
+        })),
+      };
+    }
+
     return NextResponse.json({
       entity,
+      about: getAbout(entity),
+      aliases,
+      ambiguity,
       metadata: readEntityMetadata(entity),
       compartments: getCompartments(entity),
       resolution: getResolution(entity),
@@ -174,5 +231,43 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       { error: "Failed to fetch contact" },
       { status: 500 }
     );
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const { id } = await params;
+
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const optionalString = (v: unknown) =>
+    v === undefined ? undefined : v === null ? null : String(v);
+
+  try {
+    const entity = await updateContact(user.id, id, {
+      name: optionalString(body.name) ?? undefined,
+      type: optionalString(body.type) ?? undefined,
+      about: optionalString(body.about),
+    });
+    return NextResponse.json({ entity, about: getAbout(entity) });
+  } catch (e) {
+    if (e instanceof ContactNameTakenError) {
+      return NextResponse.json(
+        { error: e.message, existing: { id: e.existingId, name: e.existingName } },
+        { status: 409 }
+      );
+    }
+    if (e instanceof StructureError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    return NextResponse.json({ error: "Failed to update contact" }, { status: 500 });
   }
 }

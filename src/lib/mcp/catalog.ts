@@ -656,6 +656,22 @@ export const TOOLS: ToolSpec[] = [
     example: { contact_id: "abc123", confirmed_name: "Ross Calder" },
   },
   {
+    name: "update_contact",
+    description:
+      "Edit a contact's full name, type or 'about'. The old name stays as an alias, and the new name is locked against renaming by extraction.",
+    scope: "crm:write",
+    category: "crm",
+    inputSchema: z.object({
+      contact_id: z.string(),
+      name: z.string().optional(),
+      entity_type: z
+        .enum(["person", "org", "place", "project", "product", "input", "other"])
+        .optional(),
+      about: z.string().optional(),
+    }),
+    example: { contact_id: "abc123", name: "Dana Okonkwo" },
+  },
+  {
     name: "merge_contacts",
     description:
       "Merge one contact into another. Ventures cannot be merged. The venture recorded on past interactions is never changed.",

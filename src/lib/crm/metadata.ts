@@ -55,6 +55,20 @@ export interface CrmFields {
   next_action_at?: string | null;
 }
 
+/**
+ * A bare first name in one source that matched several known people. The
+ * entity carrying this is a placeholder holding that one mention until the
+ * user says which person it was. See `matchFirstName`.
+ */
+export interface AmbiguousMention {
+  /** The name as written, e.g. "Justin". */
+  name: string;
+  source_type: string;
+  source_id: string;
+  /** The people it could be, at the time it was read. */
+  candidate_ids: string[];
+}
+
 export interface EntityMetadata {
   /** Written by the entity layer on insert. Preserved, never owned by the CRM. */
   aliases?: string[];
@@ -71,6 +85,9 @@ export interface EntityMetadata {
   merge_candidate?: MergeCandidate | null;
   name_locked?: boolean;
   crm?: CrmFields;
+  /** Free text the user wrote about this contact ("met at the co-op"). */
+  about?: string;
+  ambiguous?: AmbiguousMention;
 
   /** Anything written by other subsystems. Round-tripped untouched. */
   [key: string]: unknown;
@@ -193,4 +210,19 @@ export function getCrmFields(
   const raw = readEntityMetadata(source).crm;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   return raw as CrmFields;
+}
+
+export function getAbout(source: Entity | string | null | undefined): string | null {
+  const raw = readEntityMetadata(source).about;
+  return typeof raw === "string" && raw.trim() ? raw : null;
+}
+
+export function getAmbiguousMention(
+  source: Entity | string | null | undefined
+): AmbiguousMention | null {
+  const raw = readEntityMetadata(source).ambiguous;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const m = raw as AmbiguousMention;
+  if (!m.source_id || !Array.isArray(m.candidate_ids)) return null;
+  return m;
 }
