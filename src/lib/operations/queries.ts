@@ -13,6 +13,7 @@
 
 import { db, query, queryOne } from "@/lib/db/client";
 import type { Task } from "@/lib/db/schema";
+import { stillAContactSql } from "@/lib/crm/metadata";
 import { spawnNextOccurrence } from "@/lib/tasks/complete";
 import { safeTimeZone, todayInTimeZone } from "@/lib/email/when";
 import {
@@ -230,6 +231,7 @@ export async function matchContactByName(
       `SELECT DISTINCT e.id FROM entities e
        LEFT JOIN entity_aliases a ON a.entity_id = e.id
        WHERE e.user_id = ? AND e.entity_type IN ('person', 'org')
+         AND ${stillAContactSql("e")}
          AND (lower(e.canonical_name) = ? OR lower(a.alias) = ?)
        LIMIT 2`,
       [userId, needle, needle]

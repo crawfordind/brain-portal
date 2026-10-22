@@ -69,6 +69,18 @@ export interface AmbiguousMention {
   candidate_ids: string[];
 }
 
+/**
+ * Something extraction took for a person or org that the user says is not a
+ * contact ("Tuesday market", a product, a place). The row is kept, hidden from
+ * every contact list, so the name keeps resolving here and is not re-created
+ * by the next note; notes that mention it get `tag` instead.
+ */
+export interface NotContact {
+  /** The tag the mentions were filed under. */
+  tag: string;
+  at: string;
+}
+
 export interface EntityMetadata {
   /** Written by the entity layer on insert. Preserved, never owned by the CRM. */
   aliases?: string[];
@@ -88,6 +100,8 @@ export interface EntityMetadata {
   /** Free text the user wrote about this contact ("met at the co-op"). */
   about?: string;
   ambiguous?: AmbiguousMention;
+  /** The user said this is not a contact; it lives on as a tag. See `not-contact.ts`. */
+  not_contact?: NotContact;
 
   /** Anything written by other subsystems. Round-tripped untouched. */
   [key: string]: unknown;
@@ -225,4 +239,27 @@ export function getAmbiguousMention(
   const m = raw as AmbiguousMention;
   if (!m.source_id || !Array.isArray(m.candidate_ids)) return null;
   return m;
+}
+
+export function getNotContact(
+  source: Entity | string | null | undefined
+): NotContact | null {
+  const raw = readEntityMetadata(source).not_contact;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const tag = (raw as NotContact).tag;
+  return typeof tag === "string" && tag.trim() ? (raw as NotContact) : null;
+}
+
+/** Absent means it is a contact, so no existing row changes meaning. */
+export function isNotContact(source: Entity | string | null | undefined): boolean {
+  return getNotContact(source) !== null;
+}
+
+/**
+ * SQL predicate for "still a contact", for queries that filter in SQL rather
+ * than through `isNotContact`. `alias` is the entities table's alias, if any.
+ */
+export function stillAContactSql(alias?: string): string {
+  const col = alias ? `${alias}.metadata` : "metadata";
+  return `(CASE WHEN json_valid(${col}) THEN json_extract(${col}, '$.not_contact.tag') END) IS NULL`;
 }

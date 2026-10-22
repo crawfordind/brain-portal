@@ -33,6 +33,7 @@ import {
   getMergeCandidate,
   getResolution,
   isVenture,
+  isNotContact,
   readEntityMetadata,
 } from "@/lib/crm/metadata";
 import {
@@ -138,7 +139,7 @@ export function registerCrmTools(server: McpServer, ctx: ToolContext) {
       // Resolution and compartment live in JSON, so they are filtered here,
       // where the documented defaults apply (absent means confirmed / public).
       const contacts = rows
-        .filter((e) => !isVenture(e))
+        .filter((e) => !isVenture(e) && !isNotContact(e))
         .filter((e) => {
           if (params.resolution === "all") return true;
           return getResolution(e) === params.resolution;
@@ -551,7 +552,7 @@ export function registerCrmTools(server: McpServer, ctx: ToolContext) {
 
       return ok({
         unresolved: unresolved
-          .filter((e) => getResolution(e) === "unresolved")
+          .filter((e) => getResolution(e) === "unresolved" && !isNotContact(e))
           .map((e) => {
             const ambiguous = getAmbiguousMention(e);
             return {

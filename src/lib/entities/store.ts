@@ -27,7 +27,10 @@ import {
   isNameLocked,
   isVenture,
   getResolution,
+  getNotContact,
+  isNotContact,
 } from "@/lib/crm/metadata";
+import { fileUnderTag } from "@/lib/crm/not-contact";
 import type { ExtractedEntity } from "./extractor";
 
 async function findEntityIdByKey(
@@ -98,7 +101,9 @@ async function peopleNamed(
   return rows
     .filter(
       (r) =>
-        getResolution(r.metadata) === "confirmed" && !isVenture(r.metadata)
+        getResolution(r.metadata) === "confirmed" &&
+        !isVenture(r.metadata) &&
+        !isNotContact(r.metadata)
     )
     .map((r) => ({
       id: r.id,
@@ -220,6 +225,10 @@ async function upsertEntity(
       `SELECT canonical_name, entity_type, metadata FROM entities WHERE id = ?`,
       [existingId]
     );
+
+    // The user said this name is not a contact. It resolves here, unchanged,
+    // and the caller files the source under its tag instead.
+    if (current && isNotContact(current.metadata)) return existingId;
 
     if (current) {
       const existingSubject: MergeSubject = {
@@ -406,8 +415,24 @@ export async function ingestExtractedEntities(
   for (const e of extracted) {
     const entityId = await upsertEntity(userId, e, { sourceType, sourceId });
     if (!entityId) continue;
-    entityIds.push(entityId);
-    entityIdsByKey.set(e.key, entityId);
+
+    // Not a contact: tag the source, and keep it out of co-occurrence edges
+    // and touch points. The mention is still recorded below, so restoring it
+    // as a contact brings back every note that named it.
+    const notContact = getNotContact(
+      (
+        await queryOne<{ metadata: string }>(
+          `SELECT metadata FROM entities WHERE id = ?`,
+          [entityId]
+        )
+      )?.metadata
+    );
+    if (notContact) {
+      await fileUnderTag(userId, notContact.tag, sourceType, sourceId);
+    } else {
+      entityIds.push(entityId);
+      entityIdsByKey.set(e.key, entityId);
+    }
 
     const inserted = await recordMention(
       userId,

@@ -14,6 +14,7 @@
  */
 
 import { query } from "@/lib/db/client";
+import { stillAContactSql } from "@/lib/crm/metadata";
 import { ENTITY_ROLE_EDGE_TYPES } from "@/lib/db/schema";
 import { compareItems } from "./classify";
 import { getToday, loadOpenItems } from "./queries";
@@ -98,6 +99,7 @@ export async function getRelationships(
       query<{ id: string }>(
         `SELECT id FROM entities
          WHERE user_id = ? AND entity_type IN ('person', 'org')
+           AND ${stillAContactSql()}
            AND CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.crm.next_action_at') END <= datetime('now')`,
         [userId]
       )
@@ -123,7 +125,7 @@ export async function getRelationships(
         safe(() =>
           query<EntityRow>(
             `SELECT id, canonical_name, entity_type, mention_count, metadata FROM entities
-             WHERE user_id = ? AND id IN (${placeholders})`,
+             WHERE user_id = ? AND id IN (${placeholders}) AND ${stillAContactSql()}`,
             [userId, ...ids]
           )
         ),

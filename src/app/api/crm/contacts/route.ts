@@ -8,6 +8,9 @@
  * "Rascal" or "Matt in Carlisle" captured at an event, and surfacing them in
  * the ordinary list would make it look full of junk. Ask for them explicitly
  * with resolution=unresolved, or resolution=all.
+ *
+ * Things the user said are not contacts (filed as tags) are hidden from every
+ * view except resolution=not_contact, where they can be restored.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -21,6 +24,7 @@ import {
   getMergeCandidate,
   getAmbiguousMention,
   isVenture,
+  isNotContact,
 } from "@/lib/crm/metadata";
 
 export interface ContactListItem {
@@ -81,6 +85,8 @@ export async function GET(request: NextRequest) {
     // apply consistently.
     const filtered = rows.filter((entity) => {
       if (isVenture(entity)) return false;
+      if (resolution === "not_contact") return isNotContact(entity);
+      if (isNotContact(entity)) return false;
       const state = getResolution(entity);
       if (resolution === "confirmed" && state !== "confirmed") return false;
       // "Needs review" means a decision is waiting: an unresolved capture, a
