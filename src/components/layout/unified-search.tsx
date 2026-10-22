@@ -13,13 +13,18 @@ import { useMobile } from "@/hooks/use-mobile";
 import { useNLTaskParser } from "@/lib/hooks/use-nl-task-parser";
 import { toast } from "sonner";
 import { addToQueue } from "@/lib/offline/simple-queue";
+import { queryTerms } from "@/lib/search/snippet";
+import { HighlightedText, SearchSnippet } from "@/components/search/search-snippet";
 
 interface SearchResult {
   id: string;
-  type: "note" | "task" | "capture";
+  type: "note" | "task" | "capture" | "attachment";
   title: string;
   content: string;
+  /** Plain text with highlight markers; render with SearchSnippet. */
+  snippet: string;
   slug?: string;
+  storage_url?: string;
 }
 
 interface UnifiedSearchProps {
@@ -53,6 +58,7 @@ export function UnifiedSearch({ variant = "desktop" }: UnifiedSearchProps) {
   });
 
   const parsedTask = useNLTaskParser(query, projectsData);
+  const terms = queryTerms(query);
 
   // Fix hydration issues
   useEffect(() => {
@@ -167,10 +173,15 @@ export function UnifiedSearch({ variant = "desktop" }: UnifiedSearchProps) {
           }
           break;
         case 'task':
-          router.push('/tasks');
+          router.push(`/tasks?task=${encodeURIComponent(item.item.id)}`);
           break;
         case 'capture':
           router.push('/');
+          break;
+        case 'attachment':
+          if (item.item.storage_url) {
+            window.open(item.item.storage_url, '_blank', 'noopener,noreferrer');
+          }
           break;
       }
     }
@@ -438,10 +449,15 @@ export function UnifiedSearch({ variant = "desktop" }: UnifiedSearchProps) {
                             className="w-full flex items-start gap-3 px-4 py-4 min-h-[56px] bg-background hover:bg-accent active:bg-accent"
                           >
                             <div className="flex-1 text-left min-w-0">
-                              <div className="font-medium truncate">{result.title}</div>
-                              <div className="text-xs text-muted-foreground line-clamp-2">
-                                {result.content}
-                              </div>
+                              <HighlightedText
+                                text={result.title}
+                                terms={terms}
+                                className="block font-medium truncate"
+                              />
+                              <SearchSnippet
+                                snippet={result.snippet}
+                                className="text-xs text-muted-foreground line-clamp-2"
+                              />
                             </div>
                             <div className="text-xs text-muted-foreground capitalize shrink-0">
                               {result.type}
@@ -632,10 +648,15 @@ export function UnifiedSearch({ variant = "desktop" }: UnifiedSearchProps) {
                         )}
                       >
                         <div className="flex-1 text-left min-w-0">
-                          <div className="font-medium truncate">{result.title}</div>
-                          <div className="text-xs text-muted-foreground line-clamp-1">
-                            {result.content}
-                          </div>
+                          <HighlightedText
+                            text={result.title}
+                            terms={terms}
+                            className="block font-medium truncate"
+                          />
+                          <SearchSnippet
+                            snippet={result.snippet}
+                            className="text-xs text-muted-foreground line-clamp-1"
+                          />
                         </div>
                         <div className="text-xs text-muted-foreground capitalize shrink-0">
                           {result.type}
