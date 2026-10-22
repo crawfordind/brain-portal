@@ -61,8 +61,7 @@ export function ChatSheet() {
     <Sheet open={isOpen} onOpenChange={(open) => !open && closeChat()}>
       <SheetContent
         side="bottom"
-        className="z-[101] h-[85vh] flex flex-col p-0"
-        overlayClassName="z-[100]"
+        className="h-[85dvh] flex flex-col p-0 pb-[env(safe-area-inset-bottom)]"
       >
         {showHistory ? (
           <ChatHistory />

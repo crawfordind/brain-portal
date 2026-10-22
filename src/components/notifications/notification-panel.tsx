@@ -173,7 +173,7 @@ export function NotificationPanel({ isOpen, onClose }: NotificationPanelProps) {
           </div>
         </SheetHeader>
 
-        <ScrollArea className="h-[calc(100vh-60px)]">
+        <ScrollArea className="h-[calc(100dvh-60px)]">
           {isLoading ? (
             <div className="p-8 text-center">
               <div className="animate-pulse space-y-3">

@@ -157,7 +157,7 @@ export function SystemHealthPanel({
           </div>
         </SheetHeader>
 
-        <ScrollArea className="h-[calc(100vh-60px)]">
+        <ScrollArea className="h-[calc(100dvh-60px)]">
           {visibleIssues.length === 0 ? (
             <div className="p-12 text-center">
               <CheckCircle2 className="h-10 w-10 mx-auto text-green-500/40 mb-3" />

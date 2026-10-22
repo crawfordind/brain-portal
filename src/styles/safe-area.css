@@ -4,3 +4,13 @@
   --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-inset-left: env(safe-area-inset-left, 0px);
 }
+
+/*
+ * The mobile bottom nav's full height: 3.5rem of buttons plus the home
+ * indicator inset (at least 0.75rem). Anything pinned to the bottom of the
+ * screen on mobile offsets from this, so it clears the nav on every phone
+ * instead of guessing a fixed pixel height.
+ */
+:root {
+  --mobile-nav-height: calc(3.5rem + max(0.75rem, var(--safe-area-inset-bottom)));
+}

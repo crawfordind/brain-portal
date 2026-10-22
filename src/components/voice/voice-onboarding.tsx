@@ -87,7 +87,7 @@ export function VoiceOnboarding() {
   // Progressive tip
   if (currentTip) {
     return (
-      <div className="fixed bottom-32 right-4 lg:bottom-24 z-50 max-w-sm animate-in slide-in-from-bottom-2 fade-in">
+      <div className="fixed bottom-[calc(var(--mobile-nav-height)+3.75rem)] right-4 lg:bottom-24 z-50 max-w-sm animate-in slide-in-from-bottom-2 fade-in">
         <Card className="shadow-lg border-2">
           <CardHeader className="pb-3">
             <div className="flex items-start justify-between gap-2">

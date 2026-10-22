@@ -228,7 +228,7 @@ export function TaskCalendarView({
   // Mobile: clean agenda view (no DnD)
   if (!isDesktop) {
     return (
-      <div className="flex flex-col h-[calc(100vh-12rem)]">
+      <div className="flex flex-col h-[calc(100dvh-12rem)]">
         {/* Week navigation */}
         <div className="flex items-center justify-between p-3 border-b">
           <div className="flex items-center gap-2">
@@ -262,7 +262,7 @@ export function TaskCalendarView({
   // Desktop: full DnD calendar
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-    <div className="flex flex-col lg:flex-row h-[calc(100vh-10rem)]">
+    <div className="flex flex-col lg:flex-row h-[calc(100dvh-10rem)]">
       {/* Main calendar area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Week navigation */}

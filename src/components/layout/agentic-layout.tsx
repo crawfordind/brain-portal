@@ -32,7 +32,7 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
   const pathname = usePathname();
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-dvh">
       {/* Desktop sidebar - streamlined */}
       <div className="hidden lg:block">
         <AgenticSidebar />
@@ -81,7 +81,7 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
           <main className="flex-1 overflow-auto">
             <div
               className={cn(
-                "container py-4 px-4 md:py-5 md:px-6 lg:px-8 pb-28 lg:pb-6",
+                "container py-4 px-4 md:py-5 md:px-6 lg:px-8 pb-[calc(var(--mobile-nav-height)+2.5rem)] lg:pb-6",
                 contentWidthClass(pathname)
               )}
             >

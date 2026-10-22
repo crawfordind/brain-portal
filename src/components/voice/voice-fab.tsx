@@ -495,7 +495,7 @@ export function VoiceFAB({ className, onCapture }: VoiceFABProps) {
   const positionClasses = cn(
     "fixed z-50 flex items-center justify-center rounded-full shadow-lg transition-all duration-300 ease-in-out focus:outline-none focus:ring-4 focus:ring-primary/50",
     // Mobile: above bottom nav (80px from bottom), top-right when keyboard open
-    "bottom-20 right-4 lg:bottom-6",
+    "bottom-[calc(var(--mobile-nav-height)+0.75rem)] right-4 lg:bottom-6",
     isKeyboardOpen && "!top-4 !bottom-auto",
     // Size: shrink on scroll
     isScrolled && !isRecording ? "w-12 h-12" : "w-16 h-16",
@@ -522,7 +522,7 @@ export function VoiceFAB({ className, onCapture }: VoiceFABProps) {
               onClick={openPalette}
               className={cn(
                 "fixed z-50 flex items-center justify-center rounded-full shadow-lg transition-all duration-300 ease-in-out focus:outline-none focus:ring-4 focus:ring-primary/50",
-                "bottom-20 right-4 lg:bottom-6 w-16 h-16",
+                "bottom-[calc(var(--mobile-nav-height)+0.75rem)] right-4 lg:bottom-6 w-16 h-16",
                 "bg-primary hover:bg-primary/90 text-primary-foreground",
                 // Hide on desktop (lg+) since search bar is always visible
                 "lg:hidden",
@@ -604,7 +604,7 @@ export function VoiceFAB({ className, onCapture }: VoiceFABProps) {
 
       {/* Error message */}
       {error && (
-        <div className="fixed bottom-36 right-4 lg:bottom-24 z-50 max-w-[280px] bg-destructive/10 border border-destructive/20 rounded-lg p-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+        <div className="fixed bottom-[calc(var(--mobile-nav-height)+4.75rem)] right-4 lg:bottom-24 z-50 max-w-[280px] bg-destructive/10 border border-destructive/20 rounded-lg p-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
           <p className="text-sm text-destructive">{error}</p>
           <button
             onClick={() => setError(null)}

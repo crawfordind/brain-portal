@@ -69,7 +69,7 @@ export function BacklogSheet({ tasks, onTaskClick, isOpen = true, onOpenChange }
             setSheetState("peek");
             onOpenChange?.(true);
           }}
-          className="fixed bottom-36 right-20 h-14 w-14 rounded-full shadow-2xl ring-2 ring-primary/20 z-[110]"
+          className="fixed bottom-[calc(var(--mobile-nav-height)+4.75rem)] right-20 h-14 w-14 rounded-full shadow-2xl ring-2 ring-primary/20 z-[110]"
           size="icon"
         >
           <span className="text-base">📋</span>

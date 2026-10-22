@@ -108,7 +108,7 @@ export function AgenticBottomNav() {
     <>
       {/* Bottom Sheet overlay */}
       {moreOpen && (
-        <div className="fixed inset-0 z-[101]" onClick={() => setMoreOpen(false)}>
+        <div className="fixed inset-0 z-50" onClick={() => setMoreOpen(false)}>
           {/* Backdrop */}
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
           {/* Sheet */}
@@ -192,9 +192,9 @@ export function AgenticBottomNav() {
       )}
 
       {/* Bottom nav bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-[100] border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div
-          className="grid grid-cols-5 items-end h-18 px-2"
+          className="grid grid-cols-5 items-end h-(--mobile-nav-height) px-2"
           style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
         >
           {/* Tasks */}
