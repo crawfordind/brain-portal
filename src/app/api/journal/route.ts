@@ -2,7 +2,8 @@
  * Journal API - Agentic-first journaling
  *
  * GET: Fetch journal entries for a date, date range, or month
- * POST: Create a journal entry (auto-creates daily journal note if needed)
+ * POST: Create a journal entry (auto-creates daily journal note if needed).
+ *       Writing is in src/lib/journal/store.ts, shared with the stream.
  *
  * The journal system transforms the daily note concept into an intuitive
  * journaling experience. Users just say "today I planted tomatoes" and
@@ -11,104 +12,24 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { db, queryAll, queryOne } from "@/lib/db/client";
+import { db } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
-import type { JournalEntry, Note } from "@/lib/db/schema";
-import { format } from "date-fns";
-import { v4 as uuid } from "uuid";
+import type { JournalEntry } from "@/lib/db/schema";
 import { complete } from "@/lib/ai/client";
+import { isValidJournalDate, normalizeCategory, normalizeTags } from "@/lib/journal/entry";
+import {
+  getStoredTimeZone,
+  JournalInputError,
+  saveJournalEntry,
+} from "@/lib/journal/store";
 
-/**
- * AI-powered journal entry categorization and enrichment.
- * Detects category, mood, tags, and location from natural language.
- */
-async function categorizeEntry(entryText: string): Promise<{
-  category: string;
-  tags: string[];
-  mood: string | null;
-  location: string | null;
-  cleanedText: string;
-  title: string;
-}> {
-  // Fast-path: rule-based detection for common patterns
-  const lower = entryText.toLowerCase();
-
-  const categoryPatterns: Array<{ pattern: RegExp; category: string }> = [
-    { pattern: /\b(bought|purchased|ordered|paid|spent|cost|price|shopping)\b/, category: "purchase" },
-    { pattern: /\b(visited|went to|traveled|trip|flew|drove to|road trip|vacation|hotel|airport)\b/, category: "travel" },
-    { pattern: /\b(planted|gardened|watered|harvested|pruned|mowed|weeded|composted|fertilized)\b/, category: "maintenance" },
-    { pattern: /\b(installed|fixed|repaired|replaced|upgraded|updated|maintained|cleaned|organized)\b/, category: "maintenance" },
-    { pattern: /\b(cooked|ate|recipe|meal|breakfast|lunch|dinner|restaurant|cafe)\b/, category: "personal" },
-    { pattern: /\b(workout|exercised|ran|jogged|gym|yoga|walked|hiked|swam|biked|weight|health|doctor|dentist|medicine)\b/, category: "health" },
-    { pattern: /\b(learned|studied|read|course|tutorial|class|lecture|book|article|discovery)\b/, category: "learning" },
-    { pattern: /\b(met with|meeting|call with|talked to|hung out|party|dinner with|coffee with|friends|family)\b/, category: "social" },
-    { pattern: /\b(deployed|shipped|coded|built|debugged|released|merged|committed|sprint|standup)\b/, category: "work" },
-    { pattern: /\b(project|milestone|launched|completed|finished|delivered)\b/, category: "project" },
-  ];
-
-  let detectedCategory = "general";
-  for (const { pattern, category } of categoryPatterns) {
-    if (pattern.test(lower)) {
-      detectedCategory = category;
-      break;
-    }
+function safeJson<T>(raw: unknown, fallback: T): T {
+  if (typeof raw !== "string") return (raw as T) ?? fallback;
+  try {
+    return JSON.parse(raw || "null") ?? fallback;
+  } catch {
+    return fallback;
   }
-
-  // Detect mood from text
-  const moodPatterns: Array<{ pattern: RegExp; mood: string }> = [
-    { pattern: /\b(amazing|wonderful|fantastic|excited|thrilled|overjoyed|ecstatic)\b/, mood: "great" },
-    { pattern: /\b(good|happy|pleased|satisfied|nice|enjoyed|glad|cheerful)\b/, mood: "good" },
-    { pattern: /\b(okay|fine|alright|decent|not bad)\b/, mood: "neutral" },
-    { pattern: /\b(tired|stressed|frustrated|annoyed|difficult|tough|hard|exhausted)\b/, mood: "low" },
-    { pattern: /\b(terrible|awful|horrible|angry|upset|sad|depressed|anxious)\b/, mood: "bad" },
-  ];
-
-  let mood: string | null = null;
-  for (const { pattern, mood: m } of moodPatterns) {
-    if (pattern.test(lower)) {
-      mood = m;
-      break;
-    }
-  }
-
-  // Extract tags from common nouns/activities
-  const tagPatterns = [
-    /\b(garden(?:ing)?|plants?|flowers?|vegetables?|herbs?)\b/i,
-    /\b(cooking|baking|recipe)\b/i,
-    /\b(exercise|fitness|running|yoga|gym)\b/i,
-    /\b(reading|books?|article)\b/i,
-    /\b(coding|programming|development)\b/i,
-    /\b(shopping|groceries)\b/i,
-    /\b(travel|vacation|trip)\b/i,
-    /\b(meeting|work|office)\b/i,
-    /\b(family|friends|social)\b/i,
-    /\b(health|medical|doctor)\b/i,
-    /\b(home improvement|renovation|repair)\b/i,
-  ];
-
-  const tags: string[] = [];
-  for (const pattern of tagPatterns) {
-    const match = lower.match(pattern);
-    if (match) {
-      tags.push(match[1].toLowerCase());
-    }
-  }
-
-  // Generate a clean title from the entry
-  const title = entryText
-    .replace(/^(today i|i |this morning i|this afternoon i|this evening i|just )/i, "")
-    .split(/[.\n]/)[0]
-    ?.trim()
-    .slice(0, 60) || entryText.slice(0, 60);
-
-  return {
-    category: detectedCategory,
-    tags: [...new Set(tags)],
-    mood,
-    location: null, // Could be enhanced with location extraction
-    cleanedText: entryText,
-    title: title.charAt(0).toUpperCase() + title.slice(1),
-  };
 }
 
 // GET /api/journal - Get journal entries
@@ -123,8 +44,12 @@ export async function GET(request: NextRequest) {
   const month = searchParams.get("month"); // YYYY-MM format
   const year = searchParams.get("year");
   const category = searchParams.get("category");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 200);
-  const offset = parseInt(searchParams.get("offset") || "0");
+  const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "50") || 50, 1), 200);
+  const offset = Math.max(parseInt(searchParams.get("offset") || "0") || 0, 0);
+
+  if (date && !isValidJournalDate(date)) {
+    return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
+  }
 
   let query = `
     SELECT je.*, n.title as note_title, n.content as note_content
@@ -153,7 +78,9 @@ export async function GET(request: NextRequest) {
   query += " ORDER BY je.date DESC, je.created_at DESC LIMIT ? OFFSET ?";
   args.push(limit, offset);
 
-  const [entriesResult, monthsResult, categoryResult] = await db.batch([
+  let batch;
+  try {
+    batch = await db.batch([
     { sql: query, args },
     {
       sql: `SELECT SUBSTR(date, 1, 7) as month, COUNT(*) as count
@@ -167,7 +94,15 @@ export async function GET(request: NextRequest) {
             GROUP BY category ORDER BY count DESC`,
       args: [user.id],
     },
-  ]);
+  ], "read");
+  } catch (error) {
+    console.error("[journal] GET failed:", error);
+    return NextResponse.json(
+      { error: "Couldn't load the journal. Try again in a moment." },
+      { status: 500 }
+    );
+  }
+  const [entriesResult, monthsResult, categoryResult] = batch;
 
   const entries = entriesResult.rows as unknown as (JournalEntry & { note_title: string; note_content: string })[];
   const months = monthsResult.rows as unknown as { month: string; count: number }[];
@@ -176,8 +111,8 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     entries: entries.map(e => ({
       ...e,
-      tags: typeof e.tags === "string" ? JSON.parse(e.tags || "[]") : e.tags,
-      metadata: typeof e.metadata === "string" ? JSON.parse(e.metadata || "{}") : e.metadata,
+      tags: safeJson<string[]>(e.tags, []),
+      metadata: safeJson<Record<string, unknown>>(e.metadata, {}),
     })),
     months,
     categoryCounts,
@@ -186,166 +121,81 @@ export async function GET(request: NextRequest) {
 }
 
 // POST /api/journal - Create a journal entry
+//
+// Body: { content, date?, clientId?, timeZone?, category?, mood?, tags?, location?, useAI? }
+// Send the same clientId when retrying: the entry is written at most once.
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
   if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "You're signed out. Sign in again to save." }, { status: 401 });
   }
 
-  const body = await request.json();
-  const {
-    content,
-    date: dateParam,
-    category: categoryOverride,
-    mood: moodOverride,
-    location,
-    tags: tagsOverride,
-    useAI = false,
-  } = body;
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+    if (!body || typeof body !== "object") throw new Error("not an object");
+  } catch {
+    return NextResponse.json({ error: "The request body must be JSON." }, { status: 400 });
+  }
 
-  if (!content?.trim()) {
+  const content = typeof body.content === "string" ? body.content : "";
+  if (!content.trim()) {
     return NextResponse.json({ error: "Content is required" }, { status: 400 });
   }
 
-  const date = dateParam || format(new Date(), "yyyy-MM-dd");
-  const dateTitle = format(new Date(date + "T12:00:00"), "EEEE, MMMM d, yyyy");
+  let category = typeof body.category === "string" ? body.category : null;
+  let mood = typeof body.mood === "string" ? body.mood : null;
+  let tags: unknown = Array.isArray(body.tags) ? body.tags : undefined;
 
-  // Categorize the entry
-  let categorization = await categorizeEntry(content);
-
-  // Use AI for richer categorization if requested
-  if (useAI) {
+  // Optional model enrichment. Bounded and best-effort: the entry is saved
+  // with the rule-based reading whatever the model does.
+  if (body.useAI === true && !category) {
     try {
-      const aiPrompt = `Analyze this journal entry and return JSON with:
+      const aiResponse = await complete(
+        `Analyze this journal entry and return JSON with:
 - category: one of [general, personal, work, health, travel, purchase, project, learning, social, maintenance]
 - tags: array of 1-3 relevant tags
 - mood: one of [great, good, neutral, low, bad] or null
-- title: a concise title (max 60 chars) summarizing the entry
 
-Journal entry: "${content}"
+Journal entry: ${JSON.stringify(content.slice(0, 4000))}
 
-Respond with JSON only.`;
-      const aiResponse = await complete(aiPrompt, {
-        purpose: "Journal reflection",
-        slot: "fast",
-        userId: user.id,
-        maxTokens: 200,
-        temperature: 0.3,
-      });
-      const cleaned = aiResponse.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      const parsed = JSON.parse(cleaned);
-      categorization = {
-        ...categorization,
-        category: parsed.category || categorization.category,
-        tags: parsed.tags || categorization.tags,
-        mood: parsed.mood || categorization.mood,
-        title: parsed.title || categorization.title,
-      };
+Respond with JSON only.`,
+        { purpose: "Journal reflection", slot: "fast", userId: user.id, maxTokens: 200, temperature: 0.3 }
+      );
+      const parsed = JSON.parse(aiResponse.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
+      if (typeof parsed?.category === "string") category = normalizeCategory(parsed.category);
+      if (typeof parsed?.mood === "string") mood = parsed.mood;
+      if (Array.isArray(parsed?.tags)) tags = normalizeTags(parsed.tags);
     } catch {
-      // Fall back to rule-based categorization
+      // Rule-based categorization stands.
     }
   }
 
-  // Apply overrides
-  const finalCategory = categoryOverride || categorization.category;
-  const finalMood = moodOverride || categorization.mood;
-  const finalTags = tagsOverride || categorization.tags;
-
-  // Find or create today's journal note
-  const journalSlug = `journal-${date}`;
-  let note = await queryOne<Note>(
-    "SELECT * FROM notes WHERE user_id = ? AND slug = ?",
-    [user.id, journalSlug]
-  );
-
-  if (!note) {
-    // Create the journal note for this date
-    const noteId = uuid();
-    const initialContent = `# Journal - ${dateTitle}\n\n---\n\n### ${format(new Date(), "h:mm a")}\n${content}\n`;
-
-    await db.execute({
-      sql: `INSERT INTO notes (id, user_id, title, slug, content, content_plain, note_type, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, 'journal', ?)`,
-      args: [
-        noteId,
-        user.id,
-        `Journal - ${dateTitle}`,
-        journalSlug,
-        initialContent,
-        content,
-        JSON.stringify({ journal_date: date }),
-      ],
+  try {
+    const timeZone =
+      (typeof body.timeZone === "string" ? body.timeZone : null) ??
+      (await getStoredTimeZone(user.id));
+    const result = await saveJournalEntry({
+      userId: user.id,
+      text: content,
+      date: typeof body.date === "string" ? body.date : null,
+      clientId: typeof body.clientId === "string" ? body.clientId : null,
+      timeZone,
+      category,
+      mood,
+      tags,
+      location: typeof body.location === "string" ? body.location : null,
+      metadata: { source: "journal" },
     });
-
-    note = await queryOne<Note>("SELECT * FROM notes WHERE id = ?", [noteId]);
-  } else {
-    // Append to existing journal note
-    const timestamp = format(new Date(), "h:mm a");
-    const appendText = `\n\n### ${timestamp}\n${content}\n`;
-    const newContent = (note.content || "") + appendText;
-    const newPlain = (note.content_plain || "") + "\n" + content;
-
-    await db.execute({
-      sql: `UPDATE notes SET content = ?, content_plain = ?, updated_at = datetime('now') WHERE id = ?`,
-      args: [newContent, newPlain, note.id],
-    });
+    return NextResponse.json(result, { status: result.duplicate ? 200 : 201 });
+  } catch (error) {
+    if (error instanceof JournalInputError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    console.error("[journal] save failed:", error);
+    return NextResponse.json(
+      { error: "The journal couldn't save right now. Your entry is kept on this device and will retry." },
+      { status: 500 }
+    );
   }
-
-  if (!note) {
-    return NextResponse.json({ error: "Failed to create journal note" }, { status: 500 });
-  }
-
-  // Create the journal entry record
-  const entryId = uuid();
-  await db.execute({
-    sql: `INSERT INTO journal_entries (id, note_id, user_id, date, entry_text, category, tags, mood, location, metadata)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [
-      entryId,
-      note.id,
-      user.id,
-      date,
-      content,
-      finalCategory,
-      JSON.stringify(finalTags),
-      finalMood,
-      location || null,
-      JSON.stringify({
-        categorization,
-        timestamp: new Date().toISOString(),
-      }),
-    ],
-  });
-
-  // Also create/update the daily_notes record for backward compatibility
-  const existingDaily = await queryOne(
-    "SELECT id FROM daily_notes WHERE user_id = ? AND date = ?",
-    [user.id, date]
-  );
-
-  if (!existingDaily) {
-    await db.execute({
-      sql: `INSERT INTO daily_notes (user_id, date, note_id, metadata)
-            VALUES (?, ?, ?, ?)`,
-      args: [user.id, date, note.id, JSON.stringify({ is_journal: true })],
-    });
-  }
-
-  return NextResponse.json({
-    entry: {
-      id: entryId,
-      note_id: note.id,
-      date,
-      entry_text: content,
-      category: finalCategory,
-      tags: finalTags,
-      mood: finalMood,
-      title: categorization.title,
-    },
-    note: {
-      id: note.id,
-      title: note.title,
-      slug: note.slug,
-    },
-  }, { status: 201 });
 }

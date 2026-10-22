@@ -807,6 +807,34 @@ mark[data-intent][data-note] {
     letter-spacing: 0.04em;
   }
 
+  /* An entry written but not yet confirmed by the server. It stays on the page
+     (and on the device) until it is, so nothing typed can vanish. */
+  .bp-notebook-page > .bp-entry-pending {
+    opacity: 0.7;
+  }
+
+  .bp-notebook-page .bp-entry-failed {
+    color: var(--destructive);
+    white-space: normal;
+  }
+
+  /* Inline actions on a failed entry. Vertical padding on an inline element
+     does not grow the line box, so the tap target is ~44px while the line
+     stays on the rule. */
+  .bp-notebook-page .bp-entry-action {
+    display: inline;
+    padding: 14px 6px;
+    margin: -14px -2px;
+    background: none;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    line-height: 1;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+
   /* The composer is the next blank line on the page, not a box floating above
      it — so it is transparent, unbordered, and shares the writing rhythm. */
   .bp-notebook-page > .bp-compose {

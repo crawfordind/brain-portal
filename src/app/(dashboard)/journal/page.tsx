@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -12,13 +12,21 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
-  Loader2,
   Plus,
   Send,
   Sparkles,
   BarChart3,
 } from "lucide-react";
 import { format, addDays, subDays } from "date-fns";
+import { useJournalOutbox } from "@/hooks/use-journal-outbox";
+import { isValidJournalDate, MAX_ENTRY_CHARS } from "@/lib/journal/entry";
+import {
+  readDraft,
+  remove as removeFromOutbox,
+  writeDraft,
+  type OutboxEntry,
+} from "@/lib/journal/outbox";
+import { parseDbTimestamp } from "@/lib/stream/grouping";
 
 interface JournalEntry {
   id: string;
@@ -93,8 +101,6 @@ export default function JournalPageWrapper() {
 function JournalPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const queryClient = useQueryClient();
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const dateParam = searchParams.get("date");
   const viewParam = searchParams.get("view") || "daily";
@@ -103,43 +109,36 @@ function JournalPage() {
   const entryParam = searchParams.get("entry");
   const isNew = searchParams.get("new") === "true";
 
-  const [currentDate, setCurrentDate] = useState(
-    dateParam || format(new Date(), "yyyy-MM-dd")
-  );
+  // The URL is the one source of truth for the day, so Back/Forward and links
+  // always show the page they name. An invalid date falls back to today.
+  const today = format(new Date(), "yyyy-MM-dd");
+  const currentDate = isValidJournalDate(dateParam) ? dateParam : today;
+
   const [view, setView] = useState<"daily" | "monthly">(
     viewParam === "monthly" ? "monthly" : "daily"
   );
-  const [input, setInput] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(
-    monthParam ? parseInt(monthParam) : new Date().getMonth() + 1
-  );
-  const [selectedYear, setSelectedYear] = useState(
-    yearParam ? parseInt(yearParam) : new Date().getFullYear()
-  );
-
-  // Auto-focus and pre-fill entry from URL params
-  useEffect(() => {
-    if (entryParam) {
-      setInput(decodeURIComponent(entryParam));
-      // Auto-submit the entry from URL
-      submitEntry(decodeURIComponent(entryParam));
-    } else if (isNew) {
-      inputRef.current?.focus();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entryParam, isNew]);
-
-  // Fetch daily journal entries
-  const { data: dailyData, isLoading: dailyLoading } = useQuery({
-    queryKey: ["journal", "daily", currentDate],
-    queryFn: async () => {
-      const res = await fetch(`/api/journal?date=${currentDate}`);
-      if (!res.ok) throw new Error("Failed to fetch journal entries");
-      return res.json();
-    },
-    enabled: view === "daily",
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const m = parseInt(monthParam || "");
+    return m >= 1 && m <= 12 ? m : new Date().getMonth() + 1;
   });
+  const [selectedYear, setSelectedYear] = useState(() => {
+    const y = parseInt(yearParam || "");
+    return y >= 2000 && y <= 2100 ? y : new Date().getFullYear();
+  });
+
+  const { outbox, submit, retry } = useJournalOutbox();
+
+  // "?entry=" comes from the command palette and voice. Queue it exactly once
+  // (Strict Mode runs effects twice; a refresh would otherwise re-submit it),
+  // then drop it from the URL. searchParams is already decoded: decoding it
+  // again threw on any entry containing "%".
+  const handledEntry = useRef<string | null>(null);
+  useEffect(() => {
+    if (!entryParam || handledEntry.current === entryParam) return;
+    handledEntry.current = entryParam;
+    submit(entryParam, currentDate);
+    router.replace(`/journal?date=${currentDate}`, { scroll: false });
+  }, [entryParam, currentDate, submit, router]);
 
   // Fetch monthly journal data
   const { data: monthlyData, isLoading: monthlyLoading } = useQuery({
@@ -154,34 +153,7 @@ function JournalPage() {
     enabled: view === "monthly",
   });
 
-  // Submit journal entry
-  const submitEntry = useCallback(async (text?: string) => {
-    const entryText = text || input.trim();
-    if (!entryText || isSubmitting) return;
-
-    setIsSubmitting(true);
-    try {
-      const res = await fetch("/api/journal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: entryText,
-          date: currentDate,
-        }),
-      });
-
-      if (res.ok) {
-        setInput("");
-        queryClient.invalidateQueries({ queryKey: ["journal"] });
-      } else {
-        toast.error("Failed to save journal entry. Please try again.");
-      }
-    } catch {
-      toast.error("Network error. Check your connection and try again.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [input, isSubmitting, currentDate, queryClient]);
+  const queryClient = useQueryClient();
 
   // Compile monthly journal
   const compileMutation = useMutation({
@@ -195,23 +167,29 @@ function JournalPage() {
           useAI: true,
         }),
       });
-      if (!res.ok) throw new Error("Failed to compile monthly journal");
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "Failed to compile monthly journal");
+      }
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["journal", "monthly"] });
     },
-    onError: () => {
-      toast.error("Failed to compile monthly journal. Please try again.");
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to compile monthly journal. Please try again.");
     },
   });
+
+  const goToDate = (date: string) => {
+    setView("daily");
+    router.push(`/journal?date=${date}`, { scroll: false });
+  };
 
   const navigateDay = (direction: "prev" | "next") => {
     const d = new Date(currentDate + "T12:00:00");
     const newDate = direction === "prev" ? subDays(d, 1) : addDays(d, 1);
-    const formatted = format(newDate, "yyyy-MM-dd");
-    setCurrentDate(formatted);
-    router.push(`/journal?date=${formatted}`, { scroll: false });
+    goToDate(format(newDate, "yyyy-MM-dd"));
   };
 
   const navigateMonth = (direction: "prev" | "next") => {
@@ -228,30 +206,9 @@ function JournalPage() {
     setSelectedYear(y);
   };
 
-  // Grow the composer to fit its content in *whole* writing lines, so it reads
-  // as the next lines of the page instead of a box with a scrollbar in it.
-  // Rounding up to a whole line matters: the page's ruling is painted per block
-  // on a fixed rhythm, so a composer sized to a fractional line shifts every
-  // rule beneath it off the lines above.
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    const line = parseFloat(getComputedStyle(el).lineHeight) || 32;
-    el.style.height = "auto";
-    const lines = Math.max(1, Math.ceil(el.scrollHeight / line));
-    el.style.height = `${lines * line}px`;
-  }, [input]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      submitEntry();
-    }
-  };
-
-  const entries: JournalEntry[] = dailyData?.entries || [];
   const dateDisplay = format(new Date(currentDate + "T12:00:00"), "EEEE, MMMM d, yyyy");
-  const isToday = currentDate === format(new Date(), "yyyy-MM-dd");
+  const isToday = currentDate === today;
+  const waitingElsewhere = outbox.filter((e) => e.date !== currentDate).length;
 
   const MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
@@ -318,11 +275,7 @@ function JournalPage() {
                   variant="ghost"
                   size="sm"
                   className="h-9 px-2 text-xs"
-                  onClick={() => {
-                    const today = format(new Date(), "yyyy-MM-dd");
-                    setCurrentDate(today);
-                    router.push(`/journal?date=${today}`, { scroll: false });
-                  }}
+                  onClick={() => goToDate(format(new Date(), "yyyy-MM-dd"))}
                 >
                   Today
                 </Button>
@@ -339,85 +292,17 @@ function JournalPage() {
             </div>
           </div>
 
-          {/* The page itself */}
-          <div className="bp-notebook-page bp-notebook-page-full-rule">
-            {dailyLoading ? (
-              <>
-                <p className="bp-page-note">Opening the page&hellip;</p>
-              </>
-            ) : (
-              <>
-                {entries.length === 0 && (
-                  <p className="bp-page-note">
-                    {isToday
-                      ? "Nothing written yet today."
-                      : `Nothing was written on ${format(new Date(currentDate + "T12:00:00"), "MMMM d")}.`}
-                  </p>
-                )}
-
-                {entries.map((entry) => (
-                  <p key={entry.id} className="bp-entry">
-                    {entry.entry_text}{" "}
-                    <span className="bp-entry-meta">
-                      &mdash; {format(new Date(entry.created_at), "h:mm a")}
-                      {entry.category && entry.category !== "general" && (
-                        <>
-                          {" · "}
-                          <span className="bp-entry-cat">{entry.category}</span>
-                        </>
-                      )}
-                      {entry.mood && <>{" · "}{entry.mood}</>}
-                      {entry.tags && entry.tags.length > 0 && (
-                        <>{" · "}{entry.tags.join(", ")}</>
-                      )}
-                    </span>
-                  </p>
-                ))}
-
-                {/* The composer is simply the next line on the page. */}
-                <div className="bp-compose">
-                  <textarea
-                    ref={inputRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={
-                      isToday
-                        ? "What happened today?"
-                        : `What happened on ${format(new Date(currentDate + "T12:00:00"), "MMMM d")}?`
-                    }
-                    className="bp-compose-input"
-                    rows={1}
-                    disabled={isSubmitting}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Below the page: the actions that are about the page, not on it. */}
-          <div className="flex items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
-            <span>
-              {entries.length > 0
-                ? `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`
-                : "Enter to save · Shift+Enter for a new line"}
-            </span>
-            <Button
-              size="sm"
-              className="h-8"
-              onClick={() => submitEntry()}
-              disabled={!input.trim() || isSubmitting}
-            >
-              {isSubmitting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  <Send className="mr-1.5 h-3.5 w-3.5" />
-                  Add entry
-                </>
-              )}
-            </Button>
-          </div>
+          {/* Keyed by day: each day has its own draft, restored on return. */}
+          <DailyPage
+            key={currentDate}
+            date={currentDate}
+            isToday={isToday}
+            autoFocus={isNew}
+            outbox={outbox}
+            waitingElsewhere={waitingElsewhere}
+            onSubmit={submit}
+            onRetry={retry}
+          />
         </div>
       )}
 
@@ -594,13 +479,7 @@ function JournalPage() {
                   ).map(([date, dayEntries]) => (
                     <div key={date}>
                       <button
-                        onClick={() => {
-                          setCurrentDate(date);
-                          setView("daily");
-                          router.push(`/journal?date=${date}`, {
-                            scroll: false,
-                          });
-                        }}
+                        onClick={() => goToDate(date)}
                         className="mb-2 text-xs font-medium text-teal-600 hover:underline dark:text-teal-400"
                       >
                         {format(
@@ -641,10 +520,7 @@ function JournalPage() {
                     className="mt-4"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      setView("daily");
-                      setCurrentDate(format(new Date(), "yyyy-MM-dd"));
-                    }}
+                    onClick={() => goToDate(format(new Date(), "yyyy-MM-dd"))}
                   >
                     <Plus className="mr-1.5 h-4 w-4" />
                     Start Today
@@ -687,5 +563,206 @@ function JournalPage() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * One day's sheet: what was saved, what is still on its way, and the line to
+ * write the next entry on.
+ */
+function DailyPage({
+  date,
+  isToday,
+  autoFocus,
+  outbox,
+  waitingElsewhere,
+  onSubmit,
+  onRetry,
+}: {
+  date: string;
+  isToday: boolean;
+  autoFocus: boolean;
+  outbox: OutboxEntry[];
+  waitingElsewhere: number;
+  onSubmit: (text: string, date: string) => void;
+  onRetry: (entry: OutboxEntry) => void;
+}) {
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // The draft survives refreshes and day changes. Only rendered once the
+  // query has loaded, so this never runs during server rendering.
+  const [input, setInput] = useState(() => readDraft(date));
+
+  const { data: dailyData, isLoading, isError, refetch } = useQuery({
+    queryKey: ["journal", "daily", date],
+    queryFn: async () => {
+      const res = await fetch(`/api/journal?date=${date}`);
+      if (!res.ok) throw new Error("Failed to fetch journal entries");
+      return res.json() as Promise<{ entries: JournalEntry[] }>;
+    },
+    retry: 2,
+  });
+
+  const changeInput = (value: string) => {
+    setInput(value);
+    writeDraft(date, value);
+  };
+
+  const submit = () => {
+    if (!input.trim()) return;
+    onSubmit(input, date);
+    changeInput("");
+    inputRef.current?.focus();
+  };
+
+  // Put a failed entry back in the composer to change it (e.g. too long).
+  const editBack = (entry: OutboxEntry) => {
+    changeInput(input.trim() ? `${input.trimEnd()}\n${entry.text}` : entry.text);
+    removeFromOutbox(entry.id);
+    inputRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (autoFocus && !isLoading) inputRef.current?.focus();
+  }, [autoFocus, isLoading]);
+
+  // Grow the composer to fit its content in *whole* writing lines, so it reads
+  // as the next lines of the page instead of a box with a scrollbar in it.
+  // Rounding up to a whole line matters: the page's ruling is painted per block
+  // on a fixed rhythm, so a composer sized to a fractional line shifts every
+  // rule beneath it off the lines above.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const line = parseFloat(getComputedStyle(el).lineHeight) || 32;
+    el.style.height = "auto";
+    const lines = Math.max(1, Math.ceil(el.scrollHeight / line));
+    el.style.height = `${lines * line}px`;
+  }, [input, isLoading]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter while an IME is composing (Japanese, Chinese, Korean, some
+    // Android keyboards) confirms the composition; it must not save.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  };
+
+  // Read top to bottom like a page, with the composer as the next line.
+  const entries = [...(dailyData?.entries ?? [])].sort((a, b) =>
+    (parseDbTimestamp(a.created_at)?.getTime() ?? 0) -
+    (parseDbTimestamp(b.created_at)?.getTime() ?? 0)
+  );
+  const savedIds = new Set(entries.map((e) => e.id));
+  const pending = outbox.filter((e) => e.date === date && !savedIds.has(e.id));
+  const failedCount = pending.filter((e) => e.status === "failed").length;
+  const dayLabel = format(new Date(date + "T12:00:00"), "MMMM d");
+
+  return (
+    <>
+      <div className="bp-notebook-page bp-notebook-page-full-rule">
+        {isLoading ? (
+          <p className="bp-page-note">Opening the page&hellip;</p>
+        ) : (
+          <>
+            {isError && (
+              <p className="bp-page-note" role="alert">
+                Couldn&rsquo;t load this page.{" "}
+                <button type="button" className="bp-entry-action" onClick={() => refetch()}>
+                  Try again
+                </button>{" "}
+                You can still write; entries save as soon as the connection is back.
+              </p>
+            )}
+
+            {!isError && entries.length === 0 && pending.length === 0 && (
+              <p className="bp-page-note">
+                {isToday ? "Nothing written yet today." : `Nothing was written on ${dayLabel}.`}
+              </p>
+            )}
+
+            {entries.map((entry) => {
+              const at = parseDbTimestamp(entry.created_at);
+              return (
+                <p key={entry.id} className="bp-entry">
+                  {entry.entry_text}{" "}
+                  <span className="bp-entry-meta">
+                    {at && <>&mdash; {format(at, "h:mm a")}</>}
+                    {entry.category && entry.category !== "general" && (
+                      <>
+                        {" · "}
+                        <span className="bp-entry-cat">{entry.category}</span>
+                      </>
+                    )}
+                    {entry.mood && <>{" · "}{entry.mood}</>}
+                    {Array.isArray(entry.tags) && entry.tags.length > 0 && (
+                      <>{" · "}{entry.tags.join(", ")}</>
+                    )}
+                  </span>
+                </p>
+              );
+            })}
+
+            {pending.map((entry) => (
+              <p key={entry.id} className="bp-entry bp-entry-pending">
+                {entry.text}{" "}
+                {entry.status === "saving" ? (
+                  <span className="bp-entry-meta" aria-live="polite">&mdash; saving&hellip;</span>
+                ) : (
+                  <span className="bp-entry-meta bp-entry-failed" role="alert">
+                    &mdash; {entry.error || "Not saved yet."}{" "}
+                    {!entry.permanent && (
+                      <button type="button" className="bp-entry-action" onClick={() => onRetry(entry)}>
+                        Retry
+                      </button>
+                    )}{" "}
+                    <button type="button" className="bp-entry-action" onClick={() => editBack(entry)}>
+                      Edit
+                    </button>
+                  </span>
+                )}
+              </p>
+            ))}
+
+            {/* The composer is simply the next line on the page. */}
+            <div className="bp-compose">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => changeInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={isToday ? "What happened today?" : `What happened on ${dayLabel}?`}
+                aria-label={isToday ? "New journal entry for today" : `New journal entry for ${dayLabel}`}
+                className="bp-compose-input"
+                rows={1}
+                maxLength={MAX_ENTRY_CHARS}
+              />
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Below the page: the actions that are about the page, not on it. */}
+      <div className="flex items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
+        <span aria-live="polite">
+          {failedCount > 0
+            ? `${failedCount} not saved yet · kept on this device`
+            : entries.length > 0
+              ? `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`
+              : "Enter to save · Shift+Enter for a new line"}
+          {waitingElsewhere > 0 && ` · ${waitingElsewhere} waiting to save on other days`}
+        </span>
+        <Button
+          size="sm"
+          className="h-8"
+          onClick={submit}
+          disabled={isLoading || !input.trim()}
+        >
+          <Send className="mr-1.5 h-3.5 w-3.5" />
+          Add entry
+        </Button>
+      </div>
+    </>
   );
 }

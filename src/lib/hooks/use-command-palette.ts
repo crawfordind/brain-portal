@@ -17,6 +17,15 @@ import {
 } from 'lucide-react';
 import type { CommandResult } from '@/lib/stores/command-store';
 
+/**
+ * Today on this device. `toISOString()` is UTC, which made every evening's
+ * "Today's Journal" open tomorrow's page.
+ */
+function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export interface UnifiedCommand {
   // Unique identifier
   id: string;
@@ -102,7 +111,7 @@ export function useCommandPalette() {
       shortcut: '⌘⇧D',
       category: 'creation',
       handler: async () => {
-        const today = new Date().toISOString().split('T')[0];
+        const today = localToday();
         router.push(`/journal?date=${today}`);
       },
     },
@@ -118,9 +127,9 @@ export function useCommandPalette() {
       category: 'creation',
       handler: async (params) => {
         if (params?.content) {
-          router.push(`/journal?date=${new Date().toISOString().split('T')[0]}&entry=${encodeURIComponent(params.content)}`);
+          router.push(`/journal?date=${localToday()}&entry=${encodeURIComponent(params.content)}`);
         } else {
-          router.push(`/journal?date=${new Date().toISOString().split('T')[0]}&new=true`);
+          router.push(`/journal?date=${localToday()}&new=true`);
         }
       },
     },
@@ -134,7 +143,7 @@ export function useCommandPalette() {
       icon: BookOpen,
       category: 'creation',
       handler: async (params) => {
-        const today = new Date().toISOString().split('T')[0];
+        const today = localToday();
         if (params?.content) {
           router.push(`/journal?date=${today}&entry=${encodeURIComponent(params.content)}`);
         } else {
@@ -220,7 +229,7 @@ export function useCommandPalette() {
       icon: BookOpen,
       category: 'navigation',
       handler: () => {
-        const today = new Date().toISOString().split('T')[0];
+        const today = localToday();
         router.push(`/journal?date=${today}`);
       },
     },

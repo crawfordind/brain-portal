@@ -7,12 +7,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { query, queryOne, mutate } from "@/lib/db/client";
+import { query, mutate } from "@/lib/db/client";
 import { db } from "@/lib/db/client";
 import { v4 as uuid } from "uuid";
 import { classifyIntent } from "@/lib/stream/classifier";
 import { normalizeActor } from "@/lib/provenance";
-import { format } from "date-fns";
+import { getStoredTimeZone, saveJournalEntry } from "@/lib/journal/store";
 
 // GET /api/stream - Fetch unified stream
 export async function GET(req: NextRequest) {
@@ -566,68 +566,23 @@ export async function POST(req: NextRequest) {
       }
 
       case "journal": {
-        // Create journal entry directly (avoid internal fetch which fails in Next.js)
-        const entryText = content || rawInput;
-        const journalDate = new Date().toISOString().split("T")[0];
-        const dateTitle = format(new Date(journalDate + "T12:00:00"), "EEEE, MMMM d, yyyy");
-        const journalSlug = `journal-${journalDate}`;
-        const entryTitle = entryText
-          .replace(/^(today i|i |this morning i|this afternoon i|this evening i|just )/i, "")
-          .split(/[.\n]/)[0]
-          ?.trim()
-          .slice(0, 60) || entryText.slice(0, 60);
-
-        // Find or create the daily journal note
-        let journalNote = await queryOne<{ id: string; content: string; content_plain: string; title: string; slug: string }>(
-          "SELECT id, content, content_plain, title, slug FROM notes WHERE user_id = ? AND slug = ?",
-          [user.id, journalSlug]
-        );
-
-        if (!journalNote) {
-          const noteId = uuid();
-          const initialContent = `# Journal - ${dateTitle}\n\n---\n\n### ${format(new Date(), "h:mm a")}\n${entryText}\n`;
-          await mutate(
-            `INSERT INTO notes (id, user_id, title, slug, content, content_plain, note_type, metadata)
-             VALUES (?, ?, ?, ?, ?, ?, 'journal', ?)`,
-            [noteId, user.id, `Journal - ${dateTitle}`, journalSlug, initialContent, entryText, JSON.stringify({ journal_date: journalDate })]
-          );
-          journalNote = { id: noteId, content: initialContent, content_plain: entryText, title: `Journal - ${dateTitle}`, slug: journalSlug };
-        } else {
-          const timestamp = format(new Date(), "h:mm a");
-          const appendText = `\n\n### ${timestamp}\n${entryText}\n`;
-          await mutate(
-            `UPDATE notes SET content = content || ?, content_plain = content_plain || ?, updated_at = datetime('now') WHERE id = ?`,
-            [appendText, "\n" + entryText, journalNote.id]
-          );
-        }
-
-        // Create the journal entry record
-        const entryId = uuid();
-        await mutate(
-          `INSERT INTO journal_entries (id, note_id, user_id, date, entry_text, category, tags, mood, location, metadata)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [entryId, journalNote.id, user.id, journalDate, entryText, "general", JSON.stringify(tags), null, null, JSON.stringify({ classification, sourceType, timestamp: new Date().toISOString() })]
-        );
-
-        // Create/update daily_notes for backward compatibility
-        const existingDaily = await queryOne<{ id: string }>(
-          "SELECT id FROM daily_notes WHERE user_id = ? AND date = ?",
-          [user.id, journalDate]
-        );
-        if (!existingDaily) {
-          await mutate(
-            `INSERT INTO daily_notes (user_id, date, note_id, metadata) VALUES (?, ?, ?, ?)`,
-            [user.id, journalDate, journalNote.id, JSON.stringify({ is_journal: true })]
-          );
-        }
+        // Same writer as the Journal page, so the two cannot drift. The day is
+        // the user's day, not UTC's: an evening entry used to land on tomorrow.
+        const saved = await saveJournalEntry({
+          userId: user.id,
+          text: content || rawInput,
+          timeZone: await getStoredTimeZone(user.id),
+          tags,
+          metadata: { classification, sourceType },
+        });
 
         return NextResponse.json({
-          id: entryId,
+          id: saved.entry.id,
           type: "journal",
           status: "active",
-          title: entryTitle.charAt(0).toUpperCase() + entryTitle.slice(1),
-          createdAt: new Date().toISOString(),
-          journalNoteId: journalNote.id,
+          title: saved.entry.title,
+          createdAt: saved.entry.created_at,
+          journalNoteId: saved.note.id,
         });
       }
 
