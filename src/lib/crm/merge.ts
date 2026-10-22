@@ -29,6 +29,7 @@ import {
   isVenture,
   readEntityMetadata,
   writeEntityMetadata,
+  stillAContactSql,
 } from "./metadata";
 import { StructureError } from "./structure";
 
@@ -369,6 +370,7 @@ export async function listMergeCandidates(userId: string): Promise<
   const flagged = await query<Entity>(
     `SELECT * FROM entities
      WHERE user_id = ? AND metadata LIKE '%"merge_candidate"%'
+       AND ${stillAContactSql()}
      ORDER BY updated_at DESC`,
     [userId]
   );

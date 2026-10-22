@@ -22,6 +22,7 @@ import {
   getCompartments,
   getCrmFields,
   getMergeCandidate,
+  getNotContact,
   getResolution,
   readEntityMetadata,
 } from "@/lib/crm/metadata";
@@ -214,6 +215,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       metadata: readEntityMetadata(entity),
       compartments: getCompartments(entity),
       resolution: getResolution(entity),
+      notContact: getNotContact(entity),
       crm: getCrmFields(entity),
       mergeCandidate: mergeCandidate
         ? { ...mergeCandidate, targetName: mergeCandidateName }

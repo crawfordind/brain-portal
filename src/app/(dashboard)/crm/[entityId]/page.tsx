@@ -31,6 +31,7 @@ import {
   Pencil,
   Plus,
   Send,
+  Tag,
   Trash2,
 } from "lucide-react";
 import { useSendToAgent } from "@/hooks/use-send-to-agent";
@@ -43,6 +44,10 @@ import {
 } from "@/components/crm/crm-badges";
 import { SendToAgentLabel } from "@/components/agents/send-to-agent-label";
 import { EditContactDialog } from "@/components/crm/edit-contact-dialog";
+import {
+  NotContactBanner,
+  NotContactDialog,
+} from "@/components/crm/not-contact-dialog";
 import {
   DuplicateCard,
   WhichOneCard,
@@ -62,6 +67,8 @@ interface Brief {
   ambiguity: Ambiguity | null;
   compartments: string[];
   resolution: "confirmed" | "unresolved";
+  /** Set when the user said this is not a contact and filed it as a tag. */
+  notContact: { tag: string } | null;
   mergeCandidate: { targetName: string | null; reason: string } | null;
   channels: {
     id: string;
@@ -106,6 +113,7 @@ export default function ContactBriefPage({
   const [channelKind, setChannelKind] = useState("email");
   const [channelValue, setChannelValue] = useState("");
   const [editing, setEditing] = useState(false);
+  const [filingAsTag, setFilingAsTag] = useState(false);
 
   const { data, isLoading } = useQuery<Brief>({
     queryKey: ["crm", "contact", entityId],
@@ -207,6 +215,17 @@ export default function ContactBriefPage({
             <Send className="mr-1.5 h-3.5 w-3.5" />
             <SendToAgentLabel />
           </Button>
+          {!data.notContact && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="min-h-11 md:min-h-9"
+              onClick={() => setFilingAsTag(true)}
+            >
+              <Tag className="mr-1.5 h-3.5 w-3.5" />
+              Not a contact
+            </Button>
+          )}
         </div>
         <p className="text-sm text-muted-foreground">
           {data.entity.entity_type} · {data.counts.interactions} touches ·{" "}
@@ -233,7 +252,11 @@ export default function ContactBriefPage({
         )}
       </header>
 
-      {data.ambiguity ? (
+      {data.notContact && (
+        <NotContactBanner contactId={data.entity.id} tag={data.notContact.tag} />
+      )}
+
+      {data.notContact ? null : data.ambiguity ? (
         <WhichOneCard contactId={data.entity.id} ambiguity={data.ambiguity} />
       ) : (
         data.resolution === "unresolved" && (
@@ -397,6 +420,16 @@ export default function ContactBriefPage({
         }}
         open={editing}
         onOpenChange={setEditing}
+      />
+
+      <NotContactDialog
+        contact={{
+          id: data.entity.id,
+          name: data.entity.canonical_name,
+          mentionCount: data.counts.mentions,
+        }}
+        open={filingAsTag}
+        onOpenChange={setFilingAsTag}
       />
     </div>
   );

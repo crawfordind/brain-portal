@@ -22,6 +22,7 @@
  */
 
 import { db } from "@/lib/db/client";
+import { stillAContactSql } from "./metadata";
 
 export interface RecentTouch {
   id: string;
@@ -93,7 +94,8 @@ async function getContactCounts(
             FROM entities
             WHERE user_id = ?
               AND entity_type IN ('person', 'org')
-              AND ${NOT_A_VENTURE}`,
+              AND ${NOT_A_VENTURE}
+              AND ${stillAContactSql()}`,
       args: [userId],
     });
 
@@ -119,6 +121,7 @@ async function getRecentTouches(userId: string): Promise<RecentTouch[]> {
             LEFT JOIN entities e ON e.id = i.entity_id
             LEFT JOIN entities v ON v.id = i.venture_id
             WHERE i.user_id = ?
+              AND (e.id IS NULL OR ${stillAContactSql("e")})
             ORDER BY i.occurred_at DESC
             LIMIT 3`,
       args: [userId],

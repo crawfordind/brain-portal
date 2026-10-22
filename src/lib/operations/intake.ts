@@ -16,6 +16,7 @@
  */
 
 import { db, query, queryOne } from "@/lib/db/client";
+import { stillAContactSql } from "@/lib/crm/metadata";
 import { createOpsItem, getToday, getOpsItem, OpsError } from "./queries";
 import { proposeTriage, type TriageKind, type TriageProposal } from "./triage";
 import type { OpsDirection, OpsItem, OpsKind } from "./types";
@@ -73,7 +74,7 @@ async function loadContactsForTriage(userId: string) {
   try {
     return await query<{ id: string; name: string }>(
       `SELECT id, canonical_name AS name FROM entities
-       WHERE user_id = ? AND entity_type IN ('person', 'org')
+       WHERE user_id = ? AND entity_type IN ('person', 'org') AND ${stillAContactSql()}
        ORDER BY mention_count DESC LIMIT ${CONTACT_LIMIT}`,
       [userId]
     );

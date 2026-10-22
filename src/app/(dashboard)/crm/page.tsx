@@ -44,9 +44,12 @@ function CrmPageContent() {
   const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
   const [venture, setVenture] = useState<string>("all");
-  const [tab, setTab] = useState<"confirmed" | "unresolved">(
-    searchParams.get("tab") === "unresolved" ? "unresolved" : "confirmed"
-  );
+  const [tab, setTab] = useState<"confirmed" | "unresolved" | "not_contact">(() => {
+    const requested = searchParams.get("tab");
+    return requested === "unresolved" || requested === "not_contact"
+      ? requested
+      : "confirmed";
+  });
 
   const { data: ventureData } = useQuery<{ ventures: VentureRow[] }>({
     queryKey: ["crm", "ventures"],
@@ -135,6 +138,7 @@ function CrmPageContent() {
               </Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="not_contact">Not contacts</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -151,6 +155,11 @@ function CrmPageContent() {
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
             {tab === "unresolved" ? (
               <>Nothing waiting on a decision.</>
+            ) : tab === "not_contact" ? (
+              <>
+                Nothing here. Open a contact and choose &ldquo;Not a
+                contact&rdquo; to turn it into a tag.
+              </>
             ) : (
               <>
                 No contacts yet. They appear as soon as your notes mention people

@@ -1701,6 +1701,29 @@ able to finish them and the extractor has to tell two Justins apart. Code:
   `confirm`, `same`, `different`); before, only MCP could. *Needs review* also
   lists possible duplicates, not only unresolved captures.
 
+### "Not a contact" → a tag
+
+The extractor files anything that reads like a person or org, and some of it
+is neither (a market, a product, a team). On the contact page, **Not a
+contact** turns it into a tag. Code: `src/lib/crm/not-contact.ts`,
+`POST/DELETE /api/crm/contacts/[id]/not-contact`, `not-contact-dialog.tsx`.
+
+- **The row is kept and hidden, not deleted** (`metadata.not_contact = { tag,
+  at }`). Deleted, the next note naming it would re-create it. Kept, the name
+  still resolves to it and ingestion tags that note instead: no touch, no
+  co-occurrence edge, no merge-gate flag. The mention is still recorded, so
+  **Restore** (Contacts → *Not contacts*, the page banner, or the toast's Undo)
+  is lossless. Tags it added stay.
+- **Tags**: notes through `tags`/`note_tags`, captures through their own
+  `tags` list, each at most once.
+- **Every contact query excludes it**: `isNotContact` where filtering happens
+  in TypeScript, `stillAContactSql(alias?)` in SQL (list, pulse, review queue,
+  merge candidates, first-name candidates, Operations people/intake/
+  counterparty match, MCP `search_contacts`/`list_review_queue`). A new
+  contact query must do the same.
+- **Refused** for a venture, or for anything with contact details or a venture
+  role: an address must resolve to a visible contact, and a role says it is one.
+
 **Not in Phase 0**: deals and pipelines, intake (BCC dropbox, calendar, contact
 scraping), compliance enforcement, and semantic search over interaction bodies
 (the `embeddings` CHECK permits only `note`, `capture`, `task_candidate`).
