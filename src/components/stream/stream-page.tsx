@@ -7,7 +7,8 @@
  * "anything for me?" before it answers "what have I got?":
  *
  *   1. Greeting — where you are, one line.
- *   2. Brain Bar — the one thing you always came here to do.
+ *   2. Brain Bar — the one thing you always came here to do. Until the user
+ *      has tried or dismissed it, the voice capture card sits beneath it.
  *   3. Needs you — only what is waiting. Absent when nothing is.
  *   4. People — the CRM, sized to how much it has to say. Absent when empty.
  *   5. Stream — everything else, filtered.
@@ -21,6 +22,7 @@ import { StreamFeed } from "./stream-feed";
 import { Searchlight } from "./searchlight";
 import { NeedsYou } from "./needs-you";
 import { CrmPulseCard } from "./crm-pulse-card";
+import { VoiceIntroCard } from "./voice-intro-card";
 import type { StreamStats } from "@/lib/stream/stats";
 import type { CrmPulse } from "@/lib/crm/pulse";
 
@@ -83,6 +85,9 @@ export function StreamPage({ stats, crm, greeting: serverGreeting }: StreamPageP
           window.dispatchEvent(new CustomEvent("stream-refresh"));
         }}
       />
+
+      {/* First-run introduction to voice capture. Gone once dismissed or tried. */}
+      <VoiceIntroCard />
 
       {/* Everything waiting on the user, in one row. Empty = nothing rendered. */}
       <NeedsYou

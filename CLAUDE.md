@@ -71,6 +71,7 @@ I got?"*, and **three of them render nothing when they have nothing to say**:
 |------|-----------|--------------|
 | Greeting | `stream-page.tsx` | always (one line: greeting, date, "N done") |
 | Brain Bar | `brain-bar.tsx` | always — the universal input |
+| Voice intro | `voice-intro-card.tsx` | until the user dismisses it or tries voice (replaces the old first-visit modal) |
 | **Needs you** | `needs-you.tsx` | any of overdue / to review / contacts to sort / follow-ups due / due today / unread notifications is non-zero |
 | **People** | `crm-pulse-card.tsx` | the user has contacts; a card when something is pending, one quiet line when not |
 | Stream | `stream-feed.tsx` | always |

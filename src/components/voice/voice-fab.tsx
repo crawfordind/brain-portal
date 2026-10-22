@@ -11,6 +11,7 @@ import { useVoiceShortcuts } from "./hooks/use-voice-shortcuts";
 import { useAudioFeedback } from "./hooks/use-audio-feedback";
 import { useVoiceCommands } from "./hooks/use-voice-commands";
 import { useSmartPunctuation } from "./hooks/use-smart-punctuation";
+import { VOICE_TOGGLE_EVENT } from "./events";
 import {
   Tooltip,
   TooltipContent,
@@ -380,6 +381,12 @@ export function VoiceFAB({ className, onCapture }: VoiceFABProps) {
       handleStartRecording();
     }
   }, [isRecording, handleStartRecording, handleStopRecording]);
+
+  // Let other surfaces (the dashboard's voice card) start and stop capture
+  useEffect(() => {
+    window.addEventListener(VOICE_TOGGLE_EVENT, handleToggle);
+    return () => window.removeEventListener(VOICE_TOGGLE_EVENT, handleToggle);
+  }, [handleToggle]);
 
   // Long-press handlers for command palette
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
