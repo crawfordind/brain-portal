@@ -1618,7 +1618,7 @@ and reasoning: `docs/plans/2026-09-13-crm-phase-0-design.md`.
   dashboard can link at a decision rather than at the page containing it),
   `/crm/[entityId]`, `/crm/ventures`, `/crm/ventures/[id]`; `/api/crm/*`; the
   dashboard's People band and the Contacts entry in both menus (see
-  *Dashboard* and *Navigation*); and 16 MCP tools.
+  *Dashboard* and *Navigation*); and 17 MCP tools.
 - **Roles** attach a contact to a venture (`setContactRole`, and
   `POST /api/crm/contacts/[id]/roles`). A contact may hold several roles at
   several ventures — that is the point of one Rolodex across seven businesses.
@@ -1664,6 +1664,35 @@ returning entities *and* touches.
   double-count touches), not link captures.
 - A failed model call throws so the queue retries; `extractEntities` (the
   manual `POST /api/entities/extract` path) still swallows errors.
+
+### Editing contacts and first names
+
+Contacts are born from notes, usually as a first name, so a person has to be
+able to finish them and the extractor has to tell two Justins apart. Code:
+`src/lib/crm/edit.ts`, `resolveFirstName` in `src/lib/entities/store.ts`,
+`matchFirstName` in `src/lib/entities/resolve.ts` (pure, unit-tested),
+`PATCH /api/crm/contacts/[id]`, `POST /api/crm/contacts/[id]/resolve`.
+
+- **Edit** (contact page → Edit, MCP `update_contact`): name, type, `about`
+  (`metadata.about`). A rename keeps the old name as an alias, so notes that
+  say "Justin" still find "Justin Smith", and sets `name_locked`. A name
+  another contact holds is a 409 naming it. Email/phone stay channels.
+- **A bare first name** for a person goes through `resolveFirstName` before
+  key resolution: one known person by that first name (own name, first word,
+  or alias) → attach to them; several → a placeholder (`resolution:
+  unresolved`, `metadata.ambiguous`) holds that one mention and asks **"Which
+  Justin did you mean?"** on its page, in *Needs review* and in the
+  dashboard's contacts-to-sort count. It is keyed `justin@note:<id>`
+  (`scopedMentionKey`), so a re-read reuses it, and the answer is stored as an
+  alias under that key, so the same note is never asked twice and other
+  notes are not affected. Answering never aliases the bare name to one person.
+- **A full name beside a first-name-only contact** ("Justin Lee" while
+  "Justin" exists) is flagged as a possible duplicate, never fused. *Same
+  person* (`decideMergeCandidate`) keeps the fuller name; *Different people*
+  clears the flag.
+- The web app can now act on the review queue (`/resolve`: `merge`,
+  `confirm`, `same`, `different`); before, only MCP could. *Needs review* also
+  lists possible duplicates, not only unresolved captures.
 
 **Not in Phase 0**: deals and pipelines, intake (BCC dropbox, calendar, contact
 scraping), compliance enforcement, and semantic search over interaction bodies
@@ -1732,12 +1761,12 @@ A full-featured MCP server that exposes Brain Portal's capabilities to Claude Co
 - `src/mcp/server.ts` - Main entry point (stdio transport, auth, registration)
 - `src/mcp/auth.ts` - API key authentication (SHA-256 hashed keys, scoped to users)
 - `src/mcp/db.ts` - Standalone Turso client (runs outside Next.js)
-- `src/mcp/tools/` - MCP tool implementations (51 tools; `index.ts` is the single
+- `src/mcp/tools/` - MCP tool implementations (52 tools; `index.ts` is the single
   registration point both transports and the catalog test use)
 - `src/mcp/resources/` - MCP resource providers (7 resources)
 - `src/mcp/prompts/` - MCP prompt templates (4 prompts)
 
-### Tools (51 total)
+### Tools (52 total)
 
 The 9 Operations tools are listed under *Operations Control Center*; the 4
 sharing tools (`share_note`, `unshare_note`, `list_note_shares`,
@@ -1768,7 +1797,7 @@ sharing tools (`share_note`, `unshare_note`, `list_note_shares`,
 | `search` | Full-text search across all entity types |
 | `recent_activity` | Recent activity feed |
 
-**CRM tools (16)** — see *CRM Layer* above:
+**CRM tools (17)** — see *CRM Layer* above:
 
 | Tool | Description |
 |------|-------------|
@@ -1779,6 +1808,7 @@ sharing tools (`share_note`, `unshare_note`, `list_note_shares`,
 | `log_interaction` | Record a real touch, idempotently |
 | `list_review_queue` | Unresolved captures and possible duplicates |
 | `resolve_contact` | Name an unresolved capture, or merge it away |
+| `update_contact` | Full name, type or 'about'; the old name stays as an alias |
 | `merge_contacts` | Fold one contact into another |
 | `set_contact_role` | Attach a contact to a venture as partner, customer, etc. |
 | `remove_contact_role` | Remove one role a contact holds at a venture |

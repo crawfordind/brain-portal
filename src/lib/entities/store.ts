@@ -15,11 +15,17 @@ import {
   assessMerge,
   normalizeEntityKeyStrict,
   normalizeEntityType,
+  isSingleTokenName,
+  firstNameKey,
+  matchFirstName,
+  scopedMentionKey,
   type MergeSubject,
+  type PersonCandidate,
 } from "./resolve";
 import {
   writeEntityMetadata,
   isNameLocked,
+  isVenture,
   getResolution,
 } from "@/lib/crm/metadata";
 import type { ExtractedEntity } from "./extractor";
@@ -57,6 +63,129 @@ async function verifiedEmailsFor(entityId: string): Promise<string[]> {
   }
 }
 
+interface SourceRef {
+  sourceType: string;
+  sourceId: string;
+}
+
+/**
+ * Confirmed people a bare first name could refer to. Placeholders, unresolved
+ * event captures and ventures are never candidates.
+ */
+async function peopleNamed(
+  userId: string,
+  name: string,
+  key: string
+): Promise<PersonCandidate[]> {
+  const rows = await query<{
+    id: string;
+    canonical_name: string;
+    metadata: string | null;
+    alias_keys: string | null;
+  }>(
+    `SELECT e.id, e.canonical_name, e.metadata,
+            (SELECT group_concat(a.normalized_key, ' ') FROM entity_aliases a
+             WHERE a.entity_id = e.id) AS alias_keys
+     FROM entities e
+     WHERE e.user_id = ? AND e.entity_type = 'person'
+       AND (e.normalized_key = ?
+            OR lower(e.canonical_name) LIKE ?
+            OR e.id IN (SELECT entity_id FROM entity_aliases
+                        WHERE user_id = ? AND normalized_key = ?))
+     LIMIT 50`,
+    [userId, key, `${name.trim().toLowerCase()} %`, userId, key]
+  );
+  return rows
+    .filter(
+      (r) =>
+        getResolution(r.metadata) === "confirmed" && !isVenture(r.metadata)
+    )
+    .map((r) => ({
+      id: r.id,
+      name: r.canonical_name,
+      aliasKeys: r.alias_keys ? r.alias_keys.split(" ") : [],
+    }));
+}
+
+/**
+ * A bare first name ("Justin") for a person.
+ *
+ * Returns the entity it should attach to, or null to fall through to ordinary
+ * key resolution (nobody by that name yet). In order:
+ *
+ *   1. The user already answered for this source, or a question for it is
+ *      still open: reuse that (the scoped key), so re-reading a note never
+ *      asks twice.
+ *   2. Exactly one known person goes by that first name: attach to them, so
+ *      "Justin" finds "Justin Smith" without anyone writing his surname.
+ *   3. Several do: hold the mention on a placeholder that asks the user which
+ *      one they meant, rather than guessing. It appears under Contacts → Needs
+ *      review and in the dashboard's "contacts to sort".
+ */
+async function resolveFirstName(
+  userId: string,
+  e: ExtractedEntity,
+  source: SourceRef
+): Promise<string | null> {
+  const scoped = scopedMentionKey(e.key, source.sourceType, source.sourceId);
+  const remembered = await query<{ id: string }>(
+    `SELECT id FROM entities WHERE user_id = ? AND normalized_key = ?
+     UNION ALL
+     SELECT entity_id AS id FROM entity_aliases WHERE user_id = ? AND normalized_key = ?`,
+    [userId, scoped, userId, scoped]
+  );
+  if (remembered[0]) return remembered[0].id;
+
+  const matches = matchFirstName(e.name, await peopleNamed(userId, e.name, e.key));
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0].id;
+
+  const metadata = writeEntityMetadata("{}", {
+    resolution: "unresolved",
+    ambiguous: {
+      name: e.name,
+      source_type: source.sourceType,
+      source_id: source.sourceId,
+      candidate_ids: matches.map((m) => m.id),
+    },
+  });
+  const created = await mutate<{ id: string }>(
+    `INSERT INTO entities (user_id, canonical_name, normalized_key, entity_type, mention_count, metadata)
+     VALUES (?, ?, ?, 'person', 0, ?)
+     RETURNING id`,
+    [userId, e.name, scoped, metadata]
+  );
+  return created?.id ?? null;
+}
+
+/**
+ * A new "Justin Lee" while a contact called just "Justin" exists. They are
+ * often the same person, so the new row is flagged against the old one for the
+ * user to confirm, never fused automatically (there may be two Justins).
+ */
+async function firstNameFlag(
+  userId: string,
+  e: ExtractedEntity
+): Promise<Record<string, unknown> | undefined> {
+  if (normalizeEntityType(e.type) !== "person") return undefined;
+  const first = firstNameKey(e.name);
+  if (!first) return undefined;
+
+  const bare = (await peopleNamed(userId, first, first)).filter((p) =>
+    isSingleTokenName(p.name)
+  );
+  if (bare.length !== 1) return undefined;
+
+  return {
+    merge_candidate: {
+      target_entity_id: bare[0].id,
+      confidence: 0.5,
+      reason: `You already have a contact called "${bare[0].name}". Is "${e.name}" the same person?`,
+      flagged_at: new Date().toISOString(),
+    },
+  };
+}
+
 /**
  * Create the entity if new, or update its canonical name/type if this mention
  * is more informative. Does NOT touch mention_count — that is bumped only when
@@ -72,8 +201,14 @@ async function verifiedEmailsFor(entityId: string): Promise<string[]> {
  */
 async function upsertEntity(
   userId: string,
-  e: ExtractedEntity
+  e: ExtractedEntity,
+  source: SourceRef
 ): Promise<string | null> {
+  if (normalizeEntityType(e.type) === "person" && isSingleTokenName(e.name)) {
+    const resolved = await resolveFirstName(userId, e, source);
+    if (resolved) return resolved;
+  }
+
   const existingId = await findEntityIdByKey(userId, e.key);
 
   if (existingId) {
@@ -135,7 +270,7 @@ async function upsertEntity(
     return existingId;
   }
 
-  return createEntity(userId, e);
+  return createEntity(userId, e, await firstNameFlag(userId, e));
 }
 
 /**
@@ -269,7 +404,7 @@ export async function ingestExtractedEntities(
   let mentionsAdded = 0;
 
   for (const e of extracted) {
-    const entityId = await upsertEntity(userId, e);
+    const entityId = await upsertEntity(userId, e, { sourceType, sourceId });
     if (!entityId) continue;
     entityIds.push(entityId);
     entityIdsByKey.set(e.key, entityId);

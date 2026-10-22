@@ -28,6 +28,8 @@ export interface ContactStatusInput {
   resolution: "confirmed" | "unresolved";
   needsReview: boolean;
   compartments: string[];
+  /** A first name that matched several contacts; the user picks which. */
+  ambiguous?: boolean;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -276,7 +278,13 @@ export interface ContactStatus {
 export function contactStatuses(input: ContactStatusInput): ContactStatus[] {
   const statuses: ContactStatus[] = [];
 
-  if (input.resolution === "unresolved") {
+  if (input.ambiguous) {
+    statuses.push({
+      kind: "unresolved",
+      label: "Which one?",
+      detail: "A first name that matches more than one contact",
+    });
+  } else if (input.resolution === "unresolved") {
     statuses.push({
       kind: "unresolved",
       label: "Unresolved",

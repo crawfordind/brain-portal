@@ -16,8 +16,20 @@
 
 import { db, query, queryOne } from "@/lib/db/client";
 import type { Entity } from "@/lib/db/schema";
-import { normalizeEntityKey } from "@/lib/entities/resolve";
-import { isVenture, readEntityMetadata, writeEntityMetadata } from "./metadata";
+import {
+  isScopedMentionKey,
+  normalizeEntityKey,
+  pickCanonicalName,
+  scopedMentionKey,
+} from "@/lib/entities/resolve";
+import {
+  getAmbiguousMention,
+  getMergeCandidate,
+  isNameLocked,
+  isVenture,
+  readEntityMetadata,
+  writeEntityMetadata,
+} from "./metadata";
 import { StructureError } from "./structure";
 
 export interface MergeReport {
@@ -49,7 +61,8 @@ async function getEntity(userId: string, id: string): Promise<Entity | null> {
 export async function mergeEntities(
   userId: string,
   winnerId: string,
-  loserId: string
+  loserId: string,
+  options: { recordAlias?: boolean } = {}
 ): Promise<MergeReport> {
   if (winnerId === loserId) {
     throw new StructureError("An entity cannot be merged into itself", 400);
@@ -146,8 +159,14 @@ export async function mergeEntities(
   // Record the loser's own name as an alias. This is the record that the merge
   // happened, and what makes future extraction of that surface form resolve to
   // the winner instead of recreating the row.
+  // Skipped for an answered "which Justin?": the bare first name is shared by
+  // several people, and aliasing it to one would make later notes guess.
   const loserKey = normalizeEntityKey(loser.canonical_name);
-  if (loserKey && loserKey !== normalizeEntityKey(winner.canonical_name)) {
+  if (
+    options.recordAlias !== false &&
+    loserKey &&
+    loserKey !== normalizeEntityKey(winner.canonical_name)
+  ) {
     await db.execute({
       sql: `INSERT OR IGNORE INTO entity_aliases (user_id, entity_id, alias, normalized_key)
             VALUES (?, ?, ?, ?)`,
@@ -199,9 +218,15 @@ export async function resolveContact(
 ): Promise<{ action: "merged" | "confirmed"; entityId: string; report?: MergeReport }> {
   const entity = await getEntity(userId, unresolvedId);
   if (!entity) throw new StructureError("Contact not found", 404);
+  const ambiguous = getAmbiguousMention(entity);
 
   if (options.mergeIntoId) {
-    const report = await mergeEntities(userId, options.mergeIntoId, unresolvedId);
+    const report = await mergeEntities(userId, options.mergeIntoId, unresolvedId, {
+      recordAlias: !ambiguous,
+    });
+    if (ambiguous) {
+      await rememberAnswer(userId, options.mergeIntoId, entity.canonical_name, ambiguous);
+    }
     return { action: "merged", entityId: options.mergeIntoId, report };
   }
 
@@ -210,10 +235,20 @@ export async function resolveContact(
   const metadata = writeEntityMetadata(entity, {
     resolution: "confirmed",
     resolution_hint: null,
+    ambiguous: null,
   });
 
-  if (name && name !== entity.canonical_name) {
-    const key = normalizeEntityKey(name);
+  // An answered "which Justin?" whose answer is "someone new" leaves the
+  // placeholder's per-note key behind; it needs a real one to be found again.
+  const needsKey = isScopedMentionKey(entity.normalized_key);
+
+  if (ambiguous) {
+    await rememberAnswer(userId, unresolvedId, entity.canonical_name, ambiguous);
+  }
+
+  if ((name && name !== entity.canonical_name) || needsKey) {
+    const finalName = name || entity.canonical_name;
+    const key = normalizeEntityKey(finalName);
     if (!key) throw new StructureError("That name has no usable characters");
 
     const clash = await queryOne<{ id: string; canonical_name: string }>(
@@ -223,7 +258,9 @@ export async function resolveContact(
     );
     if (clash) {
       throw new StructureError(
-        `"${clash.canonical_name}" already uses that name. Merge into it instead.`,
+        name
+          ? `"${clash.canonical_name}" already uses that name. Merge into it instead.`
+          : `"${clash.canonical_name}" already uses that name. Give this person their full name.`,
         409
       );
     }
@@ -232,7 +269,7 @@ export async function resolveContact(
       sql: `UPDATE entities SET canonical_name = ?, normalized_key = ?, metadata = ?,
               updated_at = datetime('now')
             WHERE id = ? AND user_id = ?`,
-      args: [name, key, metadata, unresolvedId, userId],
+      args: [finalName, key, metadata, unresolvedId, userId],
     });
   } else {
     await db.execute({
@@ -243,6 +280,80 @@ export async function resolveContact(
   }
 
   return { action: "confirmed", entityId: unresolvedId };
+}
+
+/**
+ * Record which person a first name meant in one source, as an alias under the
+ * source-scoped key. Re-reading that note resolves straight to them.
+ */
+async function rememberAnswer(
+  userId: string,
+  entityId: string,
+  name: string,
+  ambiguous: { source_type: string; source_id: string; name: string }
+): Promise<void> {
+  const key = normalizeEntityKey(ambiguous.name || name);
+  if (!key) return;
+  await db.execute({
+    sql: `INSERT OR REPLACE INTO entity_aliases (user_id, entity_id, alias, normalized_key)
+          VALUES (?, ?, ?, ?)`,
+    args: [
+      userId,
+      entityId,
+      ambiguous.name || name,
+      scopedMentionKey(key, ambiguous.source_type, ambiguous.source_id),
+    ],
+  });
+}
+
+/**
+ * Act on a "possibly the same as" flag.
+ *
+ * `same` combines the two, keeping whichever name says more ("Justin Lee"
+ * over "Justin"), unless one of them is name-locked, which then wins.
+ * `different` clears the flag and keeps both.
+ */
+export async function decideMergeCandidate(
+  userId: string,
+  entityId: string,
+  decision: "same" | "different"
+): Promise<{ entityId: string; report?: MergeReport }> {
+  const entity = await getEntity(userId, entityId);
+  if (!entity) throw new StructureError("Contact not found", 404);
+  const candidate = getMergeCandidate(entity);
+  if (!candidate) {
+    throw new StructureError("This contact is not flagged as a possible duplicate", 400);
+  }
+
+  if (decision === "different") {
+    await db.execute({
+      sql: `UPDATE entities SET metadata = ?, updated_at = datetime('now')
+            WHERE id = ? AND user_id = ?`,
+      args: [writeEntityMetadata(entity, { merge_candidate: null }), entityId, userId],
+    });
+    return { entityId };
+  }
+
+  const other = await getEntity(userId, candidate.target_entity_id);
+  if (!other) {
+    // The other row is gone, so there is nothing left to be a duplicate of.
+    await db.execute({
+      sql: `UPDATE entities SET metadata = ?, updated_at = datetime('now')
+            WHERE id = ? AND user_id = ?`,
+      args: [writeEntityMetadata(entity, { merge_candidate: null }), entityId, userId],
+    });
+    return { entityId };
+  }
+
+  const keepFlagged = isNameLocked(other)
+    ? false
+    : isNameLocked(entity)
+      ? true
+      : pickCanonicalName(other.canonical_name, entity.canonical_name) ===
+        entity.canonical_name;
+  const [winner, loser] = keepFlagged ? [entity, other] : [other, entity];
+  const report = await mergeEntities(userId, winner.id, loser.id);
+  return { entityId: winner.id, report };
 }
 
 /** Entities carrying a merge_candidate flag, with the row they were flagged against. */
