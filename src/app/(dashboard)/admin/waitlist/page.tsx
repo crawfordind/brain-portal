@@ -49,15 +49,18 @@ export default function AdminWaitlistPage() {
         body: JSON.stringify({ id, status }),
       });
       if (!res.ok) throw new Error("Failed to update");
-      return res.json();
+      return res.json() as Promise<{ success: boolean; emailed?: boolean }>;
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: ["admin", "waitlist"] });
-      toast.success(
-        variables.status === "approved"
-          ? "Approved — login email sent"
-          : "Status updated"
-      );
+      if (variables.status !== "approved") {
+        toast.success("Status updated");
+      } else if (result.emailed) {
+        toast.success("Approved. Account created and sign-in email sent.");
+      } else {
+        // Say so: the person is waiting on an email that is not coming.
+        toast.warning("Approved and account created, but no email went out. Let them know they can sign in.");
+      }
     },
     onError: () => toast.error("Failed to update"),
   });
