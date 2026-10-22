@@ -121,7 +121,7 @@ export function VoiceTranscriptBubble({
         "fixed z-50 max-w-[280px] lg:max-w-[320px] rounded-lg border shadow-lg",
         "animate-in fade-in slide-in-from-bottom-2 duration-200",
         // Position above FAB
-        "bottom-36 right-4 lg:bottom-28",
+        "bottom-[calc(var(--mobile-nav-height)+4.75rem)] right-4 lg:bottom-28",
         "bg-background/95 backdrop-blur-sm",
         className
       )}

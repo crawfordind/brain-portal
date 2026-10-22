@@ -240,8 +240,8 @@ export function VoiceInput({
           onClick={toggleListening}
           disabled={disabled}
           className={cn(
-            // BOTTOM-NAV: Position above bottom nav on mobile (24), normal on desktop (6)
-            "fixed bottom-24 right-4 lg:bottom-6 z-50 flex items-center justify-center",
+            // BOTTOM-NAV: Position above bottom nav on mobile, normal on desktop (6)
+            "fixed bottom-[calc(var(--mobile-nav-height)+1.75rem)] right-4 lg:bottom-6 z-50 flex items-center justify-center",
             "w-16 h-16 rounded-full shadow-lg",
             "transition-all duration-200 ease-in-out",
             "focus:outline-none focus:ring-4 focus:ring-primary/50",
@@ -265,14 +265,14 @@ export function VoiceInput({
         {/* Interim transcript bubble */}
         {isListening && interimText && (
           // BOTTOM-NAV: Position above floating button
-          <div className="fixed bottom-44 right-4 lg:bottom-28 z-50 max-w-[280px] bg-background border rounded-lg p-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+          <div className="fixed bottom-[calc(var(--mobile-nav-height)+6.75rem)] right-4 lg:bottom-28 z-50 max-w-[280px] bg-background border rounded-lg p-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
             <p className="text-sm text-muted-foreground italic">{interimText}...</p>
           </div>
         )}
 
         {error && (
           // BOTTOM-NAV: Position above floating button
-          <div className="fixed bottom-44 right-4 lg:bottom-28 z-50 max-w-[280px] bg-destructive/10 border border-destructive/20 rounded-lg p-3 shadow-lg">
+          <div className="fixed bottom-[calc(var(--mobile-nav-height)+6.75rem)] right-4 lg:bottom-28 z-50 max-w-[280px] bg-destructive/10 border border-destructive/20 rounded-lg p-3 shadow-lg">
             <p className="text-sm text-destructive">{error}</p>
           </div>
         )}

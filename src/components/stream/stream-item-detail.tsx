@@ -210,7 +210,7 @@ export function StreamItemDetail() {
         tabIndex={-1}
         className={cn(
           "fixed z-50 bg-background border-l shadow-xl outline-none",
-          "inset-x-0 bottom-0 top-auto rounded-t-2xl max-h-[80vh] lg:rounded-none",
+          "inset-x-0 bottom-0 top-auto rounded-t-2xl max-h-[80dvh] pb-[env(safe-area-inset-bottom)] lg:rounded-none lg:pb-0",
           "lg:top-0 lg:right-0 lg:bottom-0 lg:left-auto lg:w-[480px] lg:max-h-full",
           "animate-in slide-in-from-bottom lg:slide-in-from-right duration-200"
         )}
@@ -239,7 +239,7 @@ export function StreamItemDetail() {
         </div>
 
         {/* Content */}
-        <div className="p-4 space-y-4 overflow-auto max-h-[calc(80vh-60px)] lg:max-h-[calc(100vh-60px)]">
+        <div className="p-4 space-y-4 overflow-auto max-h-[calc(80dvh-60px)] lg:max-h-[calc(100dvh-60px)]">
           {isLoading && (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />

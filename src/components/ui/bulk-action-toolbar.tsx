@@ -19,7 +19,7 @@ export function BulkActionToolbar({
   isDeleting = false,
 }: BulkActionToolbarProps) {
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-background border rounded-lg shadow-lg p-4 animate-in slide-in-from-bottom-5">
+    <div className="fixed bottom-[calc(var(--mobile-nav-height)+1rem)] lg:bottom-4 left-1/2 -translate-x-1/2 z-50 bg-background border rounded-lg shadow-lg p-4 animate-in slide-in-from-bottom-5">
       <div className="flex items-center gap-4">
         <span className="text-sm font-medium">
           {selectedCount} selected

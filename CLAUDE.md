@@ -239,6 +239,14 @@ counts can never disagree).
   CRM previously had no mobile entry point at all. "Notifications" was dropped
   from the sheet: it pointed at `/settings#notifications`, one row below
   Settings, while the real bell is in the header on mobile too.
+- **The mobile nav sits below every overlay** (`z-40`, like the header;
+  sheets and dialogs are `z-50`+). It used to be `z-[100]`, which painted it
+  over the bottom of every sheet, hiding "Create task" on a phone.
+- **Anything pinned to the bottom on mobile offsets from `--mobile-nav-height`**
+  (`src/styles/safe-area.css`: buttons plus the home-indicator inset), e.g.
+  `bottom-[calc(var(--mobile-nav-height)+0.75rem)] lg:bottom-6`, never a fixed
+  `bottom-20`. Full-height layouts use `dvh`, not `vh`/`h-screen`, which on iOS
+  Safari is taller than the visible screen.
 - `GET /api/crm/pulse` exists so those client badges can read the same summary
   the dashboard renders server-side.
 

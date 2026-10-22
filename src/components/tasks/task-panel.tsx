@@ -592,7 +592,7 @@ export function TaskPanel({
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={(o) => !o && close()}>
-        <SheetContent side="bottom" className="max-h-[92vh] overflow-y-auto p-4">
+        <SheetContent side="bottom" className="max-h-[92dvh] overflow-y-auto px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <SheetTitle className="sr-only">{title}</SheetTitle>
           {body}
           {footer}
