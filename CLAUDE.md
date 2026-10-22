@@ -58,7 +58,8 @@ npm run test:coverage # Generate coverage report
 - **UnifiedSearch** (Cmd+K): Primary interaction point for all actions
   - Search notes, tasks, projects, captures
   - Run commands (create, navigate, actions)
-  - Keyboard shortcuts: Cmd+Shift+C (Quick Capture), Cmd+Shift+D (Daily Note)
+  - Keyboard shortcuts: Cmd/Ctrl+K (focus search; it was advertised long before
+    anything listened for it), Cmd+Shift+C (Quick Capture), Cmd+Shift+D (Daily Note)
   - Quick Actions: Shown by default when search is empty for discoverability
   - Mobile-optimized: 56px touch targets, full-screen overlay
 - **Search previews are text, never HTML** (`src/lib/search/snippet.ts`, pure,
@@ -531,6 +532,35 @@ on share, only an in-app notification.
 Project collaborators: invite acceptance now requires the signed-in address to
 match the invited one, and the invite email escapes the project and inviter
 names.
+
+## Landing Page and Waitlist (`/waitlist`)
+
+Where `/` sends anyone without a session. Server component
+(`src/app/waitlist/page.tsx`) over a client view
+(`src/components/waitlist/waitlist-landing.tsx`).
+
+- **Every claim names its code.** All copy lives in `src/lib/waitlist/content.ts`
+  (pure); each item carries `evidence` paths and
+  `tests/lib/waitlist/content.test.ts` fails if one is missing. The test also
+  bans claims that were false on the old page (month calendar, tags on every
+  capture, related-notes panel, one-click Obsidian import, frontmatter), hard-coded
+  counts, competitor names and invented social proof. Add a feature to the page
+  by adding it there, with its evidence.
+- **Counts are computed.** MCP tools, resources and prompts come from
+  `src/lib/mcp/catalog.ts`; the old page said 38 tools when there were 52.
+- **Honest per deployment.** `SIGNUP_MODE=open` swaps the waitlist for sign-up;
+  `AI_KEY_POLICY=server_only` drops the "bring your own key" claims;
+  `SOURCE_CODE_URL` points "Read the code" at a fork. `force-dynamic`, since
+  these are runtime settings.
+- **Readable without JavaScript or motion.** No section starts hidden; the
+  Brain Bar demo is labelled as an illustration and has a screen-reader list.
+- **Approval creates the account** (`PATCH /api/admin/waitlist`). Under the
+  default `closed` policy only existing users may sign in, so approving used to
+  email "your access is ready" to someone the login route then silently
+  refused. The response says whether the email actually went out (`emailed`),
+  and the admin page says so. Email copy: `src/lib/waitlist/emails.ts`.
+- **The offline sync stays off on signed-out pages** (`/waitlist`, `/auth`,
+  `/shared`): it used to fire five account-wide fetches per anonymous visit.
 
 ## Who Can Sign Up
 
