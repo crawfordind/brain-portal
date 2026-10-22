@@ -1197,43 +1197,18 @@ Respond in JSON: { "summary": "...", "highlights": ["...", "..."] }`;
     compiledContent += `- **${cat}**: ${count} entries\n`;
   }
 
-  // Upsert monthly journal
-  const { v4: uuidv4 } = await import("uuid");
-
-  const existing = await queryOne<{ id: string; note_id: string }>(
-    "SELECT id, note_id FROM monthly_journals WHERE user_id = ? AND year = ? AND month = ?",
-    [context.userId, year, month]
-  );
-
-  let noteId: string;
-
-  if (existing) {
-    noteId = existing.note_id;
-    await db.execute({
-      sql: `UPDATE notes SET content = ?, content_plain = ?, updated_at = datetime('now') WHERE id = ?`,
-      args: [compiledContent, compiledContent, noteId],
-    });
-    await db.execute({
-      sql: `UPDATE monthly_journals SET entry_count = ?, summary = ?, categories = ?, highlights = ?, compiled_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
-      args: [entries.length, summary, JSON.stringify(categoryStats), JSON.stringify(highlights), existing.id],
-    });
-  } else {
-    noteId = uuidv4();
-    const slug = `monthly-journal-${year}-${String(month).padStart(2, "0")}`;
-
-    await db.execute({
-      sql: `INSERT INTO notes (id, user_id, title, slug, content, content_plain, note_type, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, 'monthly_journal', ?)`,
-      args: [noteId, context.userId, `${monthName} ${year} Journal`, slug, compiledContent, compiledContent, JSON.stringify({ year, month })],
-    });
-
-    const mjId = uuidv4();
-    await db.execute({
-      sql: `INSERT INTO monthly_journals (id, note_id, user_id, year, month, entry_count, summary, categories, highlights, compiled_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-      args: [mjId, noteId, context.userId, year, month, entries.length, summary, JSON.stringify(categoryStats), JSON.stringify(highlights)],
-    });
-  }
+  const { saveMonthlyJournal } = await import("@/lib/journal/store");
+  const { noteId } = await saveMonthlyJournal({
+    userId: context.userId,
+    year,
+    month,
+    title: `${monthName} ${year} Journal`,
+    content: compiledContent,
+    entryCount: entries.length,
+    summary,
+    categories: categoryStats,
+    highlights,
+  });
 
   return {
     success: true,

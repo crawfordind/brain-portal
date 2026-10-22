@@ -306,6 +306,34 @@ A canvas-based sketch pad with OneNote-style tools plus AI handwriting transcrip
 - **Editor integration**: the PenTool button inserts a `<figure>` (image) plus, optionally, the
   transcription as editable markdown below it.
 
+### Journal (`/journal`)
+
+One note per day (`journal-YYYY-MM-DD`) plus a `journal_entries` row per entry.
+Every writer (the Journal page, the Brain Bar via `/api/stream`) goes through
+`saveJournalEntry` (`src/lib/journal/store.ts`); the pure rules are in
+`src/lib/journal/entry.ts`. Do not write journal rows anywhere else.
+
+- **Old databases reject `note_type = 'journal'`.** The CHECK on `notes` only
+  gained it in the schema file, and SQLite cannot widen a CHECK in place, so
+  every first entry of a day failed. `ensureNote` tries `journal`, then
+  `daily`, then `note`; the slug and `metadata.journal_date` identify the note
+  either way. The monthly compile does the same for `monthly_journal`.
+- **One transaction, one SQL append.** The entry insert and the note append
+  run in one `db.batch`, and the append is `content || ?`, so concurrent
+  entries both land and a failure leaves neither half. The note is created
+  with `ON CONFLICT(user_id, slug) DO NOTHING` (not `OR IGNORE`, which would
+  also swallow the CHECK failure). HTML is appended once the editor has saved
+  the note, markdown before that.
+- **Retries cannot duplicate.** The browser sends `clientId`; it becomes the
+  entry id, and a repeat returns the stored entry (`duplicate: true`).
+- **Nothing typed is lost.** The page writes each entry to a `localStorage`
+  outbox (`src/lib/journal/outbox.ts`, `useJournalOutbox`) before sending,
+  removes it only on success, and retries on reconnect, every 30s and on the
+  next visit. Unsent drafts are kept per day.
+- **Days and times are the writer's.** The client sends its IANA zone (else
+  the saved preference, else UTC): the server runs in UTC, which filed evening
+  entries under tomorrow and stamped them with tomorrow-morning's time.
+
 ### Note Lenses (fluid views of a note)
 
 The note page offers the same note as other views (chart, timeline,

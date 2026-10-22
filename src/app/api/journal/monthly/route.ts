@@ -6,11 +6,31 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { db, queryAll, queryOne } from "@/lib/db/client";
+import { queryAll, queryOne } from "@/lib/db/client";
 import { getCurrentUser } from "@/lib/auth";
-import type { JournalEntry, MonthlyJournal, Note } from "@/lib/db/schema";
-import { v4 as uuid } from "uuid";
+import type { JournalEntry, MonthlyJournal } from "@/lib/db/schema";
 import { complete } from "@/lib/ai/client";
+import { saveMonthlyJournal } from "@/lib/journal/store";
+
+function parseTags(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.filter((t): t is string => typeof t === "string");
+  if (typeof raw !== "string") return [];
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJson<T>(raw: unknown, fallback: T): T {
+  if (typeof raw !== "string") return (raw as T) ?? fallback;
+  try {
+    return JSON.parse(raw || "null") ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -77,16 +97,12 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     monthlyJournal: monthlyJournal ? {
       ...monthlyJournal,
-      categories: typeof monthlyJournal.categories === "string"
-        ? JSON.parse(monthlyJournal.categories || "{}")
-        : monthlyJournal.categories,
-      highlights: typeof monthlyJournal.highlights === "string"
-        ? JSON.parse(monthlyJournal.highlights || "[]")
-        : monthlyJournal.highlights,
+      categories: parseJson<Record<string, number>>(monthlyJournal.categories, {}),
+      highlights: parseJson<string[]>(monthlyJournal.highlights, []),
     } : null,
     entries: entries.map(e => ({
       ...e,
-      tags: typeof e.tags === "string" ? JSON.parse(e.tags || "[]") : e.tags,
+      tags: parseTags(e.tags),
     })),
     categoryBreakdown,
     availableMonths,
@@ -103,7 +119,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) ?? {};
+  } catch {
+    body = {};
+  }
   const year = Number(body.year) || new Date().getFullYear();
   const month = Number(body.month) || new Date().getMonth() + 1;
   const useAI = body.useAI !== false;
@@ -156,7 +177,7 @@ export async function POST(request: NextRequest) {
     compiledContent += `## ${dayName}\n\n`;
 
     for (const entry of dayEntries) {
-      const tags = typeof entry.tags === "string" ? JSON.parse(entry.tags || "[]") : entry.tags;
+      const tags = parseTags(entry.tags);
       const categoryBadge = entry.category !== "general" ? ` \`${entry.category}\`` : "";
       const moodBadge = entry.mood ? ` *${entry.mood}*` : "";
       const tagStr = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
@@ -199,8 +220,10 @@ Respond in JSON:
 
       const cleaned = response.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       const parsed = JSON.parse(cleaned);
-      summary = parsed.summary || null;
-      highlights = parsed.highlights || [];
+      summary = typeof parsed?.summary === "string" ? parsed.summary : null;
+      highlights = Array.isArray(parsed?.highlights)
+        ? parsed.highlights.filter((h: unknown): h is string => typeof h === "string")
+        : [];
 
       // Add AI summary to the compiled content
       if (summary) {
@@ -224,75 +247,25 @@ Respond in JSON:
     compiledContent += `- **${cat}**: ${count} entries\n`;
   }
 
-  // Check if monthly journal already exists
-  const existing = await queryOne<MonthlyJournal>(
-    "SELECT * FROM monthly_journals WHERE user_id = ? AND year = ? AND month = ?",
-    [user.id, year, month]
-  );
-
   let noteId: string;
-
-  if (existing) {
-    // Update existing
-    noteId = existing.note_id;
-    await db.execute({
-      sql: `UPDATE notes SET content = ?, content_plain = ?, updated_at = datetime('now')
-            WHERE id = ?`,
-      args: [compiledContent, compiledContent, noteId],
-    });
-
-    await db.execute({
-      sql: `UPDATE monthly_journals SET
-              entry_count = ?,
-              summary = ?,
-              categories = ?,
-              highlights = ?,
-              compiled_at = datetime('now'),
-              updated_at = datetime('now')
-            WHERE id = ?`,
-      args: [
-        entries.length,
-        summary,
-        JSON.stringify(categoryStats),
-        JSON.stringify(highlights),
-        existing.id,
-      ],
-    });
-  } else {
-    // Create new monthly journal note and record
-    noteId = uuid();
-    const slug = `monthly-journal-${year}-${String(month).padStart(2, "0")}`;
-
-    await db.execute({
-      sql: `INSERT INTO notes (id, user_id, title, slug, content, content_plain, note_type, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, 'monthly_journal', ?)`,
-      args: [
-        noteId,
-        user.id,
-        `${monthName} ${year} Journal`,
-        slug,
-        compiledContent,
-        compiledContent,
-        JSON.stringify({ year, month }),
-      ],
-    });
-
-    const mjId = uuid();
-    await db.execute({
-      sql: `INSERT INTO monthly_journals (id, note_id, user_id, year, month, entry_count, summary, categories, highlights, compiled_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-      args: [
-        mjId,
-        noteId,
-        user.id,
-        year,
-        month,
-        entries.length,
-        summary,
-        JSON.stringify(categoryStats),
-        JSON.stringify(highlights),
-      ],
-    });
+  try {
+    ({ noteId } = await saveMonthlyJournal({
+      userId: user.id,
+      year,
+      month,
+      title: `${monthName} ${year} Journal`,
+      content: compiledContent,
+      entryCount: entries.length,
+      summary,
+      categories: categoryStats,
+      highlights,
+    }));
+  } catch (error) {
+    console.error("[journal] monthly compile save failed:", error);
+    return NextResponse.json(
+      { error: "The monthly journal couldn't be saved. Try again in a moment." },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({
