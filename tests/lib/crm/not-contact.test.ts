@@ -45,7 +45,7 @@ import {
 } from "@/lib/crm/not-contact";
 import { getNotContact, stillAContactSql } from "@/lib/crm/metadata";
 import { StructureError } from "@/lib/crm/structure";
-import { normalizeEntityKey } from "@/lib/entities/resolve";
+import { normalizeEntityKey, type EntityType } from "@/lib/entities/resolve";
 import type { Entity } from "@/lib/db/schema";
 
 const USER = "u1";
@@ -94,7 +94,7 @@ async function mention(
   name: string,
   sourceId: string,
   sourceType = "note",
-  type = "org"
+  type: EntityType = "org"
 ): Promise<string | undefined> {
   const key = normalizeEntityKey(name);
   const { entityIdsByKey } = await ingestExtractedEntities(
