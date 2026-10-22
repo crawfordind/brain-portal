@@ -53,6 +53,7 @@ import type { Attachment } from '@/lib/db/schema';
 import { safeAttachmentUrl } from '@/lib/attachments/embed';
 import { EditorVoiceButton } from '@/components/voice/editor-voice-button';
 import { SketchDialog, type SketchResult } from '@/components/sketch/sketch-dialog';
+import { useEditorSpellcheck } from '@/hooks/use-editor-spellcheck';
 
 // Check if HTML clipboard content has real formatting (not just wrapper tags)
 function hasRichHtml(html: string): boolean {
@@ -192,6 +193,14 @@ export function MarkdownEditor({
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  // Settings → Editor → Spell check. Set on the DOM node rather than through
+  // editorProps so changing it does not rebuild the editor.
+  const [spellcheck] = useEditorSpellcheck();
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.view.dom.setAttribute("spellcheck", spellcheck ? "true" : "false");
+  }, [editor, spellcheck]);
 
   useEffect(() => {
     if (!editor) return;

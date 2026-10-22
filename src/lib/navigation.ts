@@ -66,7 +66,8 @@ export function isActiveRoute(pathname: string, href: string): boolean {
  */
 export function contentWidthClass(pathname: string): string {
   // Operations is lists and two-column sections, like the dashboard.
-  return pathname === "/" || isActiveRoute(pathname, "/operations")
-    ? "max-w-6xl"
-    : "max-w-4xl";
+  if (pathname === "/" || isActiveRoute(pathname, "/operations")) return "max-w-6xl";
+  // Settings carries its own section sidebar beside a reading-width column.
+  if (isActiveRoute(pathname, "/settings")) return "max-w-5xl";
+  return "max-w-4xl";
 }

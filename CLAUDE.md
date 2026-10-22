@@ -152,6 +152,29 @@ two quick "Load more" clicks could append the same page twice.
 
 Design and the rest of the roadmap: `docs/plans/2026-09-14-stream-dashboard-v2-design.md`.
 
+### Settings (`/settings`)
+
+One section at a time, chosen from named groups (Account, Preferences, AI,
+Advanced). Desktop: a sticky sidebar with search beside the open section.
+Phone: the same list as the whole page, each row opening its section with a
+back button. It replaced one column of fourteen cards.
+
+- **The section is the URL hash** (`/settings#notifications`). Hashes were
+  already how email footers, the share dialog and the OpenRouter callback linked
+  here, so they still land on the right section. Old names map through
+  `LEGACY_ALIASES`; an unknown hash shows the list rather than a guess.
+- **`src/lib/settings/sections.ts`** (pure, imports nothing, unit-tested) is
+  the table of contents: ids, groups, descriptions, search keywords,
+  `resolveSectionId`, `searchSections`. Add a section there, then give it an
+  icon and a renderer in `settings-shell.tsx`.
+- **Draw new sections with `SettingsGroup` / `SettingsRow`**
+  (`settings-primitives.tsx`) so they read like the others.
+- **Only real settings.** The old page had Auto-save, Spell check, "Auto-generate
+  insights" and "Weekly review reminders" switches wired to nothing. Spell
+  check is now real (`useEditorSpellcheck`, per device, applied to the editor's
+  DOM node), auto-save is described rather than offered, and the other two are
+  gone. Appearance also exposes stream density (`useStreamDensity`).
+
 ### Operations Control Center (`/operations`)
 
 A decision-and-execution layer over records Brain Portal already owns. It is
