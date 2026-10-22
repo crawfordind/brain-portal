@@ -100,7 +100,7 @@ async function mentionsOf(id: string): Promise<string[]> {
       args: [id],
     })
   ).rows;
-  return rows.map((r) => String(r.source_id));
+  return rows.map((r: Record<string, unknown>) => String(r.source_id));
 }
 
 describe("updateContact", () => {
