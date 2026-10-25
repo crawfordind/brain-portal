@@ -270,10 +270,10 @@ counts can never disagree).
 
 - **Desktop** (`agentic-sidebar.tsx`), two groups: *Today* — Stream, Tasks,
   Review, Contacts (the ones that carry badges); *Library* — Notes, Journal,
-  Projects. Then Settings and pinned notes.
+  Projects, Whiteboards. Then Settings and pinned notes.
 - **Mobile** (`agentic-bottom-nav.tsx`): Tasks | Stream | Notes | More. The
-  "More" sheet holds Review, **Contacts**, Journal, Projects, Settings, Sign
-  Out, and the More button carries a dot when either queue is non-empty. The
+  "More" sheet holds Review, **Contacts**, Journal, Projects, Whiteboards,
+  Settings, Sign Out, and the More button carries a dot when either queue is non-empty. The
   CRM previously had no mobile entry point at all. "Notifications" was dropped
   from the sheet: it pointed at `/settings#notifications`, one row below
   Settings, while the real bell is in the header on mobile too.
@@ -365,6 +365,64 @@ truth. Design and roadmap: `docs/plans/2026-09-25-note-lenses-design.md`.
 - **The editor is never inside a scroll container** (it would break the sticky
   toolbar); it stays mounted and hidden while a lens is shown.
 - A note with nothing structured shows no strip at all. No tables, no migration.
+
+### Whiteboards (`/projects/<slug>/whiteboard`, `/notes/<slug>/whiteboard`)
+
+Every project has a whiteboard and so does every note. A project's board space
+has tabs: the project's own board first, then one per note in the project, so
+a note's board opens beside its neighbours'. A note outside any project (or
+reached through an account share) gets its board alone. `/whiteboards` lists
+every board the account can open. Code: `src/lib/whiteboards/` (`types.ts`
+imports nothing; `layout.ts` and `organize.ts` are pure), `/api/whiteboards/*`,
+`src/components/whiteboard/`, MCP module `whiteboards`.
+
+- **Items are rows, not a blob.** `whiteboard_items` holds stickies, text,
+  shapes, frames, connectors, cards and ink, one row each, with client-minted
+  ids, so saves are idempotent and an agent adding stickies never overwrites
+  a person dragging one. `whiteboards.version` is bumped by every write and
+  each item records the version that wrote it (`rev`); the canvas polls
+  `GET /api/whiteboards/[id]?since=<version>` every 3s, which is how an
+  agent's work appears on an open board (with a "<key> added N items" toast).
+  An item with unsaved local edits is never overwritten by a poll.
+- **Access is borrowed, never decided here.** A project's board is as visible
+  as the project (`getProjectAccess`), a note's as the note (`getNoteAccess`),
+  so collaborators and account shares carry the board and revoking removes
+  it. Viewers read; editors write. `user_id` is always the target's owner,
+  whoever opened the board first. Both FKs cascade.
+- **Cards are live links.** A card shows a note or task as it is now (title,
+  status, due date), resolved on every read and only when the viewer could
+  open it anyway (owner's, viewer's, or the board's project's). Ticking a task
+  card uses `PATCH /api/operations/items/[id]`, so no delegation side effects.
+- **Frames hold what is inside them, geometrically.** Membership is computed
+  (`frameOf`: the smallest frame containing an item's centre), never stored,
+  so nothing goes stale; moving a frame moves its contents.
+- **Agents don't need coordinates.** `add_whiteboard_items` takes items with an
+  optional `frame` (title, id or a `ref` from the same call) and places them
+  with `placeNewItems`: inside the frame below its contents, else to the right
+  of everything, never overlapping. Frames made in the same call are sized
+  for what goes in them. `get_whiteboard` returns an outline (frames, nesting,
+  card status, arrows, every id) rather than coordinates to reason over.
+- **Into the rest of the app**: stickies → tasks in the board's project (and
+  linked to the note on a note's board), each swapped for a live task card in
+  place; board → a markdown note (frames become headings); *Ask about this
+  board* (chat item type `whiteboard`, outline as the body); *Send to
+  <agent>* on the project or note, whose envelope now carries the board's
+  outline in a `<whiteboard>` block (`whiteboard` is a structural prompt tag).
+- **"Organise with AI"** (`/api/whiteboards/[id]/actions`, fast slot): the
+  model only proposes themes and members (`readOrganizeAnswer` keeps known
+  ids, each once, leftovers in "Other"); `groupItems` makes the frames, the
+  same code `organize_whiteboard` uses. Tidy and organise can be undone from
+  the toast. Failures say why (`diagnoseError`).
+- **The canvas is hand-built** (no library: no licence watermark, nothing for
+  self-hosters to configure). Pan (wheel, Space, middle button, one finger),
+  zoom (Ctrl/⌘+wheel, pinch), marquee, move, resize, undo/redo, copy/paste,
+  keyboard tools (V H S T R F C P E), paste a list for one sticky per line.
+  The camera is remembered per board in `localStorage` (a property of the
+  screen, like stream density). `contentWidthClass` gives board routes
+  `max-w-none`.
+- **Migration**: `applyWhiteboardMigration` (`src/lib/whiteboards/schema.ts`),
+  run by `npm run db:migrate`. Additive; routes answer 503 with that hint
+  until it has run.
 
 ## Architecture Overview
 
@@ -1821,16 +1879,19 @@ A full-featured MCP server that exposes Brain Portal's capabilities to Claude Co
 - `src/mcp/server.ts` - Main entry point (stdio transport, auth, registration)
 - `src/mcp/auth.ts` - API key authentication (SHA-256 hashed keys, scoped to users)
 - `src/mcp/db.ts` - Standalone Turso client (runs outside Next.js)
-- `src/mcp/tools/` - MCP tool implementations (52 tools; `index.ts` is the single
+- `src/mcp/tools/` - MCP tool implementations (59 tools; `index.ts` is the single
   registration point both transports and the catalog test use)
 - `src/mcp/resources/` - MCP resource providers (7 resources)
 - `src/mcp/prompts/` - MCP prompt templates (4 prompts)
 
-### Tools (52 total)
+### Tools (59 total)
 
 The 9 Operations tools are listed under *Operations Control Center*; the 4
 sharing tools (`share_note`, `unshare_note`, `list_note_shares`,
 `list_shared_notes`) under *Sharing Notes*.
+The 7 whiteboard tools (`list_whiteboards`, `get_whiteboard`,
+`add_whiteboard_items`, `update_whiteboard_items`, `delete_whiteboard_items`,
+`organize_whiteboard`, `convert_whiteboard_items`) under *Whiteboards*.
 
 | Tool | Description |
 |------|-------------|
@@ -1916,7 +1977,7 @@ Every tool / resource / prompt invocation is guarded by `src/mcp/guard.ts`:
 1. **Scope check** — the key must hold the required scope or `*`. Denied calls do NOT consume a rate-limit token.
 2. **Rate limit** — token-bucket keyed by API-key id (`src/mcp/rate-limit.ts`), refilling continuously at `rate_limit_per_minute / 60000` tokens per ms.
 
-Canonical scopes (`MCP_SCOPES` in `src/lib/mcp/keys.ts`): `notes:read`, `notes:write`, `notes:share`, `tasks:read`, `tasks:write`, `projects:read`, `projects:write`, `captures:read`, `captures:write`, `search:read`, `ai:search`, `ai:insights`, `ai:delegate`, `resources:read`, `prompts:read`, `crm:read`, `crm:write`. `*` is wildcard.
+Canonical scopes (`MCP_SCOPES` in `src/lib/mcp/keys.ts`): `notes:read`, `notes:write`, `notes:share`, `tasks:read`, `tasks:write`, `projects:read`, `projects:write`, `captures:read`, `captures:write`, `search:read`, `ai:search`, `ai:insights`, `ai:delegate`, `resources:read`, `prompts:read`, `crm:read`, `crm:write`, `whiteboards:read`, `whiteboards:write`. `*` is wildcard. `convert_whiteboard_items` also needs `tasks:write` or `notes:write`, since it writes outside the board.
 
 **Read-only hints**: `registerAllTools` annotates every read-only tool
 `readOnlyHint: true` from the catalog (`isReadOnlyTool`: `*:read` scopes,

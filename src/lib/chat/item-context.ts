@@ -20,6 +20,8 @@ import { queryOne } from "@/lib/db/client";
 import { buildAnnotationPromptSection } from "@/lib/annotations";
 import { findSimilarToText } from "@/lib/ai/embeddings";
 import { CHAT_ITEM_TYPES, type ChatItemType, type ChatItemRef } from "./item-types";
+import { readBoard } from "@/lib/whiteboards/store";
+import { boardOutline } from "@/lib/whiteboards/layout";
 
 export { CHAT_ITEM_TYPES, encodeItemRef, parseItemRef } from "./item-types";
 export type { ChatItemType, ChatItemRef } from "./item-types";
@@ -96,6 +98,9 @@ const ITEM_SOURCES: Record<ChatItemType, ItemSource[]> = {
   // Likewise a "reminder" may be a reminder row or a dated task.
   reminder: [REMINDER_SOURCE, { ...TASK_SOURCE, label: "Reminder" }],
   insight: [INSIGHT_SOURCE],
+  // Not a table row: loaded by `loadWhiteboardItem`, through the board's own
+  // access check, so a project collaborator can ask about a shared board.
+  whiteboard: [],
 };
 
 interface ItemRow {
@@ -124,6 +129,8 @@ export async function loadChatItem(
   userId: string,
   ref: ChatItemRef
 ): Promise<ResolvedChatItem | null> {
+  if (ref.type === "whiteboard") return loadWhiteboardItem(userId, ref);
+
   const candidates = ITEM_SOURCES[ref.type];
   if (!candidates) return null;
 
@@ -170,6 +177,31 @@ export async function loadChatItem(
   }
 
   return null;
+}
+
+/** A whiteboard as a chat subject: its outline is the body. */
+async function loadWhiteboardItem(userId: string, ref: ChatItemRef): Promise<ResolvedChatItem | null> {
+  try {
+    const view = await readBoard(ref.id, userId);
+    const outline = boardOutline(view.board.title, view.items, new Map(Object.entries(view.refs)), { maxLines: 250 });
+    let projectName: string | null = null;
+    if (view.access.scope === "note" && view.access.projectId) {
+      const project = await queryOne<{ name: string }>("SELECT name FROM projects WHERE id = ?", [view.access.projectId]);
+      projectName = project?.name ?? null;
+    } else if (view.access.scope === "project") {
+      projectName = view.access.title;
+    }
+    return {
+      ref,
+      label: view.access.scope === "project" ? "Project whiteboard" : "Note whiteboard",
+      title: view.board.title,
+      body: outline.length > BODY_LIMIT * 2 ? `${outline.slice(0, BODY_LIMIT * 2)}…` : outline,
+      rawBody: "",
+      projectName,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

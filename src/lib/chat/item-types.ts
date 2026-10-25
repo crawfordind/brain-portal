@@ -18,6 +18,8 @@ export const CHAT_ITEM_TYPES = [
   "thought",
   "insight",
   "journal",
+  // A project's or note's whiteboard, read as an outline.
+  "whiteboard",
 ] as const;
 
 export type ChatItemType = (typeof CHAT_ITEM_TYPES)[number];

@@ -50,6 +50,7 @@ import {
   Target,
   Network,
   Users,
+  LayoutDashboard,
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -517,6 +518,13 @@ export default function ProjectDetailPage() {
             </>
           ) : (
             <>
+              {/* Every project has a whiteboard; its notes are tabs inside it. */}
+              <Button variant="outline" asChild className="min-h-11 md:min-h-9 px-3">
+                <Link href={`/projects/${project.slug}/whiteboard`} aria-label="Whiteboard">
+                  <LayoutDashboard className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Whiteboard</span>
+                </Link>
+              </Button>
               {projectRole === "owner" && (
                 <Button
                   variant="ghost"

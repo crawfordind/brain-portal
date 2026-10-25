@@ -176,6 +176,8 @@ function scopeDescription(scope: string): string {
     "prompts:read": "Use templated prompts (summarize_notes, weekly_review, ...).",
     "crm:read": "Search contacts, ventures and the review queue.",
     "crm:write": "Create, merge and update contacts, roles and interactions.",
+    "whiteboards:read": "Read project and note whiteboards as outlines.",
+    "whiteboards:write": "Add, change, organise and convert whiteboard items.",
   };
   return map[scope] ?? "";
 }

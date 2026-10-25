@@ -34,6 +34,7 @@ import { RuntimeError } from "./errors";
 import { createHermesClient, type HermesClient, type HermesRun } from "./hermes-client";
 import { runOpenRouterTask, type CompleteFn } from "./openrouter";
 import { buildEnvelope, type EnvelopeInput, type EnvelopeSourceType } from "./envelope";
+import { outlineForTarget } from "@/lib/whiteboards/store";
 import {
   coarseStatus,
   interpretRunStatus,
@@ -608,6 +609,17 @@ export async function loadEnvelopeInput(task: ManagedTaskRow): Promise<EnvelopeI
       )
     : null;
 
+  // A project or note sent from its whiteboard carries the board with it, so
+  // a runtime without tools still sees what the user laid out.
+  let whiteboard: EnvelopeInput["whiteboard"] = null;
+  if (sourceId && (sourceType === "project" || sourceType === "note")) {
+    try {
+      whiteboard = await outlineForTarget({ scope: sourceType, id: sourceId }, userId);
+    } catch {
+      // Optional table; a board that can't be read is simply left out.
+    }
+  }
+
   let guardrails = "";
   try {
     guardrails = (await getCompiledGuardrails(userId)) || "";
@@ -644,6 +656,7 @@ export async function loadEnvelopeInput(task: ManagedTaskRow): Promise<EnvelopeI
     attachedNotes,
     annotations,
     project,
+    whiteboard,
     urls: parseJsonArray(task.context_urls),
     guardrails,
     outputFormat: task.output_format || "markdown",

@@ -33,6 +33,8 @@ export const MCP_SCOPES = [
   "prompts:read",
   "crm:read",
   "crm:write",
+  "whiteboards:read",
+  "whiteboards:write",
 ] as const;
 
 export type McpScope = (typeof MCP_SCOPES)[number] | "*";
@@ -49,6 +51,7 @@ export const SCOPE_PRESETS: Record<string, McpScope[]> = {
     "resources:read",
     "prompts:read",
     "crm:read",
+    "whiteboards:read",
   ],
   ai_only: [
     "ai:search",
