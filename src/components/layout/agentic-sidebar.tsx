@@ -9,7 +9,7 @@
  *   Today   Stream, Operations, Tasks, Review, Contacts — what needs the user
  *           (Operations is the control center over tasks, projects and
  *           contacts; see src/lib/operations)
- *   Library Notes, Journal, Projects — where things are kept, not pending
+ *   Library Notes, Journal, Projects, Whiteboards — where things are kept, not pending
  *
  * Every entry resolves to a distinct destination. "Brain" used to sit here
  * pointing at `/tasks?view=queue` — a view value the Work page did not accept —
@@ -21,7 +21,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LogOut, Brain, Zap, FileText, FolderKanban, CheckSquare, Settings, BookOpen, Bot, Contact, Gauge } from "lucide-react";
+import { LogOut, Brain, Zap, FileText, FolderKanban, CheckSquare, Settings, BookOpen, Bot, Contact, Gauge, LayoutDashboard } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +55,7 @@ const libraryNav: SidebarItem[] = [
   { name: "Notes", href: "/notes", icon: FileText },
   { name: "Journal", href: "/journal", icon: BookOpen },
   { name: "Projects", href: "/projects", icon: FolderKanban },
+  { name: "Whiteboards", href: "/whiteboards", icon: LayoutDashboard },
 ];
 
 const secondaryNav = [

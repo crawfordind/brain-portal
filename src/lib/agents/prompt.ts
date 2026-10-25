@@ -9,7 +9,7 @@
  * cannot close `<brain_portal_context>` and append instructions of its own.
  */
 const PROMPT_STRUCTURAL_TAGS =
-  /(<\/?(?:role|content|context|output_requirements|original_content|previous_output|feedback|revision_instructions|source_entity|annotations|brain_portal_context|brain_portal_task|instruction|attached_note|project|guardrails|urls)(?:\s[^>]*)?>)/gi;
+  /(<\/?(?:role|content|context|output_requirements|original_content|previous_output|feedback|revision_instructions|source_entity|annotations|brain_portal_context|brain_portal_task|instruction|attached_note|project|guardrails|urls|whiteboard)(?:\s[^>]*)?>)/gi;
 
 export function escapePromptContent(text: string | null | undefined): string {
   if (!text) return "";

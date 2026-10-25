@@ -2,6 +2,7 @@ import { createClient } from "@libsql/client";
 import * as dotenv from "dotenv";
 import { applyAgentRuntimeMigration } from "../src/lib/agents/runtime/schema";
 import { applyNoteSharingMigration } from "../src/lib/sharing/schema";
+import { applyWhiteboardMigration } from "../src/lib/whiteboards/schema";
 import { applyUserAiKeysMigration } from "../src/lib/ai/credentials/schema";
 import { applyAiUsageMigration } from "../src/lib/ai/usage/schema";
 
@@ -1250,6 +1251,17 @@ async function migrate() {
   } catch (error: unknown) {
     errorCount++;
     console.error(`✗ Note sharing migration:`, (error as Error).message?.substring(0, 160));
+  }
+
+  // Whiteboards for projects and notes (whiteboards, whiteboard_items).
+  // Additive; see src/lib/whiteboards/schema.ts.
+  console.log("\nWhiteboards...");
+  try {
+    await applyWhiteboardMigration(db, (m) => console.log(m));
+    successCount++;
+  } catch (error: unknown) {
+    errorCount++;
+    console.error(`✗ Whiteboards migration:`, (error as Error).message?.substring(0, 160));
   }
 
   // Personal AI provider keys (user_ai_keys). Additive; see

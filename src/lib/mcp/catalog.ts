@@ -34,6 +34,15 @@ import {
   shareNoteShape,
   unshareNoteShape,
 } from "@/lib/sharing/tool-schemas";
+import {
+  addWhiteboardItemsShape,
+  convertWhiteboardItemsShape,
+  deleteWhiteboardItemsShape,
+  getWhiteboardShape,
+  listWhiteboardsShape,
+  organizeWhiteboardShape,
+  updateWhiteboardItemsShape,
+} from "@/lib/whiteboards/tool-schemas";
 
 // ─── Tools ────────────────────────────────────────────────────────────
 
@@ -49,7 +58,8 @@ export interface ToolSpec {
     | "search"
     | "ai"
     | "crm"
-    | "operations";
+    | "operations"
+    | "whiteboards";
   inputSchema: z.ZodObject<z.ZodRawShape>;
   /** Example arguments (also used in the markdown docs). */
   example?: Record<string, unknown>;
@@ -827,6 +837,75 @@ export const TOOLS: ToolSpec[] = [
     scope: "tasks:read",
     category: "operations",
     inputSchema: z.object(getAutomationHealthShape),
+  },
+
+  // ─── Whiteboards ───────────────────────────────────────
+  {
+    name: "list_whiteboards",
+    description:
+      "Whiteboards this account can open (one per project, one per note), with item counts.",
+    scope: "whiteboards:read",
+    category: "whiteboards",
+    inputSchema: z.object(listWhiteboardsShape),
+    example: { project_id: "p_abc123" },
+  },
+  {
+    name: "get_whiteboard",
+    description:
+      "Read a project's or note's whiteboard as an outline: frames and their contents, stickies, live note/task cards, arrows.",
+    scope: "whiteboards:read",
+    category: "whiteboards",
+    inputSchema: z.object(getWhiteboardShape),
+    example: { project_id: "p_abc123", include_items: false },
+  },
+  {
+    name: "add_whiteboard_items",
+    description:
+      "Add stickies, text, shapes, frames, note/task cards and arrows to a whiteboard (created if needed). Coordinates optional; items can go into a frame by title or ref.",
+    scope: "whiteboards:write",
+    category: "whiteboards",
+    inputSchema: z.object(addWhiteboardItemsShape),
+    example: {
+      project_id: "p_abc123",
+      items: [
+        { kind: "frame", text: "Risks", ref: "risks" },
+        { kind: "sticky", text: "Supplier slips a week", frame: "risks", color: "pink" },
+      ],
+    },
+  },
+  {
+    name: "update_whiteboard_items",
+    description: "Change the text, colour, position, size or stacking of whiteboard items. Only given fields change.",
+    scope: "whiteboards:write",
+    category: "whiteboards",
+    inputSchema: z.object(updateWhiteboardItemsShape),
+    example: { board_id: "b_abc123", items: [{ id: "wi_1", color: "green" }] },
+  },
+  {
+    name: "delete_whiteboard_items",
+    description: "Remove whiteboard items (and arrows attached to them). Never deletes a card's note or task.",
+    scope: "whiteboards:write",
+    category: "whiteboards",
+    inputSchema: z.object(deleteWhiteboardItemsShape),
+    example: { board_id: "b_abc123", item_ids: ["wi_1"] },
+  },
+  {
+    name: "organize_whiteboard",
+    description:
+      "Group listed items into new titled frames (themes you choose), or tidy the board when no groups are given.",
+    scope: "whiteboards:write",
+    category: "whiteboards",
+    inputSchema: z.object(organizeWhiteboardShape),
+    example: { board_id: "b_abc123", groups: [{ title: "Pricing", item_ids: ["wi_1", "wi_2"] }] },
+  },
+  {
+    name: "convert_whiteboard_items",
+    description:
+      "Stickies → real tasks in the board's project (each becomes a live task card), or the whole board → a note. Also needs tasks:write or notes:write.",
+    scope: "whiteboards:write",
+    category: "whiteboards",
+    inputSchema: z.object(convertWhiteboardItemsShape),
+    example: { board_id: "b_abc123", to: "tasks", item_ids: ["wi_1"] },
   },
 ];
 

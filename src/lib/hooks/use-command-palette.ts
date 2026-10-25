@@ -13,6 +13,7 @@ import {
   StickyNote,
   LayoutGrid,
   BookOpen,
+  LayoutDashboard,
   type LucideIcon
 } from 'lucide-react';
 import type { CommandResult } from '@/lib/stores/command-store';
@@ -244,6 +245,19 @@ export function useCommandPalette() {
       category: 'navigation',
       handler: () => {
         router.push('/projects');
+      },
+    },
+    {
+      id: 'go-to-whiteboards',
+      voiceTriggers: ['go to whiteboards', 'show whiteboards', 'open whiteboard'],
+      voicePattern: /(?:go\s+to|show|open)\s+(?:the\s+)?whiteboards?/i,
+      keywords: ['whiteboard', 'whiteboards', 'board', 'canvas', 'sticky', 'brainstorm'],
+      label: 'Go to Whiteboards',
+      description: 'Project and note boards',
+      icon: LayoutDashboard,
+      category: 'navigation',
+      handler: () => {
+        router.push('/whiteboards');
       },
     },
     {

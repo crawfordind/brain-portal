@@ -58,6 +58,11 @@ const BY_TYPE: Record<ChatItemType, ItemSuggestion[]> = {
     { label: "What could go wrong?", prompt: "What should I anticipate here? What tends to go wrong with this kind of thing?" },
     { label: "Draft it", prompt: "Draft whatever this needs from me — a message, an outline, a checklist. Pick the most useful one." },
   ],
+  whiteboard: [
+    { label: "What's the story?", prompt: "Read this whiteboard and tell me what it adds up to: the main themes, how they connect, and what's still unresolved." },
+    { label: "What's missing?", prompt: "Looking at this whiteboard, what important ideas, risks or steps are missing? Be specific." },
+    { label: "Turn it into a plan", prompt: "Turn this whiteboard into a short, ordered plan with concrete next steps I could act on this week." },
+  ],
   insight: [
     { label: "Go deeper", prompt: "Take this further. What follows from it that isn't obvious yet?" },
     { label: "Is it true?", prompt: "Stress-test this. What evidence supports it, and what would falsify it?" },

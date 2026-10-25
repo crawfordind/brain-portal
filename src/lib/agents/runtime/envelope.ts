@@ -39,6 +39,8 @@ export interface EnvelopeInput {
   attachedNotes: Array<{ id: string; title: string; content: string }>;
   annotations: string;
   project: { id: string; name: string; description: string | null } | null;
+  /** The source project's or note's whiteboard, as an outline, when it has one. */
+  whiteboard?: { boardId: string; outline: string } | null;
   urls: string[];
   guardrails: string;
   outputFormat: string;
@@ -67,6 +69,7 @@ export const ENVELOPE_LIMITS = {
   attachedNote: 8_000,
   urls: 10,
   url: 2_048,
+  whiteboard: 12_000,
   previousOutput: 12_000,
   feedback: 4_000,
   guardrails: 4_000,
@@ -189,6 +192,11 @@ function buildInput(input: EnvelopeInput, scale: number): string {
     context.push(
       `<project id="${attr(input.project.id)}">\nName: ${safe(input.project.name, 300)}\n` +
         `${input.project.description ? `Description: ${safe(input.project.description, 2_000)}\n` : ""}</project>`
+    );
+  }
+  if (input.whiteboard?.outline.trim()) {
+    context.push(
+      `<whiteboard id="${attr(input.whiteboard.boardId)}">\n${safe(input.whiteboard.outline, scaled(L.whiteboard))}\n</whiteboard>`
     );
   }
   const urls = input.urls

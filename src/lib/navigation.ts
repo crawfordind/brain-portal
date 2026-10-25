@@ -65,6 +65,8 @@ export function isActiveRoute(pathname: string, href: string): boolean {
  * place instead of as a conditional buried in the layout's JSX.
  */
 export function contentWidthClass(pathname: string): string {
+  // A whiteboard is a canvas, not prose: it takes the whole content area.
+  if (/^\/(projects|notes)\/[^/]+\/whiteboard$/.test(pathname)) return "max-w-none";
   // Operations is lists and two-column sections, like the dashboard.
   if (pathname === "/" || isActiveRoute(pathname, "/operations")) return "max-w-6xl";
   // Settings carries its own section sidebar beside a reading-width column.

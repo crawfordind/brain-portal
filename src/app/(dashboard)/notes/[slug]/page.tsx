@@ -48,6 +48,7 @@ import {
   Send,
   Users,
   X,
+  LayoutDashboard,
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -481,6 +482,14 @@ export default function NoteDetailPage() {
                 <span className="hidden sm:inline">{isSaving ? "Saving..." : "Save"}</span>
               </Button>
             )}
+            {/* The note's own whiteboard; in a project it opens as a tab of
+                the project's board space. */}
+            <Button variant="outline" asChild className="min-h-11 min-w-11 md:min-h-9 px-3">
+              <Link href={`/notes/${note.slug}/whiteboard`} aria-label="Whiteboard">
+                <LayoutDashboard className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">Board</span>
+              </Link>
+            </Button>
             {/* In the header, not only the menu: the menu lists every project
                 inline on a phone, which pushed Share off the bottom of it. */}
             {isOwner && (

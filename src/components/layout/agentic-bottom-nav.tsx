@@ -41,6 +41,7 @@ import {
   Contact,
   Bot,
   Gauge,
+  LayoutDashboard,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -97,6 +98,7 @@ export function AgenticBottomNav() {
     { name: "Contacts", href: "/crm", icon: Contact, description: "People, orgs and ventures", badge: crmCount },
     { name: "Journal", href: "/journal", icon: BookOpen, description: "Daily journal", badge: 0 },
     { name: "Projects", href: "/projects", icon: FolderKanban, description: "Workspaces", badge: 0 },
+    { name: "Whiteboards", href: "/whiteboards", icon: LayoutDashboard, description: "Project and note boards", badge: 0 },
     { name: "Settings", href: "/settings", icon: Settings, description: "Preferences & export", badge: 0 },
   ];
 

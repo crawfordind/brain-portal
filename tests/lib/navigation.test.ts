@@ -30,6 +30,13 @@ describe("contentWidthClass", () => {
     expect(contentWidthClass("/operationsx")).toBe("max-w-4xl");
   });
 
+  it("gives a whiteboard the whole content area, and nothing else under notes or projects", () => {
+    expect(contentWidthClass("/projects/launch/whiteboard")).toBe("max-w-none");
+    expect(contentWidthClass("/notes/plan/whiteboard")).toBe("max-w-none");
+    expect(contentWidthClass("/notes/whiteboard")).toBe("max-w-4xl");
+    expect(contentWidthClass("/projects/launch")).toBe("max-w-4xl");
+  });
+
   it("gives Settings room for its section sidebar beside the reading column", () => {
     expect(contentWidthClass("/settings")).toBe("max-w-5xl");
   });
