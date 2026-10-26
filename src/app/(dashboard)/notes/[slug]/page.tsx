@@ -713,6 +713,7 @@ export default function NoteDetailPage() {
           projectId={note.project_id}
           onInsert={handleInsertAttachment}
           onUploadClick={() => setShowUploadModal(true)}
+          canEdit={canEditNote}
           className="min-h-[500px]"
         />
 
@@ -744,12 +745,11 @@ export default function NoteDetailPage() {
             noteId={note.id}
           />
         </NoteLenses>
-        {canEditNote && (
-          <NoteAttachments
-            noteId={note.id}
-            projectId={note.project_id}
-          />
-        )}
+        <NoteAttachments
+          noteId={note.id}
+          projectId={note.project_id}
+          canEdit={canEditNote}
+        />
       </div>
 
       {/* Upload Modal (desktop side panel trigger) */}

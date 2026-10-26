@@ -1627,6 +1627,9 @@ export interface Attachment {
   is_pinned: boolean;
   created_at: string;
   updated_at: string;
+  /** Not a column: set by the attachment API, true when the viewer uploaded it
+   * and so may delete, pin or move it. Files on a shared note are read-only. */
+  can_manage?: boolean;
 }
 
 export type NotificationType =

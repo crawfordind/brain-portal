@@ -6,6 +6,7 @@ import type { InValue } from '@libsql/client';
 import { isR2Configured } from '@/lib/storage/r2';
 import { createAttachment, parseTags, resolveAttachmentLinks } from '@/lib/attachments/create';
 import { attachmentErrorResponse, storageNotConfigured } from '@/lib/attachments/http';
+import { getNoteAccess } from '@/lib/sharing/access';
 
 const FILE_TYPES = new Set(['image', 'pdf', 'audio', 'video', 'document', 'other']);
 
@@ -104,10 +105,31 @@ export async function GET(request: NextRequest) {
     LEFT JOIN projects p ON a.project_id = p.id
     LEFT JOIN notes n ON a.note_id = n.id`;
 
-  let from = `${joins}
-    WHERE a.user_id = ?`;
-  let snippets = '';
+  // A note's files go wherever the note goes. Asked for one note, the list is
+  // every file filed under it, whoever uploaded it, as long as the viewer can
+  // open the note (owner, project collaborator or share recipient). Otherwise
+  // it is the viewer's own files. Before, it was always the viewer's own, so a
+  // shared note arrived without its files, and an owner never saw files a
+  // project editor had added.
+  let scope = 'a.user_id = ?';
   const args: InValue[] = [user.id];
+  if (noteId) {
+    try {
+      const access = await getNoteAccess(noteId, user.id);
+      if (!access) {
+        return NextResponse.json({ error: 'Note not found' }, { status: 404 });
+      }
+      scope = 'a.note_id = ?';
+      args[0] = access.note.id;
+    } catch (error) {
+      console.error('Failed to check note access for attachments:', error);
+      return NextResponse.json({ error: 'Failed to list attachments' }, { status: 500 });
+    }
+  }
+
+  let from = `${joins}
+    WHERE ${scope}`;
+  let snippets = '';
 
   // Full-text search using FTS5
   if (search) {
@@ -117,7 +139,7 @@ export async function GET(request: NextRequest) {
              snippet(attachments_fts, 1, '<mark>', '</mark>', '...', 64) as description_snippet`;
     from = `${joins}
       INNER JOIN attachments_fts ON attachments_fts.rowid = a.rowid
-      WHERE a.user_id = ? AND attachments_fts MATCH ?`;
+      WHERE ${scope} AND attachments_fts MATCH ?`;
     args.push(`"${searchTerm}"*`);
   }
 
@@ -129,12 +151,6 @@ export async function GET(request: NextRequest) {
       from += ' AND a.project_id = ?';
       args.push(projectId);
     }
-  }
-
-  // Filter by note
-  if (noteId) {
-    from += ' AND a.note_id = ?';
-    args.push(noteId);
   }
 
   // Filter by file type
@@ -172,7 +188,9 @@ export async function GET(request: NextRequest) {
     >(`${select}${snippets} ${from}${orderBy} LIMIT ? OFFSET ?`, [...args, limit, offset]);
 
     return NextResponse.json({
-      attachments,
+      // Only the uploader may delete, pin or re-file a file (those routes are
+      // scoped to user_id), so the UI offers those controls only where true.
+      attachments: attachments.map((a) => ({ ...a, can_manage: a.user_id === user.id })),
       total,
       hasMore: offset + attachments.length < total,
     });

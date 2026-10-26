@@ -212,4 +212,72 @@ describe('GET /api/attachments', () => {
     expect(listArgs.slice(-2)).toEqual([50, 0]);
     expect(listArgs).toContain('image');
   });
+
+  it("lists every file on a note shared with the viewer, not only the viewer's own", async () => {
+    vi.mocked(getNoteAccess).mockResolvedValue({
+      note: { id: 'note1' },
+      role: 'viewer',
+      via: 'share',
+      share: null,
+    } as never);
+    vi.mocked(dbClient.query)
+      .mockResolvedValueOnce([{ count: 1 }])
+      .mockResolvedValueOnce([row({ user_id: 'owner1', note_id: 'note1' })]);
+
+    const res = await list(new NextRequest('http://localhost/api/attachments?noteId=note1'));
+    expect(res.status).toBe(200);
+    expect(getNoteAccess).toHaveBeenCalledWith('note1', 'user1');
+
+    const [sql, args] = vi.mocked(dbClient.query).mock.calls[1] as [string, unknown[]];
+    expect(sql).toContain('WHERE a.note_id = ?');
+    expect(sql).not.toContain('a.user_id = ?');
+    expect(args[0]).toBe('note1');
+
+    const body = await res.json();
+    expect(body.attachments).toHaveLength(1);
+    expect(body.attachments[0].can_manage).toBe(false);
+  });
+
+  it('marks the viewer\'s own uploads as manageable', async () => {
+    vi.mocked(getNoteAccess).mockResolvedValue({
+      note: { id: 'note1' },
+      role: 'owner',
+      via: 'owner',
+      share: null,
+    } as never);
+    vi.mocked(dbClient.query)
+      .mockResolvedValueOnce([{ count: 2 }])
+      .mockResolvedValueOnce([
+        row({ id: 'mine', note_id: 'note1' }),
+        row({ id: 'editors', user_id: 'editor1', note_id: 'note1' }),
+      ]);
+
+    const body = await (await list(new NextRequest('http://localhost/api/attachments?noteId=note1'))).json();
+    expect(body.attachments.map((a: { id: string; can_manage: boolean }) => [a.id, a.can_manage])).toEqual([
+      ['mine', true],
+      ['editors', false],
+    ]);
+  });
+
+  it('refuses the files of a note the viewer cannot open', async () => {
+    vi.mocked(getNoteAccess).mockResolvedValue(null);
+    const res = await list(new NextRequest('http://localhost/api/attachments?noteId=someone-elses'));
+    expect(res.status).toBe(404);
+    expect(dbClient.query).not.toHaveBeenCalled();
+  });
+
+  it('keeps search scoped to the note when both are given', async () => {
+    vi.mocked(getNoteAccess).mockResolvedValue({
+      note: { id: 'note1' },
+      role: 'editor',
+      via: 'project',
+      share: null,
+    } as never);
+    vi.mocked(dbClient.query).mockResolvedValueOnce([{ count: 0 }]).mockResolvedValueOnce([]);
+
+    await list(new NextRequest('http://localhost/api/attachments?noteId=note1&search=invoice'));
+    const [sql, args] = vi.mocked(dbClient.query).mock.calls[1] as [string, unknown[]];
+    expect(sql).toContain('WHERE a.note_id = ? AND attachments_fts MATCH ?');
+    expect(args.slice(0, 2)).toEqual(['note1', '"invoice"*']);
+  });
 });

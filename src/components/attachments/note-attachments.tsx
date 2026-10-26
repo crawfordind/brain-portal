@@ -17,10 +17,12 @@ import {
 interface NoteAttachmentsProps {
   noteId: string;
   projectId?: string | null;
+  /** False for someone who may read the note but not change it: no upload. */
+  canEdit?: boolean;
   className?: string;
 }
 
-export function NoteAttachments({ noteId, projectId, className }: NoteAttachmentsProps) {
+export function NoteAttachments({ noteId, projectId, canEdit = true, className }: NoteAttachmentsProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -97,12 +99,14 @@ export function NoteAttachments({ noteId, projectId, className }: NoteAttachment
       {isExpanded && (
         <div className="p-4 pt-0 space-y-4 border-t">
           {/* Upload Section */}
-          <FileUpload
-            onUploadComplete={handleUploadComplete}
-            projectId={projectId}
-            noteId={noteId}
-            maxFiles={5}
-          />
+          {canEdit && (
+            <FileUpload
+              onUploadComplete={handleUploadComplete}
+              projectId={projectId}
+              noteId={noteId}
+              maxFiles={5}
+            />
+          )}
 
           {/* Existing Attachments */}
           {isLoading ? (
@@ -116,12 +120,14 @@ export function NoteAttachments({ noteId, projectId, className }: NoteAttachment
                     key={attachment.id}
                     attachment={attachment}
                     variant="compact"
-                    onDelete={handleDelete}
+                    onDelete={attachment.can_manage === false ? undefined : handleDelete}
                     onView={setSelectedAttachment}
                   />
                 ))}
               </div>
             </div>
+          ) : !canEdit ? (
+            <div className="text-center py-4 text-sm text-muted-foreground">No files attached</div>
           ) : null}
         </div>
       )}
@@ -132,12 +138,16 @@ export function NoteAttachments({ noteId, projectId, className }: NoteAttachment
           attachment={selectedAttachment}
           isOpen={true}
           onClose={() => setSelectedAttachment(null)}
-          onDelete={async () => {
-            if (await deleteAttachment(selectedAttachment)) {
-              handleDelete(selectedAttachment.id);
-              setSelectedAttachment(null);
-            }
-          }}
+          onDelete={
+            selectedAttachment.can_manage === false
+              ? undefined
+              : async () => {
+                  if (await deleteAttachment(selectedAttachment)) {
+                    handleDelete(selectedAttachment.id);
+                    setSelectedAttachment(null);
+                  }
+                }
+          }
         />
       )}
     </div>

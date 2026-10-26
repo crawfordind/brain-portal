@@ -538,6 +538,13 @@ Code: `src/lib/sharing/` (`types.ts` imports nothing; `access.ts`, `store.ts`,
   search and could turn it into tasks in the editor's account. Editors change
   title and text only; move, pin, archive, delete, share and the AI actions
   are owner-only.
+- **A note's files travel with it.** `GET /api/attachments?noteId=` checks
+  `getNoteAccess` and then lists every file filed under the note, whoever
+  uploaded it (so an owner also sees a project editor's uploads); without
+  `noteId` it is the caller's own files. Each row carries `can_manage`
+  (uploader only): delete, pin and move stay with the uploader, and a
+  view-only reader gets the list with no upload or insert. Files used to be
+  listed by `user_id` alone, so a shared note arrived without them.
 - **Non-owners never receive `share_token`** (`redactForViewer`), or the owner's
   other notes via `get_note` connections.
 - **Public pages** render markdown notes (MCP writes markdown) and unwrap

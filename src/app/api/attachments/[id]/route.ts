@@ -5,6 +5,7 @@ import type { Attachment } from '@/lib/db/schema';
 import type { InValue } from '@libsql/client';
 import { deleteAttachment, parseTags, resolveAttachmentLinks } from '@/lib/attachments/create';
 import { attachmentErrorResponse } from '@/lib/attachments/http';
+import { getNoteAccess } from '@/lib/sharing/access';
 
 // GET /api/attachments/[id] - Get single attachment
 export async function GET(
@@ -18,16 +19,21 @@ export async function GET(
 
   const { id } = await params;
 
-  const attachment = await queryOne<Attachment>(
-    'SELECT * FROM attachments WHERE id = ? AND user_id = ?',
-    [id, user.id]
-  );
+  const attachment = await queryOne<Attachment>('SELECT * FROM attachments WHERE id = ?', [id]);
 
-  if (!attachment) {
+  // Readable by its uploader, or by anyone who can open the note it is filed
+  // under (the list route applies the same rule). Not found either way.
+  const readable =
+    attachment &&
+    (attachment.user_id === user.id ||
+      (attachment.note_id !== null && (await getNoteAccess(attachment.note_id, user.id)) !== null));
+  if (!attachment || !readable) {
     return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
   }
 
-  return NextResponse.json({ attachment });
+  return NextResponse.json({
+    attachment: { ...attachment, can_manage: attachment.user_id === user.id },
+  });
 }
 
 // PATCH /api/attachments/[id] - Update attachment metadata
