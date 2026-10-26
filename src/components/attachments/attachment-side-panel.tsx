@@ -17,6 +17,8 @@ interface AttachmentSidePanelProps {
   projectId?: string | null;
   onInsert?: (attachment: Attachment) => void;
   onUploadClick?: () => void;
+  /** False for someone who may read the note but not change it: no upload, no insert. */
+  canEdit?: boolean;
   className?: string;
 }
 
@@ -25,6 +27,7 @@ export function AttachmentSidePanel({
   projectId,
   onInsert,
   onUploadClick,
+  canEdit = true,
   className,
 }: AttachmentSidePanelProps) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -77,10 +80,13 @@ export function AttachmentSidePanel({
     }
   };
 
+  // Someone who can't edit the note opens the file instead of inserting it
   const handleClick = (attachment: Attachment) => {
-    if (onInsert) {
+    if (canEdit && onInsert) {
       onInsert(attachment);
       toast.success('Inserted into note');
+    } else {
+      window.open(attachment.storage_url, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -117,16 +123,19 @@ export function AttachmentSidePanel({
   return (
     <div className={cn('w-[120px] border-r bg-muted/30 flex flex-col', className)}>
       {/* Header */}
-      <div className="p-2 border-b">
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full justify-center"
-          onClick={onUploadClick}
-        >
-          <Plus className="size-4" />
-        </Button>
-      </div>
+      {canEdit && (
+        <div className="p-2 border-b">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full justify-center"
+            onClick={onUploadClick}
+            aria-label="Upload a file"
+          >
+            <Plus className="size-4" />
+          </Button>
+        </div>
+      )}
 
       {/* Thumbnails */}
       <ScrollArea className="flex-1">
@@ -139,7 +148,7 @@ export function AttachmentSidePanel({
             <div className="text-xs text-center text-muted-foreground py-8">
               <div className="text-2xl mb-2">📎</div>
               <div>No files yet</div>
-              <div className="mt-1">Click + to upload</div>
+              {canEdit && <div className="mt-1">Click + to upload</div>}
             </div>
           ) : (
             sortedAttachments.map((attachment) => (
@@ -159,7 +168,8 @@ export function AttachmentSidePanel({
                   <Star className="absolute top-1 right-1 size-4 text-yellow-500 fill-yellow-500" />
                 )}
 
-                {/* Pin button (on hover) */}
+                {/* Pin button (on hover); only the uploader can pin */}
+                {attachment.can_manage !== false && (
                 <button
                   type="button"
                   aria-label={attachment.is_pinned ? 'Unpin' : 'Pin'}
@@ -175,6 +185,7 @@ export function AttachmentSidePanel({
                     )}
                   />
                 </button>
+                )}
               </div>
             ))
           )}
