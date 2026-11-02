@@ -11,7 +11,9 @@
  *      has tried or dismissed it, the voice capture card sits beneath it.
  *   3. Needs you — only what is waiting. Absent when nothing is.
  *   4. People — the CRM, sized to how much it has to say. Absent when empty.
- *   5. Stream — everything else, filtered.
+ *   5. Stream — by default the Mind map: what matters most in this moment,
+ *      today and in life, drawn as a calm neural network (`./mind`). The
+ *      chronological list is one tap away and remembered per device.
  *
  * Bands 3 and 4 render nothing at all on a quiet day, so a user with an empty
  * queue sees the input and their stream and nothing else.
@@ -23,6 +25,9 @@ import { Searchlight } from "./searchlight";
 import { NeedsYou } from "./needs-you";
 import { CrmPulseCard } from "./crm-pulse-card";
 import { VoiceIntroCard } from "./voice-intro-card";
+import { MindView } from "./mind/mind-view";
+import { useStreamView } from "@/hooks/use-stream-view";
+import { Network } from "lucide-react";
 import type { StreamStats } from "@/lib/stream/stats";
 import type { CrmPulse } from "@/lib/crm/pulse";
 
@@ -53,6 +58,7 @@ export function StreamPage({ stats, crm, greeting: serverGreeting }: StreamPageP
    * (locale- and clock-dependent text) and costs no extra render.
    */
   const greeting = typeof window === "undefined" ? serverGreeting : getClientGreeting();
+  const [streamView, setStreamView] = useStreamView();
 
   return (
     <div className="space-y-4">
@@ -103,8 +109,25 @@ export function StreamPage({ stats, crm, greeting: serverGreeting }: StreamPageP
       {/* The CRM. Renders nothing until there are contacts. */}
       <CrmPulseCard pulse={crm} />
 
-      {/* Stream Feed */}
-      <StreamFeed />
+      {/* The stream: the Mind map, or the list for those who prefer rows. */}
+      {streamView === "map" ? (
+        <MindView onShowList={() => setStreamView("list")} />
+      ) : (
+        <div className="space-y-2">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setStreamView("map")}
+              className="flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+              title="See what matters most, as a map"
+            >
+              <Network className="h-3.5 w-3.5" />
+              Map
+            </button>
+          </div>
+          <StreamFeed />
+        </div>
+      )}
     </div>
   );
 }

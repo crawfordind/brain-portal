@@ -82,7 +82,7 @@ I got?"*, and **three of them render nothing when they have nothing to say**:
 | Voice intro | `voice-intro-card.tsx` | until the user dismisses it or tries voice (replaces the old first-visit modal) |
 | **Needs you** | `needs-you.tsx` | any of overdue / to review / contacts to sort / follow-ups due / due today / unread notifications is non-zero |
 | **People** | `crm-pulse-card.tsx` | the user has contacts; a card when something is pending, one quiet line when not |
-| Stream | `stream-feed.tsx` | always |
+| Stream | `mind/mind-view.tsx` (default) or `stream-feed.tsx` | always; Map or List, remembered per device |
 
 - **One place announces that something is waiting.** `NeedsYou` is it. The feed
   used to carry its own "N awaiting review" banner counted from the 30 items it
@@ -99,6 +99,46 @@ I got?"*, and **three of them render nothing when they have nothing to say**:
 - **The legacy dashboard is gone.** `src/components/dashboard/` (hero section,
   conditional sections, insight feeds, widgets — 17 components) was replaced by
   the Stream and had no importer left in the app.
+
+#### The Mind map (the stream's default view)
+
+The stream is drawn as a quiet neural network ranked by **how much each item
+needs the user now**, not by when it was touched. Code:
+`src/lib/stream/mind.ts` (pure, unit-tested), `src/components/stream/mind/`
+(`mind-scene.ts` is three.js, `mind-view.tsx` owns data and actions),
+`useStreamView` (`map` | `list`, `localStorage`).
+
+- **Three scales, one control.** *Moment* is the single most important item,
+  at the centre with a warm aura. *Today* is the next six on a close shell.
+  *Life* is everything else, gathered around project hubs. The Moment / Today /
+  Life buttons are the zoom; there is no wheel or pinch zoom, so the canvas
+  never hijacks page scroll, and vertical swipes still scroll on a phone
+  (`touch-action: pan-y`).
+- **The rules rank; nothing guesses.** `scoreMindItem` adds signals (waiting
+  for review, overdue, due today, reminder due, priority, freshly captured,
+  new since last visit) and the card shows the strongest one as the reason.
+  Date-only due dates compare as calendar days in the viewer's zone.
+- **Connections mean something**: item to project hub, items from one run,
+  items sharing a tag (capped at two per item), the moment to today's shell.
+  Only an otherwise unconnected node gets a faint link to its nearest
+  neighbour. Positions are seeded from ids, so the same items draw the same
+  brain.
+- **Data** is two reads of `GET /api/stream`: recent live items, and live
+  tasks/reminders with `sort=due` (soonest first), so an old overdue task is
+  never missed. The query key starts with `"stream"`, so every existing
+  invalidation refreshes the map.
+- **Calm by construction.** Nodes breathe on a ~6s cycle, pathways fire a soft
+  pulse every 7-16s, the brain drifts when idle. `prefers-reduced-motion` stops
+  all of it and renders on demand; the loop also pauses off-screen and in
+  hidden tabs. Light theme uses normal blending, dark uses additive.
+- **Acting**: the card offers Done / Dismiss / Open / Ask about this / Archive
+  through the same endpoints as the list, optimistic with rollback. Finishing
+  the moment lets the next item glide into the centre.
+- **Without the canvas**: arrow keys walk the ranking, Enter opens, Escape
+  returns to the moment; the card is a live region; an ordered list of
+  everything (most important first) is always in the DOM, and is shown
+  instead of the map when WebGL is unavailable or its context is lost.
+- three.js is loaded with a dynamic `import()`, never in the first bundle.
 
 #### Reading the stream: density and time buckets
 

@@ -28,6 +28,13 @@ export async function GET(req: NextRequest) {
   const statuses = searchParams.get("statuses")?.split(",").filter(Boolean) || [];
   const search = searchParams.get("q") || "";
   const projectId = searchParams.get("projectId") || "";
+  // `sort=due` puts the soonest (and most overdue) due dates first, so the
+  // dashboard's Mind map sees an old overdue task however long ago it was
+  // last touched. The default stays newest-first.
+  const orderBy =
+    searchParams.get("sort") === "due"
+      ? "(due_date IS NULL), due_date ASC, updated_at DESC"
+      : "updated_at DESC";
 
   try {
     // Build unified query from multiple tables
@@ -286,7 +293,7 @@ export async function GET(req: NextRequest) {
         WHERE at2.user_id = ?
       )
       WHERE ${whereClause}
-      ORDER BY updated_at DESC
+      ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `;
 
