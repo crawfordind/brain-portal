@@ -1,13 +1,15 @@
 "use client";
 
 /**
- * Agentic Layout - The new consciousness-first layout
+ * The signed-in app shell.
  *
- * Key differences from the old ResponsiveLayout:
- * - Agent Dock on the right side (desktop)
- * - Brain Bar replaces the old search bar in the header
- * - Streamlined navigation focused on Stream, Spaces, Notes, Work
- * - Bottom nav includes Brain Bar input on mobile
+ * - **1024px and up**: the sidebar (full or rail, see `AgenticSidebar`) beside
+ *   a header carrying search and status.
+ * - **Below 1024px**: a header that names the current section, so the user
+ *   always knows where they are, and the floating dock (`AgenticBottomNav`).
+ *
+ * Both menus read one destination table (`src/lib/nav-destinations.ts`). A
+ * "Skip to content" link is the first thing a keyboard reaches.
  */
 
 import { AgenticSidebar } from "./agentic-sidebar";
@@ -17,10 +19,13 @@ import { UnifiedSearch } from "./unified-search";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { SystemHealthIndicator } from "@/components/system/system-health-indicator";
-import { Brain } from "lucide-react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { appBranding, contentWidthClass } from "@/lib/navigation";
+import { sectionTitle } from "@/lib/nav-destinations";
+import { NeuralMark } from "./nav-shared";
+
 interface AgenticLayoutProps {
   children: React.ReactNode;
 }
@@ -30,35 +35,48 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
   // wants a reading width, the dashboard wants the screen. See
   // `contentWidthClass`.
   const pathname = usePathname();
+  const title = sectionTitle(pathname);
 
   return (
     <div className="flex h-dvh">
-      {/* Desktop sidebar - streamlined */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:rounded-xl focus:bg-primary focus:px-4 focus:py-2.5 focus:text-sm focus:font-medium focus:text-primary-foreground focus:shadow-lg"
+      >
+        Skip to content
+      </a>
+
+      {/* Desktop sidebar */}
       <div className="hidden lg:block">
         <AgenticSidebar />
       </div>
 
       {/* Main content area */}
       <div className="flex flex-1 flex-col min-h-0 min-w-0">
-        {/* Offline banner */}
         <OfflineBanner />
 
-        {/* Header - simplified */}
-        <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
-          <div className="flex h-14 items-center px-4 gap-3">
-            {/* Mobile: Brand */}
-            <div className="flex items-center gap-2 lg:hidden">
-              <Brain className="h-5 w-5 text-primary" />
-              <span className="font-semibold text-sm">{appBranding.shortName}</span>
-            </div>
+        <header className="nav-glass sticky top-0 z-40 border-b border-[var(--nav-edge)]">
+          <div className="flex h-14 items-center gap-3 px-3 sm:px-4">
+            {/* Phone and tablet: brand mark + where you are */}
+            <Link
+              href="/"
+              aria-label={`${appBranding.name}, go to Stream`}
+              className="flex min-h-11 min-w-0 items-center gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 ring-1 ring-primary/20">
+                <NeuralMark className="h-6 w-6" />
+              </span>
+              <span className="truncate text-base font-semibold tracking-tight">
+                {title ?? appBranding.shortName}
+              </span>
+            </Link>
 
-            {/* Desktop: Search (keeping as fallback for finding existing items) */}
+            {/* Desktop: search */}
             <div className="hidden lg:block flex-1">
               <UnifiedSearch variant="desktop" />
             </div>
 
-            {/* Right side actions */}
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-1 sm:gap-2">
               <div className="lg:hidden">
                 <UnifiedSearch variant="mobile" />
               </div>
@@ -66,19 +84,19 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
               {/* Background-failure alert — renders nothing when healthy */}
               <SystemHealthIndicator />
 
-              {/* Notification bell */}
               <NotificationBell />
 
-              <ThemeToggle />
+              {/* On a phone, appearance lives in the dock's Menu. */}
+              <div className="hidden sm:block">
+                <ThemeToggle />
+              </div>
               <SyncStatusIndicator />
             </div>
           </div>
         </header>
 
-        {/* Content area with Agent Dock */}
         <div className="flex flex-1 overflow-hidden">
-          {/* Scrollable main content */}
-          <main className="flex-1 overflow-auto">
+          <main id="main-content" tabIndex={-1} className="flex-1 overflow-auto outline-none">
             <div
               className={cn(
                 "container py-4 px-4 md:py-5 md:px-6 lg:px-8 pb-[calc(var(--mobile-nav-height)+2.5rem)] lg:pb-6",
@@ -88,11 +106,9 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
               {children}
             </div>
           </main>
-
-          {/* Agent Dock - right sidebar (desktop only) */}
         </div>
 
-        {/* Mobile bottom nav */}
+        {/* Phone and tablet dock */}
         <div className="lg:hidden">
           <AgenticBottomNav />
         </div>

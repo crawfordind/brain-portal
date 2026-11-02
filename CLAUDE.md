@@ -299,32 +299,51 @@ A decision-and-execution layer over records Brain Portal already owns. It is
   `list_relationships`, `list_intake`, `triage_capture`,
   `get_automation_health` (input shapes shared with the catalog via
   `src/lib/operations/tool-schemas.ts`).
-- Navigation: sidebar *Today* group, and a fifth mobile button ("Ops") left of
-  the centred Stream button.
+- Navigation: sidebar *Today* group, and the dock's "Ops" button left of the
+  centred Stream orb.
 
 ### Navigation
 
-Both surfaces name the same destinations the same way, and both badge the same
-two queues (`useReviewCount`, `useCrmAttentionCount` — shared hooks, so the
-counts can never disagree).
+One table, every surface: `src/lib/nav-destinations.ts` (pure, imports
+nothing, unit-tested) lists each destination's label, href, group
+(Today / Library / System), one-line description and badge. The sidebar, the
+phone dock and its menu all read it, and `activeDestinationId(pathname)`
+decides the single "you are here" entry (a pattern wins, so
+`/projects/x/whiteboard` is Whiteboards; then the longest prefix). Add a
+destination there, then give it an icon in `NAV_ICONS`
+(`src/components/layout/nav-shared.tsx`). Badges come from one hook,
+`useNavBadges` (over `useReviewCount`, `useCrmAttentionCount`,
+`useInboxCount`), so counts can never disagree between surfaces.
 
-- **Desktop** (`agentic-sidebar.tsx`), two groups: *Today* — Stream, Tasks,
-  Review, Contacts (the ones that carry badges); *Library* — Notes, Journal,
-  Projects, Whiteboards. Then Settings and pinned notes.
-- **Mobile** (`agentic-bottom-nav.tsx`): Tasks | Stream | Notes | More. The
-  "More" sheet holds Review, **Contacts**, Journal, Projects, Whiteboards,
-  Settings, Sign Out, and the More button carries a dot when either queue is non-empty. The
-  CRM previously had no mobile entry point at all. "Notifications" was dropped
-  from the sheet: it pointed at `/settings#notifications`, one row below
-  Settings, while the real bell is in the header on mobile too.
+- **Desktop, 1024px+** (`agentic-sidebar.tsx`): full (256px: icon, name,
+  count, group headings, pinned notes) or a rail (72px: icons with counts and
+  tooltips). `auto` is the rail below 1280px and full above; the footer toggle
+  picks one per device (`localStorage`, like stream density). Width is CSS
+  from `data-mode`, so the first paint is already right.
+- **Phone and tablet, below 1024px** (`agentic-bottom-nav.tsx`): a floating
+  glass dock, Tasks | Ops | (Stream) | Notes | Menu, with Stream as a glowing
+  orb in the centre. It stays a centred pill on a tablet. **Menu** is a Radix
+  sheet (focus trap, Escape, focus return) with search, the destinations the
+  dock lacks as tiles, Settings, Light/Dark, Sign out. The Menu button pulses
+  a dot when a queue behind it has work. The header names the current section
+  (`sectionTitle`), so a phone always says where you are.
+- **Look** (`src/styles/nav.css`): glass, a glowing active bar that glides
+  (framer-motion `layoutId`), a neural brand mark (`NeuralMark`) whose
+  pathways fire and whose core breathes, the Mind map's warm aura on the orb.
+  All from theme tokens; every animation stops under `prefers-reduced-motion`,
+  and forced-colours mode keeps edges visible.
+- **Accessible by default**: a Skip to content link, `aria-current="page"`,
+  labels that say what a count counts ("Review, 3 items to review",
+  `accessibleNavLabel`), labels 12px or larger, targets 44px or larger.
 - **The mobile nav sits below every overlay** (`z-40`, like the header;
-  sheets and dialogs are `z-50`+). It used to be `z-[100]`, which painted it
-  over the bottom of every sheet, hiding "Create task" on a phone.
+  sheets and dialogs are `z-50`+).
 - **Anything pinned to the bottom on mobile offsets from `--mobile-nav-height`**
-  (`src/styles/safe-area.css`: buttons plus the home-indicator inset), e.g.
+  (`src/styles/safe-area.css`: the dock plus the home-indicator inset), e.g.
   `bottom-[calc(var(--mobile-nav-height)+0.75rem)] lg:bottom-6`, never a fixed
   `bottom-20`. Full-height layouts use `dvh`, not `vh`/`h-screen`, which on iOS
   Safari is taller than the visible screen.
+- The menu's search row dispatches `brain:open-search`, which `UnifiedSearch`
+  answers exactly like Cmd+K.
 - `GET /api/crm/pulse` exists so those client badges can read the same summary
   the dashboard renders server-side.
 

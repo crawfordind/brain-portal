@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "../styles/safe-area.css";
+@import "../styles/nav.css";
 
 @custom-variant dark (&:is(.dark *));
 

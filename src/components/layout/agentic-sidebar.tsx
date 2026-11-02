@@ -1,184 +1,230 @@
 "use client";
 
 /**
- * Agentic Sidebar - Streamlined navigation
+ * Desktop sidebar (1024px and up).
  *
- * Two groups, ordered by how often a destination has something waiting in it
- * rather than by when it was built:
+ * Two widths, one set of destinations (`src/lib/nav-destinations.ts`):
  *
- *   Today   Stream, Operations, Tasks, Review, Contacts — what needs the user
- *           (Operations is the control center over tasks, projects and
- *           contacts; see src/lib/operations)
- *   Library Notes, Journal, Projects, Whiteboards — where things are kept, not pending
+ * - **Full** (256px): icon, name and count for every destination, grouped
+ *   Today / Library / System, plus pinned notes.
+ * - **Rail** (72px): icons with counts, each named in a tooltip and in its
+ *   accessible label.
  *
- * Every entry resolves to a distinct destination. "Brain" used to sit here
- * pointing at `/tasks?view=queue` — a view value the Work page did not accept —
- * so it silently landed on the same screen as Work. It is now "Review", which
- * is a real route. "Spaces" was likewise renamed "Projects": the route, the
- * page heading and the mobile menu all already called it that, so the sidebar
- * was the only surface using a word that appeared nowhere else.
+ * `auto` (the default) is the rail on a laptop-width screen and the full
+ * sidebar from 1280px. The toggle at the bottom picks one explicitly, per
+ * device. Width is decided in CSS from `data-mode`, so the server render and
+ * the first paint already have the right width; JavaScript is only needed for
+ * the tooltips, which matter only after hydration anyway.
+ *
+ * Exactly one entry is "you are here" (`activeDestinationId`), marked with
+ * `aria-current="page"` and a glowing bar that glides between entries.
  */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LogOut, Brain, Zap, FileText, FolderKanban, CheckSquare, Settings, BookOpen, Bot, Contact, Gauge, LayoutDashboard } from "lucide-react";
+import { LogOut, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { motion, MotionConfig } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { SyncStatusIndicator } from "@/components/offline";
-import { useInboxCount } from "@/hooks/use-inbox-count";
+import { appBranding } from "@/lib/navigation";
+import {
+  NAV_GROUP_LABELS,
+  accessibleNavLabel,
+  activeDestinationId,
+  destinationsInGroup,
+  nextSidebarMode,
+  sidebarShowsFull,
+  type NavDestination,
+  type NavGroup,
+} from "@/lib/nav-destinations";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PinnedNotesStrip } from "./pinned-notes-strip";
-import { isActiveRoute, appBranding } from "@/lib/navigation";
-import { useReviewCount } from "@/hooks/use-review-count";
-import { useCrmAttentionCount } from "@/hooks/use-crm-attention";
+import {
+  NAV_ICONS,
+  NavCount,
+  NeuralMark,
+  signOut,
+  useIsWideScreen,
+  useNavBadges,
+  useSidebarMode,
+} from "./nav-shared";
 
-type BadgeKind = "review" | "tasks" | "crm" | null;
+/*
+ * Visibility by width. The aside carries `data-mode` and is the `sidebar`
+ * group; `auto` switches at xl.
+ */
+const FULL_ONLY_BLOCK =
+  "hidden group-data-[mode=full]/sidebar:block xl:group-data-[mode=auto]/sidebar:block";
+const FULL_ONLY_FLEX =
+  "hidden group-data-[mode=full]/sidebar:flex xl:group-data-[mode=auto]/sidebar:flex";
+const RAIL_ONLY =
+  "block group-data-[mode=full]/sidebar:hidden xl:group-data-[mode=auto]/sidebar:hidden";
 
-interface SidebarItem {
-  name: string;
-  href: string;
-  icon: typeof Zap;
-  badge?: BadgeKind;
-}
-
-const todayNav: SidebarItem[] = [
-  { name: "Stream", href: "/", icon: Zap },
-  { name: "Operations", href: "/operations", icon: Gauge },
-  { name: "Tasks", href: "/tasks", icon: CheckSquare, badge: "tasks" },
-  { name: "Review", href: "/review", icon: Bot, badge: "review" },
-  { name: "Contacts", href: "/crm", icon: Contact, badge: "crm" },
-];
-
-const libraryNav: SidebarItem[] = [
-  { name: "Notes", href: "/notes", icon: FileText },
-  { name: "Journal", href: "/journal", icon: BookOpen },
-  { name: "Projects", href: "/projects", icon: FolderKanban },
-  { name: "Whiteboards", href: "/whiteboards", icon: LayoutDashboard },
-];
-
-const secondaryNav = [
-  { name: "Settings", href: "/settings", icon: Settings },
-];
+const GROUPS: NavGroup[] = ["today", "library", "system"];
 
 export function AgenticSidebar() {
   const pathname = usePathname();
-  const { counts } = useInboxCount();
-  const reviewCount = useReviewCount();
-  const crmCount = useCrmAttentionCount();
+  const activeId = activeDestinationId(pathname);
+  const badgeFor = useNavBadges();
+  const [mode, setMode] = useSidebarMode();
+  const wide = useIsWideScreen();
+  const showingFull = sidebarShowsFull(mode, wide ? 1280 : 1024);
 
-  const badgeFor = (kind: BadgeKind): number => {
-    if (kind === "review") return reviewCount;
-    if (kind === "tasks") return counts.recommendations;
-    if (kind === "crm") return crmCount;
-    return 0;
-  };
+  const renderItem = (destination: NavDestination) => {
+    const Icon = NAV_ICONS[destination.id];
+    const isActive = destination.id === activeId;
+    const count = badgeFor(destination);
 
-  const renderItem = (item: SidebarItem) => {
-    const Icon = item.icon;
-    const isActive = isActiveRoute(pathname, item.href);
-    const badgeCount = badgeFor(item.badge ?? null);
-
-    return (
+    const link = (
       <Link
-        key={item.name}
-        href={item.href}
+        href={destination.href}
+        aria-current={isActive ? "page" : undefined}
+        aria-label={accessibleNavLabel(destination, count)}
         className={cn(
-          "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors",
+          "group/item relative flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm outline-none transition-colors",
+          "justify-center group-data-[mode=full]/sidebar:justify-start xl:group-data-[mode=auto]/sidebar:justify-start",
+          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
           isActive
-            ? "bg-primary/10 text-primary font-medium"
-            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            ? "font-medium text-foreground"
+            : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
         )}
       >
-        <Icon className="h-4 w-4" />
-        <span className="flex-1">{item.name}</span>
-        {badgeCount > 0 && (
-          <Badge
-            variant="default"
-            className={cn(
-              "text-[10px] h-4 px-1.5",
-              item.badge === "review" && "bg-purple-500 text-white hover:bg-purple-500"
-            )}
+        {isActive && (
+          <motion.span
+            layoutId="sidebar-active"
+            className="nav-active-fill absolute inset-0 rounded-xl"
+            transition={{ type: "spring", stiffness: 420, damping: 36 }}
+            aria-hidden="true"
           >
-            {badgeCount}
-          </Badge>
+            <span className="nav-active-bar absolute -left-3 top-2 bottom-2 w-[3px] rounded-full" />
+          </motion.span>
         )}
+
+        <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+          <Icon
+            className={cn(
+              "h-[18px] w-[18px] transition-transform group-hover/item:scale-110",
+              isActive && "nav-active-icon"
+            )}
+            aria-hidden="true"
+          />
+          {/* Rail: the count rides on the icon. */}
+          <NavCount count={count} className={cn("absolute -right-3 -top-2.5", RAIL_ONLY)} />
+        </span>
+
+        <span className={cn("relative flex-1 truncate", FULL_ONLY_BLOCK)}>{destination.label}</span>
+        <NavCount count={count} className={cn("relative", FULL_ONLY_FLEX)} />
       </Link>
+    );
+
+    return (
+      <li key={destination.id}>
+        {showingFull ? (
+          link
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>{link}</TooltipTrigger>
+            <TooltipContent side="right" sideOffset={10} className="max-w-56">
+              <p className="font-medium">{destination.label}</p>
+              <p className="text-xs text-muted-foreground">{destination.description}</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </li>
     );
   };
 
-  const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.href = "/auth/login";
-  };
+  const toggleLabel = showingFull ? "Collapse sidebar to icons" : "Expand sidebar";
 
   return (
-    <div className="flex h-full w-60 flex-col border-r bg-background">
-      {/* Brand */}
-      <div className="flex h-14 items-center justify-between border-b px-4">
-        <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary">
-            <Brain className="h-4 w-4 text-primary-foreground" />
-          </div>
-          <div>
-            <span className="font-semibold text-sm">{appBranding.name}</span>
-          </div>
-        </div>
-        <SyncStatusIndicator />
-      </div>
-
-      {/* Navigation */}
-      <ScrollArea className="flex-1 px-3 py-3">
-        <nav className="space-y-0.5">{todayNav.map(renderItem)}</nav>
-
-        <Separator className="my-3" />
-
-        <nav className="space-y-0.5">{libraryNav.map(renderItem)}</nav>
-
-        <Separator className="my-3" />
-
-        {/* Secondary nav */}
-        <nav className="space-y-0.5">
-          {secondaryNav.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                  isActive
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {item.name}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <Separator className="my-3" />
-
-        {/* Pinned notes */}
-        <PinnedNotesStrip variant="desktop" />
-      </ScrollArea>
-
-      {/* User section */}
-      <div className="border-t p-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start text-muted-foreground text-xs"
-          onClick={handleLogout}
+    <MotionConfig reducedMotion="user">
+      <TooltipProvider delayDuration={150} skipDelayDuration={300}>
+        <aside
+          data-sidebar
+          data-mode={mode}
+          aria-label="Sidebar"
+          className={cn(
+            "group/sidebar nav-glass relative flex h-full flex-col border-r border-[var(--nav-edge)]",
+            "w-[4.5rem] data-[mode=full]:w-64 xl:data-[mode=auto]:w-64",
+            "motion-safe:transition-[width] motion-safe:duration-300 motion-safe:ease-out"
+          )}
         >
-          <LogOut className="mr-2 h-3.5 w-3.5" />
-          Sign out
-        </Button>
-      </div>
-    </div>
+          {/* Brand */}
+          <div className="flex h-14 shrink-0 items-center gap-2.5 px-4 justify-center group-data-[mode=full]/sidebar:justify-start xl:group-data-[mode=auto]/sidebar:justify-start">
+            <Link
+              href="/"
+              aria-label={`${appBranding.name}, go to Stream`}
+              className="flex items-center gap-2.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
+                <NeuralMark className="h-7 w-7" />
+              </span>
+              <span className={cn("text-[15px] font-semibold tracking-tight", FULL_ONLY_BLOCK)}>
+                {appBranding.name}
+              </span>
+            </Link>
+          </div>
+
+          <div className="nav-divider mx-3" />
+
+          {/* Destinations */}
+          <nav aria-label="Primary" className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-3">
+            {GROUPS.map((group, i) => {
+              const items = destinationsInGroup(group);
+              const headingId = `sidebar-group-${group}`;
+              return (
+                <div key={group} className={cn(i > 0 && "mt-4")}>
+                  <p
+                    id={headingId}
+                    className={cn(
+                      "mb-1 px-3 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground/80",
+                      FULL_ONLY_BLOCK
+                    )}
+                  >
+                    {NAV_GROUP_LABELS[group]}
+                  </p>
+                  {i > 0 && <div className={cn("nav-divider mx-2 mb-3", RAIL_ONLY)} aria-hidden="true" />}
+                  <ul aria-labelledby={headingId} className="space-y-0.5">
+                    {items.map(renderItem)}
+                  </ul>
+                </div>
+              );
+            })}
+
+            <div className={cn("mt-5", FULL_ONLY_BLOCK)}>
+              <PinnedNotesStrip variant="desktop" />
+            </div>
+          </nav>
+
+          <div className="nav-divider mx-3" />
+
+          {/* Footer: width toggle and sign out */}
+          <div className="flex shrink-0 flex-col gap-1 p-3 group-data-[mode=full]/sidebar:flex-row xl:group-data-[mode=auto]/sidebar:flex-row">
+            <button
+              type="button"
+              onClick={() => setMode(nextSidebarMode(mode, showingFull))}
+              aria-label={toggleLabel}
+              title={toggleLabel}
+              className="flex h-10 w-full items-center justify-center rounded-xl text-muted-foreground outline-none transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring group-data-[mode=full]/sidebar:w-10 xl:group-data-[mode=auto]/sidebar:w-10"
+            >
+              {showingFull ? (
+                <PanelLeftClose className="h-[18px] w-[18px]" aria-hidden="true" />
+              ) : (
+                <PanelLeftOpen className="h-[18px] w-[18px]" aria-hidden="true" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              aria-label="Sign out"
+              title="Sign out"
+              className="flex h-10 flex-1 items-center justify-center gap-2 rounded-xl px-3 text-sm text-muted-foreground outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring group-data-[mode=full]/sidebar:justify-start xl:group-data-[mode=auto]/sidebar:justify-start"
+            >
+              <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className={FULL_ONLY_BLOCK}>Sign out</span>
+            </button>
+          </div>
+        </aside>
+      </TooltipProvider>
+    </MotionConfig>
   );
 }

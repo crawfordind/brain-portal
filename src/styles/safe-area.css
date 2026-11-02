@@ -6,11 +6,11 @@
 }
 
 /*
- * The mobile bottom nav's full height: 3.5rem of buttons plus the home
- * indicator inset (at least 0.75rem). Anything pinned to the bottom of the
- * screen on mobile offsets from this, so it clears the nav on every phone
- * instead of guessing a fixed pixel height.
+ * The mobile dock's full footprint: a 3.75rem floating bar plus the gap below
+ * it, which is the home-indicator inset (at least 0.5rem). Anything pinned to
+ * the bottom of the screen on mobile offsets from this, so it clears the dock
+ * on every phone instead of guessing a fixed pixel height.
  */
 :root {
-  --mobile-nav-height: calc(3.5rem + max(0.75rem, var(--safe-area-inset-bottom)));
+  --mobile-nav-height: calc(3.75rem + max(0.5rem, var(--safe-area-inset-bottom)));
 }
