@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Mic, Square, Loader2, CheckCircle2, Command } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useVoiceStore } from "@/lib/stores/voice-store";
 import { useCommandStore } from "@/lib/stores/command-store";
@@ -51,6 +51,10 @@ export function VoiceFAB({ className, onCapture }: VoiceFABProps) {
   });
 
   const router = useRouter();
+  // The home screen has its own composer (voice or typing) beside the brain,
+  // so this button stays mounted there (it carries the recognition and the
+  // shortcuts) but is not drawn.
+  const onHome = usePathname() === "/";
   const [showSuccess, setShowSuccess] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
@@ -501,6 +505,7 @@ export function VoiceFAB({ className, onCapture }: VoiceFABProps) {
     isScrolled && !isRecording ? "w-12 h-12" : "w-16 h-16",
     // Hide on desktop (lg+) since search bar is always visible
     "lg:hidden",
+    onHome && "hidden",
     className
   );
 
@@ -526,6 +531,7 @@ export function VoiceFAB({ className, onCapture }: VoiceFABProps) {
                 "bg-primary hover:bg-primary/90 text-primary-foreground",
                 // Hide on desktop (lg+) since search bar is always visible
                 "lg:hidden",
+                onHome && "hidden",
                 className
               )}
               aria-label="Open command palette"

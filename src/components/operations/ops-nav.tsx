@@ -18,6 +18,9 @@ export const OPS_TABS = [
   { href: "/operations/people", label: "People" },
   { href: "/operations/intake", label: "Intake" },
   { href: "/operations/automations", label: "Automations" },
+  // The stream as a chronological list, with filters. The home screen is the
+  // brain; this is where the plain timeline of everything lives.
+  { href: "/operations/activity", label: "Activity" },
 ] as const;
 
 export function OpsNav() {

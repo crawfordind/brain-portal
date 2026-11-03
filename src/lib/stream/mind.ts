@@ -11,6 +11,11 @@
  *   - **Life**: everything else, further out, gathered around the project
  *     each belongs to. Projects are the hubs of the network.
  *
+ * People live here too. Contacts with a follow-up due, a capture to sort, or a
+ * recent conversation are drawn as `person` items gathered around their own
+ * "People" hub, so the CRM is part of the same picture rather than a card
+ * beside it.
+ *
  * Connections mean something. An item links to its project hub, items written
  * by the same run link to each other, and items sharing a tag link to each
  * other. Only items with none of those get a quiet "ambient" link to their
@@ -117,7 +122,11 @@ export const MIND_TYPE_COLORS: Record<string, string> = {
   reference: "#9fb4c8", // slate
   insight: "#f5d77a", // pale gold
   agent_output: "#6fd6cf", // teal
+  person: "#ef9fd0", // orchid
 };
+
+/** Key of the hub that gathers the user's people. */
+export const PEOPLE_HUB_KEY = "hub:people";
 
 export const MIND_HUB_COLOR = "#b8c4e0";
 
@@ -133,6 +142,8 @@ export function labelForType(type: string): string {
     case "capture":
     case "thought":
       return "Thought";
+    case "person":
+      return "Person";
     default:
       return type.charAt(0).toUpperCase() + type.slice(1);
   }
@@ -164,6 +175,7 @@ const TYPE_WEIGHT: Record<string, number> = {
   note: 0,
   reference: -2,
   journal: -6,
+  person: 2,
 };
 
 /** `YYYY-MM-DD` for the viewer's own calendar day. */
@@ -231,6 +243,8 @@ export function scoreMindItem(
   if (status === "completed" || status === "archived") {
     return { score: -100, reason: "Done" };
   }
+
+  if (type === "person") return scorePerson(item, now);
 
   // Something is waiting on the user's say-so.
   if (status === "waiting") {
@@ -309,6 +323,34 @@ export function scoreMindItem(
   }
 
   return { score: Math.round(score * 10) / 10, reason };
+}
+
+/**
+ * A person earns a place for one of three reasons: a follow-up whose date has
+ * arrived (`dueDate`), a capture waiting to be sorted (`status: "waiting"`),
+ * or a recent conversation (`createdAt` is the last touch). A conversation
+ * glows for about a week, not half a day: people move slower than thoughts.
+ */
+function scorePerson(item: MindSourceItem, now: Date): MindScore {
+  const typeWeight = TYPE_WEIGHT.person;
+  const due = readDue(item.dueDate, now);
+  if (due && due.days <= 0) {
+    const late = -due.days;
+    return {
+      score: Math.round((60 + Math.min(late, 14) * 1.2 + typeWeight) * 10) / 10,
+      reason: late > 0 ? `Follow-up ${plural(late, "day")} late` : "Follow-up due",
+    };
+  }
+  if (item.status === "waiting") {
+    return { score: 40 + typeWeight, reason: "Needs sorting" };
+  }
+  const touched = parseDbTimestamp(item.createdAt);
+  const days = touched ? Math.max(0, (now.getTime() - touched.getTime()) / DAY_MS) : 30;
+  const warmth = 14 * Math.exp(-days / 7);
+  return {
+    score: Math.round((warmth + typeWeight) * 10) / 10,
+    reason: days < 1 ? "Spoke today" : days < 8 ? "Spoke recently" : "In your circle",
+  };
 }
 
 /* ------------------------------------------------------------------------ */
@@ -420,11 +462,17 @@ export function buildMindGraph(
   const minScore = Math.min(...kept.map((s) => s.score));
   const span = Math.max(1, maxScore - minScore);
 
-  /* ---- Hubs: the projects the life ring gathers around. ---------------- */
+  /* ---- Hubs: the projects (and people) the life ring gathers around. --- */
   const projectCounts = new Map<string, { name: string; color: string | null; count: number }>();
+  let peopleCount = 0;
   kept.forEach((s, index) => {
+    if (index === 0) return;
+    if (s.item.type === "person") {
+      peopleCount += 1;
+      return;
+    }
     const pid = s.item.projectId;
-    if (!pid || index === 0) return;
+    if (!pid) return;
     const entry = projectCounts.get(pid) ?? {
       name: s.item.projectName || "Project",
       color: s.item.projectColor ?? null,
@@ -436,26 +484,33 @@ export function buildMindGraph(
 
   const hubIds = [...projectCounts.entries()]
     .sort((a, b) => b[1].count - a[1].count || (a[0] < b[0] ? -1 : 1))
-    .slice(0, MAX_HUBS)
+    .slice(0, peopleCount > 0 ? MAX_HUBS - 1 : MAX_HUBS)
     .map(([id]) => id);
 
-  const hubNodes: MindNode[] = hubIds.map((pid, i) => {
-    const info = projectCounts.get(pid)!;
-    const rand = seeded(hashString(`hub:${pid}`));
+  const hubInfos = hubIds.map((pid) => ({ key: `hub:${pid}`, ...projectCounts.get(pid)! }));
+  if (peopleCount > 0) {
+    hubInfos.push({ key: PEOPLE_HUB_KEY, name: "People", color: MIND_TYPE_COLORS.person, count: peopleCount });
+  }
+
+  const hubNodes: MindNode[] = hubInfos.map((info, i) => {
+    const rand = seeded(hashString(info.key));
     // Hubs ring the brain around its middle, evenly spaced and gently tilted,
     // rather than on a sphere: two projects on a sphere sit at the poles,
     // which draws a dumbbell, not a mind.
-    const angle = (i / hubIds.length) * Math.PI * 2 + 0.6 + (rand() - 0.5) * 0.35;
+    const angle = (i / hubInfos.length) * Math.PI * 2 + 0.6 + (rand() - 0.5) * 0.35;
     const lift = (i % 2 === 0 ? 1 : -1) * (0.18 + rand() * 0.22);
     const jitter: [number, number, number] = [Math.cos(angle), lift, Math.sin(angle)];
     const len = Math.hypot(...jitter) || 1;
     return {
-      key: `hub:${pid}`,
+      key: info.key,
       kind: "hub",
       ring: "hub",
       rank: -1,
       label: info.name,
-      reason: plural(info.count, "thing") + " in this project",
+      reason:
+        info.key === PEOPLE_HUB_KEY
+          ? `${info.count} ${info.count === 1 ? "person" : "people"} on your mind`
+          : plural(info.count, "thing") + " in this project",
       score: 0,
       weight: Math.min(1, 0.45 + info.count * 0.06),
       color: info.color && /^#[0-9a-f]{6}$/i.test(info.color) ? info.color : MIND_HUB_COLOR,
@@ -466,6 +521,9 @@ export function buildMindGraph(
     };
   });
   const hubByProject = new Map(hubIds.map((pid, i) => [pid, hubNodes[i]]));
+  const peopleHub = hubNodes.find((h) => h.key === PEOPLE_HUB_KEY);
+  const hubFor = (item: MindSourceItem): MindNode | undefined =>
+    item.type === "person" ? peopleHub : item.projectId ? hubByProject.get(item.projectId) : undefined;
 
   /* ---- Items. ---------------------------------------------------------- */
   const todayTotal = Math.min(todayCount, Math.max(0, kept.length - 1));
@@ -483,7 +541,7 @@ export function buildMindGraph(
       const r = TODAY_RADIUS * (0.92 + rand() * 0.16);
       position = shape(p, r);
     } else {
-      const hub = s.item.projectId ? hubByProject.get(s.item.projectId) : undefined;
+      const hub = hubFor(s.item);
       if (hub) {
         // Gather around the project, on the side facing the centre.
         const spread = 1.15;
@@ -544,10 +602,9 @@ export function buildMindGraph(
     if (node.ring === "today") addEdge(focus.key, node.key, "focus", 0.55);
   }
 
-  // Items to their project.
+  // Items to their project, people to the People hub.
   for (const node of itemNodes) {
-    const pid = node.item?.projectId;
-    const hub = pid ? hubByProject.get(pid) : undefined;
+    const hub = node.item ? hubFor(node.item) : undefined;
     if (hub) addEdge(node.key, hub.key, "project", node.ring === "life" ? 0.4 : 0.5);
   }
 

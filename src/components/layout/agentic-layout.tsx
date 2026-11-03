@@ -36,6 +36,9 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
   // `contentWidthClass`.
   const pathname = usePathname();
   const title = sectionTitle(pathname);
+  // Home is the brain, full screen: no content column, no padding, and the
+  // header floats over it as glass so the brain runs to the top edge.
+  const isHome = pathname === "/";
 
   return (
     <div className="flex h-dvh">
@@ -52,10 +55,15 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
       </div>
 
       {/* Main content area */}
-      <div className="flex flex-1 flex-col min-h-0 min-w-0">
+      <div className="relative flex flex-1 flex-col min-h-0 min-w-0">
         <OfflineBanner />
 
-        <header className="nav-glass sticky top-0 z-40 border-b border-[var(--nav-edge)]">
+        <header
+          className={cn(
+            "nav-glass top-0 z-40 border-b border-[var(--nav-edge)]",
+            isHome ? "absolute inset-x-0" : "sticky"
+          )}
+        >
           <div className="flex h-14 items-center gap-3 px-3 sm:px-4">
             {/* Phone and tablet: brand mark + where you are */}
             <Link
@@ -96,15 +104,23 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
         </header>
 
         <div className="flex flex-1 overflow-hidden">
-          <main id="main-content" tabIndex={-1} className="flex-1 overflow-auto outline-none">
-            <div
-              className={cn(
-                "container py-4 px-4 md:py-5 md:px-6 lg:px-8 pb-[calc(var(--mobile-nav-height)+2.5rem)] lg:pb-6",
-                contentWidthClass(pathname)
-              )}
-            >
-              {children}
-            </div>
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className={cn("flex-1 outline-none", isHome ? "relative overflow-hidden" : "overflow-auto")}
+          >
+            {isHome ? (
+              children
+            ) : (
+              <div
+                className={cn(
+                  "container py-4 px-4 md:py-5 md:px-6 lg:px-8 pb-[calc(var(--mobile-nav-height)+2.5rem)] lg:pb-6",
+                  contentWidthClass(pathname)
+                )}
+              >
+                {children}
+              </div>
+            )}
           </main>
         </div>
 

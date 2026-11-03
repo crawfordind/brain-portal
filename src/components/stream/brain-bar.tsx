@@ -88,9 +88,11 @@ const TYPE_LABELS: Record<StreamItemType, string> = {
 interface BrainBarProps {
   onSubmit?: () => void;
   variant?: "default" | "compact" | "fullscreen";
+  /** Focus the input on mount (the home screen's composer opens straight into typing). */
+  autoFocus?: boolean;
 }
 
-export function BrainBar({ onSubmit, variant = "default" }: BrainBarProps) {
+export function BrainBar({ onSubmit, variant = "default", autoFocus = false }: BrainBarProps) {
   const {
     brainBarInput,
     setBrainBarInput,
@@ -234,12 +236,12 @@ export function BrainBar({ onSubmit, variant = "default" }: BrainBarProps) {
             )}
           </div>
           {classification && brainBarInput.trim().length > 2 ? (
-            <span className={cn("text-xs font-medium", classificationColor)}>
+            <span className={cn("text-sm font-medium sm:text-xs", classificationColor)}>
               {TYPE_LABELS[classification.type]}
               {classification.confidence < 0.7 && " (unsure)"}
             </span>
           ) : (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground sm:text-xs">
               What&apos;s on your mind?
             </span>
           )}
@@ -254,9 +256,12 @@ export function BrainBar({ onSubmit, variant = "default" }: BrainBarProps) {
             onChange={(e) => handleInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onFocus={() => setBrainBarExpanded(true)}
-            placeholder="Think, plan, capture, delegate... just start typing"
+            autoFocus={autoFocus}
+            aria-label="What's on your mind?"
+            placeholder="Think, plan, capture... just start typing"
             className={cn(
-              "w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground/60",
+              // 16px on phones: iOS zooms the whole page into a smaller input.
+              "w-full resize-none bg-transparent text-base outline-none placeholder:text-muted-foreground/60 sm:text-sm",
               "min-h-[36px] max-h-[200px]",
               variant === "fullscreen" && "text-base min-h-[48px]"
             )}
@@ -281,8 +286,9 @@ export function BrainBar({ onSubmit, variant = "default" }: BrainBarProps) {
             size="sm"
             onClick={handleSubmit}
             disabled={!brainBarInput.trim() || isSubmitting}
+            aria-label="Save"
             className={cn(
-              "rounded-full h-8 px-3 transition-all",
+              "rounded-full h-10 px-4 transition-all sm:h-8 sm:px-3",
               brainBarInput.trim() && "bg-primary"
             )}
           >
@@ -299,7 +305,7 @@ export function BrainBar({ onSubmit, variant = "default" }: BrainBarProps) {
       {brainBarExpanded && classification && brainBarInput.trim().length > 2 && (
         <div className="mt-2 rounded-xl border bg-background/95 backdrop-blur p-3 shadow-lg animate-in slide-in-from-top-2 duration-200">
           {/* Classification reasoning */}
-          <p className="text-xs text-muted-foreground mb-2">
+          <p className="text-sm text-muted-foreground mb-2 sm:text-xs">
             {classification.reasoning}
           </p>
 
@@ -317,7 +323,7 @@ export function BrainBar({ onSubmit, variant = "default" }: BrainBarProps) {
           {classification.tags.length > 0 && (
             <div className="flex gap-1 mt-2">
               {classification.tags.map((tag, i) => (
-                <Badge key={i} variant="outline" className="text-[10px]">
+                <Badge key={i} variant="outline" className="text-xs sm:text-[10px]">
                   #{tag}
                 </Badge>
               ))}
@@ -327,7 +333,7 @@ export function BrainBar({ onSubmit, variant = "default" }: BrainBarProps) {
           {/* Collapse button */}
           <button
             onClick={() => setBrainBarExpanded(false)}
-            className="flex items-center gap-1 mt-2 text-xs text-muted-foreground hover:text-foreground"
+            className="flex min-h-9 items-center gap-1 mt-1 text-sm text-muted-foreground hover:text-foreground sm:text-xs"
           >
             <ChevronUp className="h-3 w-3" />
             Less

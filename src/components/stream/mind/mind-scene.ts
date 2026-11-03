@@ -8,6 +8,10 @@
  *
  * What is drawn, back to front:
  *   - a faint field of drifting dust, for depth;
+ *   - the cortex: a few thousand motes on the surface of a stylised brain
+ *     (two hemispheres, a fissure between them, temporal lobes, a
+ *     cerebellum), lit by a slow wave of activity that sweeps through it and
+ *     the odd spark, so the whole page reads as *your* brain at work;
  *   - connections as curved "dendrites" that occasionally carry a soft signal
  *     travelling outward, the way a thought fires along a pathway;
  *   - nodes as glowing points that breathe at a resting rate (about six
@@ -19,9 +23,11 @@
  * `prefers-reduced-motion` nothing moves at all unless the user moves it.
  *
  * Input is deliberately small: drag turns the brain (with inertia), tap or
- * hover picks a node. There is no wheel or pinch zoom, because on a dashboard
- * that would hijack page scrolling; zoom is the Moment / Today / Life control,
- * which React passes in through `setView`.
+ * hover picks a node. The map fills the screen, so there is no page to
+ * scroll: the wheel and a pinch step between the three scales (Moment /
+ * Today / Life) through `onZoomStep`, and React decides what that means and
+ * passes the result back through `setView`. Free zoom would only let people
+ * get lost.
  */
 
 import * as THREE from "three";
@@ -41,6 +47,8 @@ export interface MindSceneOptions {
   onInteract?: () => void;
   /** WebGL went away (context lost). The UI should fall back. */
   onError?: (error: Error) => void;
+  /** Wheel or pinch: +1 asks for a wider view, -1 for a closer one. */
+  onZoomStep?: (direction: 1 | -1) => void;
 }
 
 /** How much of each ring stays visible in each view: moment, today, life, hubs. */
@@ -53,8 +61,15 @@ const RING_FADE: Record<MindView, [number, number, number, number]> = {
 /** The radius (world units) each view must fit on screen. */
 const VIEW_FIT: Record<MindView, number> = {
   moment: 1.5,
-  today: 3.1,
-  life: 5.6,
+  today: 3.3,
+  life: 5.3,
+};
+
+/** How present the cortex is in each view: a backdrop up close, the whole brain from afar. */
+const CORTEX_FADE: Record<MindView, number> = {
+  moment: 0.35,
+  today: 0.7,
+  life: 1,
 };
 
 const RING_CODE: Record<MindNode["ring"], number> = {
@@ -67,6 +82,11 @@ const RING_CODE: Record<MindNode["ring"], number> = {
 const EDGE_SEGMENTS = 18;
 const TRANSITION_MS = 1100;
 const DUST_COUNT = 320;
+/** Cortex motes: fewer on a phone, where the screen is small and the GPU weaker. */
+const CORTEX_COUNT_SMALL = 1700;
+const CORTEX_COUNT_LARGE = 3200;
+/** Half-extents of the cortex: wide, tall and deep, in world units. */
+const CORTEX_EXTENT: [number, number, number] = [5.9, 4.4, 6.6];
 
 /* ------------------------------------------------------------------------ */
 /* Shaders                                                                   */
@@ -245,6 +265,69 @@ const DUST_FRAGMENT = /* glsl */ `
   }
 `;
 
+const CORTEX_VERTEX = /* glsl */ `
+  attribute float aSeed;
+  attribute float aShell;
+
+  uniform float uTime;
+  uniform float uMotion;
+  uniform float uScale;
+  uniform float uFade;
+  uniform float uMaxSize;
+
+  varying float vAlpha;
+  varying float vSpark;
+
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    float depth = -mv.z;
+
+    // One slow wave of activity sweeps through the brain about every nine
+    // seconds, from a direction that itself turns slowly.
+    float a = uTime * 0.05;
+    vec3 dir = normalize(vec3(sin(a), 0.35, cos(a)));
+    float along = dot(normalize(position), dir);
+    float front = mod(uTime * 0.11 + 0.4, 1.0) * 2.8 - 1.4;
+    float wave = exp(-pow((along - front) * 4.5, 2.0)) * uMotion;
+
+    // Now and then a mote sparks: about one in sixty at any moment, each for
+    // a couple of seconds, rising and falling smoothly.
+    float cycle = uTime * 0.45 + aSeed * 7.0;
+    float slot = floor(cycle);
+    float lucky = step(0.984, fract(sin(slot * 12.9898 + aSeed * 78.233) * 43758.5453));
+    float spark = lucky * sin(fract(cycle) * 3.14159) * uMotion;
+
+    float twinkle = 0.75 + 0.25 * sin(uTime * (0.5 + aSeed * 1.3) + aSeed * 40.0) * uMotion;
+    float size = (0.045 + aSeed * 0.04) * (1.0 + wave * 0.7 + spark * 1.6);
+    gl_PointSize = min(uMaxSize * 0.35, size * uScale / max(0.1, depth));
+    gl_Position = projectionMatrix * mv;
+
+    // Motes right in front of the camera (the Moment view sits inside the
+    // brain) melt away instead of filling the screen.
+    float near = smoothstep(1.2, 3.5, depth);
+    float far = clamp(1.3 - depth / 30.0, 0.35, 1.0);
+    float base = mix(0.12, 0.42, aShell) * twinkle;
+    vAlpha = (base + wave * 0.32 + spark * 0.65) * uFade * near * far;
+    vSpark = spark;
+  }
+`;
+
+const CORTEX_FRAGMENT = /* glsl */ `
+  uniform vec3 uColor;
+  uniform vec3 uSparkColor;
+  uniform float uLight;
+  varying float vAlpha;
+  varying float vSpark;
+
+  void main() {
+    float d = length(gl_PointCoord - 0.5) * 2.0;
+    if (d > 1.0) discard;
+    float soft = pow(1.0 - d, 1.6);
+    vec3 color = mix(uColor, uSparkColor, clamp(vSpark, 0.0, 1.0));
+    gl_FragColor = vec4(color, soft * vAlpha * mix(1.0, 0.75, uLight));
+  }
+`;
+
 const AURA_VERTEX = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -312,6 +395,81 @@ function seedOf(key: string): number {
   return ((h >>> 0) % 10000) / 10000;
 }
 
+/**
+ * Points on (and a few inside) a stylised brain, deterministic so it is the
+ * same brain on every visit. Returns positions plus, per point, a seed and
+ * whether it sits on the surface (1) or inside (0).
+ *
+ * Shape, in order: an ovoid; a flatter underside; a narrower front; temporal
+ * lobes bulging low on each side; a fissure down the top midline that parts
+ * the two hemispheres; gentle folds; and a cerebellum tucked under the back.
+ */
+function makeCortexPoints(count: number): {
+  positions: Float32Array;
+  seeds: Float32Array;
+  shells: Float32Array;
+} {
+  const positions = new Float32Array(count * 3);
+  const seeds = new Float32Array(count);
+  const shells = new Float32Array(count);
+  let s = 987654321;
+  const rand = () => {
+    s = (s * 16807) % 2147483647;
+    return s / 2147483647;
+  };
+  const [ax, ay, az] = CORTEX_EXTENT;
+  const cerebellum = Math.round(count * 0.1);
+
+  for (let i = 0; i < count; i++) {
+    // A uniform direction on the sphere.
+    const uy0 = rand() * 2 - 1;
+    const theta = rand() * Math.PI * 2;
+    const k = Math.sqrt(1 - uy0 * uy0);
+    const ux = Math.cos(theta) * k;
+    const uy = uy0;
+    const uz = Math.sin(theta) * k;
+
+    const surface = rand() < 0.86;
+    const depth = surface ? 0.95 + rand() * 0.06 : 0.35 + rand() * 0.5;
+    let x: number, y: number, z: number;
+
+    if (i < cerebellum) {
+      // Cerebellum: a small, finely folded body under the back of the brain.
+      const fold = 1 + 0.06 * Math.sin(uy * 22);
+      x = ux * 2.5 * depth * fold;
+      y = -2.7 + uy * 1.15 * depth * fold;
+      z = -4.3 + uz * 1.6 * depth;
+    } else {
+      // Folds: a little radial ripple, like gyri seen from far away.
+      const folds =
+        1 +
+        0.035 * Math.sin(7.3 * ux + 1.1) * Math.sin(6.1 * uy + 0.3) * Math.sin(6.7 * uz + 2.0) +
+        0.02 * Math.sin(13 * ux + 11 * uz);
+      x = ux * ax * depth * folds;
+      y = uy * ay * depth * folds;
+      z = uz * az * depth * folds;
+
+      if (uy < 0) y *= 0.72; // flatter underneath
+      x *= 1 - 0.12 * Math.max(0, uz); // narrower at the front
+      // Temporal lobes, low on each side and a little forward.
+      x *= 1 + 0.1 * Math.exp(-(((uy + 0.38) / 0.24) ** 2)) * Math.exp(-(((uz - 0.12) / 0.5) ** 2));
+      // The longitudinal fissure: the top midline dips and the halves part.
+      if (uy > -0.15) {
+        const groove = Math.exp(-((ux / 0.11) ** 2));
+        y -= groove * 0.9 * Math.max(0, uy + 0.15);
+        x += Math.sign(ux || 1) * 0.16;
+      }
+    }
+
+    positions[i * 3] = x;
+    positions[i * 3 + 1] = y;
+    positions[i * 3 + 2] = z;
+    seeds[i] = rand();
+    shells[i] = surface ? 1 : 0;
+  }
+  return { positions, seeds, shells };
+}
+
 /* ------------------------------------------------------------------------ */
 /* Scene                                                                     */
 /* ------------------------------------------------------------------------ */
@@ -330,11 +488,21 @@ export class MindScene {
   private readonly edgeMaterial: THREE.ShaderMaterial;
   private readonly dustMaterial: THREE.ShaderMaterial;
   private readonly auraMaterial: THREE.ShaderMaterial;
+  private readonly cortexMaterial: THREE.ShaderMaterial;
 
   private nodePoints: THREE.Points | null = null;
   private edgeLines: THREE.LineSegments | null = null;
   private readonly dust: THREE.Points;
   private readonly aura: THREE.Mesh;
+  private readonly cortex: THREE.Points;
+  private cortexFade = CORTEX_FADE.today;
+  private cortexFadeTarget = CORTEX_FADE.today;
+  /** Screen space covered by overlays: the brain centres in what is left. */
+  private insets = { top: 0, bottom: 0 };
+  private readonly pointers = new Map<number, { x: number; y: number }>();
+  private pinchStart: number | null = null;
+  private wheelAccum = 0;
+  private lastZoomStepAt = 0;
 
   private graph: MindGraph | null = null;
   private nodes: MindNode[] = [];
@@ -399,9 +567,9 @@ export class MindScene {
     canvas.style.display = "block";
     canvas.style.width = "100%";
     canvas.style.height = "100%";
-    // Vertical swipes still scroll the page on a phone; sideways ones turn
-    // the brain. The map must never trap someone halfway down the dashboard.
-    canvas.style.touchAction = "pan-y";
+    // The map is the whole page, so there is no page scroll to protect: every
+    // touch belongs to the brain (drag to turn, pinch to change scale).
+    canvas.style.touchAction = "none";
     canvas.setAttribute("aria-hidden", "true");
     this.container.appendChild(canvas);
 
@@ -462,13 +630,33 @@ export class MindScene {
       depthWrite: false,
     });
 
+    this.cortexMaterial = new THREE.ShaderMaterial({
+      vertexShader: CORTEX_VERTEX,
+      fragmentShader: CORTEX_FRAGMENT,
+      uniforms: {
+        uTime: shared.uTime,
+        uMotion: shared.uMotion,
+        uScale: shared.uScale,
+        uLight: shared.uLight,
+        uMaxSize: { value: maxPoint },
+        uFade: { value: this.cortexFade },
+        uColor: { value: new THREE.Color() },
+        uSparkColor: { value: new THREE.Color("#ffd9a0") },
+      },
+      transparent: true,
+      depthWrite: false,
+    });
+
     this.dust = this.makeDust();
+    const small = (this.container.getBoundingClientRect().width || window.innerWidth) < 640;
+    this.cortex = this.makeCortex(small ? CORTEX_COUNT_SMALL : CORTEX_COUNT_LARGE);
     this.aura = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.auraMaterial);
     this.aura.scale.setScalar(3.4);
     this.aura.renderOrder = -1;
 
     this.scene.add(this.dust);
     this.scene.add(this.world);
+    this.world.add(this.cortex);
     this.world.add(this.aura);
 
     this.applyTheme();
@@ -533,6 +721,7 @@ export class MindScene {
   setView(view: MindView): void {
     this.view = view;
     this.ringFadeTarget.set(...RING_FADE[view]);
+    this.cortexFadeTarget = CORTEX_FADE[view];
     this.distanceTarget = this.fitDistance(VIEW_FIT[view]);
     this.kick();
   }
@@ -542,6 +731,18 @@ export class MindScene {
     this.theme = theme;
     this.applyTheme();
     this.kick();
+  }
+
+  /**
+   * Pixels hidden behind overlays at the top and bottom of the canvas (the
+   * header's controls, the card). The camera's centre moves into the space
+   * that is left, and each view is fitted to that space.
+   */
+  setInsets(top: number, bottom: number): void {
+    const next = { top: Math.max(0, top), bottom: Math.max(0, bottom) };
+    if (next.top === this.insets.top && next.bottom === this.insets.bottom) return;
+    this.insets = next;
+    this.resize();
   }
 
   setReducedMotion(reduced: boolean): void {
@@ -573,11 +774,14 @@ export class MindScene {
     canvas.removeEventListener("pointerup", this.handlePointerUp);
     canvas.removeEventListener("pointercancel", this.handlePointerCancel);
     canvas.removeEventListener("pointerleave", this.handlePointerLeave);
+    canvas.removeEventListener("wheel", this.handleWheel);
 
     this.nodePoints?.geometry.dispose();
     this.edgeLines?.geometry.dispose();
     this.dust.geometry.dispose();
     this.aura.geometry.dispose();
+    this.cortex.geometry.dispose();
+    this.cortexMaterial.dispose();
     this.nodeMaterial.dispose();
     this.edgeMaterial.dispose();
     this.dustMaterial.dispose();
@@ -613,6 +817,18 @@ export class MindScene {
     geometry.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
     const points = new THREE.Points(geometry, this.dustMaterial);
     points.frustumCulled = false;
+    return points;
+  }
+
+  private makeCortex(count: number): THREE.Points {
+    const { positions, seeds, shells } = makeCortexPoints(count);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+    geometry.setAttribute("aShell", new THREE.BufferAttribute(shells, 1));
+    const points = new THREE.Points(geometry, this.cortexMaterial);
+    points.frustumCulled = false;
+    points.renderOrder = -2;
     return points;
   }
 
@@ -785,19 +1001,30 @@ export class MindScene {
     this.nodeMaterial.uniforms.uLight.value = light ? 1 : 0;
     // Light on dark adds up like light; on a light ground it layers like ink.
     const blending = light ? THREE.NormalBlending : THREE.AdditiveBlending;
-    for (const material of [this.nodeMaterial, this.edgeMaterial, this.dustMaterial, this.auraMaterial]) {
+    for (const material of [
+      this.nodeMaterial,
+      this.edgeMaterial,
+      this.dustMaterial,
+      this.auraMaterial,
+      this.cortexMaterial,
+    ]) {
       material.blending = blending;
       material.needsUpdate = true;
     }
     (this.dustMaterial.uniforms.uColor.value as THREE.Color).set(light ? "#7a86a8" : "#b9c6ff");
+    (this.cortexMaterial.uniforms.uColor.value as THREE.Color).set(light ? "#6a78ad" : "#9fb0ff");
+    (this.cortexMaterial.uniforms.uSparkColor.value as THREE.Color).set(light ? "#d9822b" : "#ffd9a0");
   }
 
   /* ---- Layout ---------------------------------------------------------- */
 
   private fitDistance(radius: number): number {
     const vFov = THREE.MathUtils.degToRad(this.camera.fov);
+    // Fit to the part of the canvas no overlay covers.
+    const visible = Math.max(0.35, (this.height - this.insets.top - this.insets.bottom) / this.height);
+    const vFit = 2 * Math.atan(Math.tan(vFov / 2) * visible);
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
-    const fov = Math.min(vFov, hFov);
+    const fov = Math.min(vFit, hFov);
     return radius / Math.sin(fov / 2);
   }
 
@@ -807,6 +1034,14 @@ export class MindScene {
     this.height = Math.max(1, rect.height);
     this.renderer.setSize(this.width, this.height, false);
     this.camera.aspect = this.width / this.height;
+    // Slide the picture so the brain's centre sits in the middle of the space
+    // the overlays leave, not behind the card.
+    const shift = Math.round((this.insets.bottom - this.insets.top) / 2);
+    if (shift !== 0) {
+      this.camera.setViewOffset(this.width, this.height, 0, shift, this.width, this.height);
+    } else {
+      this.camera.clearViewOffset();
+    }
     this.camera.updateProjectionMatrix();
 
     const bufferHeight = this.height * this.renderer.getPixelRatio();
@@ -834,9 +1069,41 @@ export class MindScene {
     canvas.addEventListener("pointerup", this.handlePointerUp);
     canvas.addEventListener("pointercancel", this.handlePointerCancel);
     canvas.addEventListener("pointerleave", this.handlePointerLeave);
+    canvas.addEventListener("wheel", this.handleWheel, { passive: false });
+  }
+
+  private zoomStep(direction: 1 | -1): void {
+    const now = performance.now();
+    if (now - this.lastZoomStepAt < 450) return;
+    this.lastZoomStepAt = now;
+    this.lastInteraction = now;
+    this.options.onInteract?.();
+    this.options.onZoomStep?.(direction);
+  }
+
+  private handleWheel = (event: WheelEvent): void => {
+    event.preventDefault();
+    // Lines and pages become pixels, roughly.
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+    this.wheelAccum += event.deltaY * unit;
+    if (Math.abs(this.wheelAccum) < 90) return;
+    this.zoomStep(this.wheelAccum > 0 ? 1 : -1);
+    this.wheelAccum = 0;
+  };
+
+  private pinchDistance(): number {
+    const [a, b] = [...this.pointers.values()];
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
   }
 
   private handlePointerDown = (event: PointerEvent): void => {
+    this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (this.pointers.size >= 2) {
+      // A second finger turns a drag into a pinch.
+      this.dragging = false;
+      this.pinchStart = this.pinchDistance();
+      return;
+    }
     const now = performance.now();
     this.dragging = true;
     this.downPointer = { x: event.clientX, y: event.clientY, t: now };
@@ -853,6 +1120,18 @@ export class MindScene {
   };
 
   private handlePointerMove = (event: PointerEvent): void => {
+    if (this.pointers.has(event.pointerId)) {
+      this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+    if (this.pinchStart !== null && this.pointers.size >= 2) {
+      const ratio = this.pinchDistance() / Math.max(1, this.pinchStart);
+      // Fingers apart looks closer; together looks wider.
+      if (ratio > 1.3 || ratio < 0.77) {
+        this.zoomStep(ratio > 1 ? -1 : 1);
+        this.pinchStart = this.pinchDistance();
+      }
+      return;
+    }
     if (this.dragging) {
       const now = performance.now();
       const dx = event.clientX - this.lastPointer.x;
@@ -882,7 +1161,16 @@ export class MindScene {
     }
   };
 
+  private releasePointer(event: PointerEvent): boolean {
+    this.pointers.delete(event.pointerId);
+    if (this.pinchStart === null) return false;
+    // The rest of a pinch is not a tap or a drag.
+    if (this.pointers.size < 2) this.pinchStart = null;
+    return true;
+  }
+
   private handlePointerUp = (event: PointerEvent): void => {
+    if (this.releasePointer(event)) return;
     if (!this.dragging) return;
     this.dragging = false;
     const moved = Math.hypot(event.clientX - this.downPointer.x, event.clientY - this.downPointer.y);
@@ -894,8 +1182,9 @@ export class MindScene {
     this.kick();
   };
 
-  private handlePointerCancel = (): void => {
-    // The browser took the gesture (a vertical page scroll). Keep any spin.
+  private handlePointerCancel = (event: PointerEvent): void => {
+    // The browser took the gesture. Keep any spin.
+    this.releasePointer(event);
     this.dragging = false;
   };
 
@@ -1028,6 +1317,9 @@ export class MindScene {
     const k = this.reducedMotion ? 1 : Math.min(1, dt * 3.5);
     this.ringFade.lerp(this.ringFadeTarget, k);
     if (this.ringFade.clone().sub(this.ringFadeTarget).lengthSq() > 1e-5) settling = true;
+    this.cortexFade += (this.cortexFadeTarget - this.cortexFade) * k;
+    if (Math.abs(this.cortexFadeTarget - this.cortexFade) > 1e-3) settling = true;
+    this.cortexMaterial.uniforms.uFade.value = this.cortexFade;
 
     // Camera: look at the selected node (or the centre), at the view's distance.
     const selected = this.selectedKey ? this.current.get(this.selectedKey) : null;
@@ -1062,10 +1354,20 @@ export class MindScene {
     }
   };
 
-  /** Move each bound label to its node's place on screen. */
+  /**
+   * Move each bound label to its node's place on screen. Items' labels win
+   * over hubs', and a label that would overlap one already placed is hidden
+   * for that frame, so names never pile on top of each other.
+   */
   private updateLabels(): void {
     if (this.labels.size === 0) return;
-    for (const [key, element] of this.labels) {
+    const placed: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+    const ordered = [...this.labels.entries()].sort(([a], [b]) => {
+      const ha = this.nodes[this.indexByKey.get(a) ?? -1]?.kind === "hub" ? 1 : 0;
+      const hb = this.nodes[this.indexByKey.get(b) ?? -1]?.kind === "hub" ? 1 : 0;
+      return ha - hb;
+    });
+    for (const [key, element] of ordered) {
       const at = this.current.get(key);
       const index = this.indexByKey.get(key);
       if (!at || index === undefined) {
@@ -1083,7 +1385,18 @@ export class MindScene {
       const sy = (-this.scratch.y * 0.5 + 0.5) * this.height;
       const scale = this.nodeMaterial.uniforms.uScale.value / this.renderer.getPixelRatio();
       const offset = Math.min(60, ((this.sizeTo[index] * scale) / depth) * 0.22) + 8;
+      const w = element.offsetWidth;
+      const h = element.offsetHeight;
+      const box = { x0: sx - w / 2 - 4, y0: sy + offset - 2, x1: sx + w / 2 + 4, y1: sy + offset + h + 2 };
+      const overlaps = placed.some(
+        (p) => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0
+      );
       element.style.transform = `translate3d(${sx.toFixed(1)}px, ${(sy + offset).toFixed(1)}px, 0) translateX(-50%)`;
+      if (overlaps) {
+        element.style.opacity = "0";
+        continue;
+      }
+      placed.push(box);
       element.style.opacity = "1";
     }
   }

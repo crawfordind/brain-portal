@@ -70,79 +70,82 @@ npm run test:coverage # Generate coverage report
   so a note containing markup cannot inject it. The dropdown used to print a
   note's stored TipTap HTML verbatim.
 
-### Dashboard (`/` → `StreamPage`)
+### Dashboard (`/` → `StreamPage`): the brain, full screen
 
-Five bands, ordered so the page answers *"anything for me?"* before *"what have
-I got?"*, and **three of them render nothing when they have nothing to say**:
+Home is one thing: the Mind map, filling the screen under a floating glass
+header (`AgenticLayout` drops the content column and padding on `/`). Everything
+else that used to stack above it lives where it fits:
 
-| Band | Component | Renders when |
-|------|-----------|--------------|
-| Greeting | `stream-page.tsx` | always (one line: greeting, date, "N done") |
-| Brain Bar | `brain-bar.tsx` | always — the universal input |
-| Voice intro | `voice-intro-card.tsx` | until the user dismisses it or tries voice (replaces the old first-visit modal) |
-| **Needs you** | `needs-you.tsx` | any of overdue / to review / contacts to sort / follow-ups due / due today / unread notifications is non-zero |
-| **People** | `crm-pulse-card.tsx` | the user has contacts; a card when something is pending, one quiet line when not |
-| Stream | `mind/mind-view.tsx` (default) or `stream-feed.tsx` | always; Map or List, remembered per device |
+| Was on the home page | Now |
+|------|-----|
+| Brain Bar (full width) | `BrainComposer`: a floating + button that pops over with **Speak** or **Type** |
+| Voice intro card | the composer's *Speak* (also sets voice `onboardingComplete`) |
+| Needs you pills, People card | Operations › Today (`NeedsYou`, `CrmPulseCard`, server data in the page) |
+| Overdue / due / review / people | lights in the brain, ranked with everything else |
+| List view, filter chips, density | Operations › Activity (`StreamFeed`) |
 
-- **One place announces that something is waiting.** `NeedsYou` is it. The feed
-  used to carry its own "N awaiting review" banner counted from the 30 items it
-  happened to have loaded, so it disagreed with the sidebar's server-side count.
-- **Server-sourced counts.** `getStreamStats` (`src/lib/stream/stats.ts`) and
-  `getCrmPulse` (`src/lib/crm/pulse.ts`) run in parallel in the page's server
-  component. Stats returns only counters that represent *pending work*; it used
-  to return seven, of which the page rendered one. The bell's unread count is
-  the sole client fetch, because it changes while the page is open.
-- **Filter chips are earned.** A chip renders only for a type the user actually
-  has items of, four show at a time, the rest fold behind "+N", and an active
-  filter always stays visible. Nine always-on chips was a scrolling wall above
-  the content.
-- **The legacy dashboard is gone.** `src/components/dashboard/` (hero section,
-  conditional sections, insight feeds, widgets — 17 components) was replaced by
-  the Stream and had no importer left in the app.
+- **The greeting, date and "N done"** are an overlay at the top of the brain,
+  with the Moment / Today / Life control and the ranked-list button.
+- **The page server component reads only `getStreamStats`** (for "N done");
+  the brain loads its own items client-side.
+- **The floating mic (`VoiceFAB`) stays mounted on `/` but is not drawn**, so
+  recognition and shortcuts still work through the composer.
+- **Mobile text is 14px or larger** on this screen (card meta, labels,
+  composer), inputs 16px (iOS zooms smaller ones), targets 44px or larger.
 
-#### The Mind map (the stream's default view)
+#### The Mind map (the home screen)
 
-The stream is drawn as a quiet neural network ranked by **how much each item
-needs the user now**, not by when it was touched. Code:
+The stream is drawn as a neural network inside a softly firing brain, ranked
+by **how much each item needs the user now**, not by when it was touched. Code:
 `src/lib/stream/mind.ts` (pure, unit-tested), `src/components/stream/mind/`
-(`mind-scene.ts` is three.js, `mind-view.tsx` owns data and actions),
-`useStreamView` (`map` | `list`, `localStorage`).
+(`mind-scene.ts` is three.js, `mind-view.tsx` owns data, overlays and actions).
 
 - **Three scales, one control.** *Moment* is the single most important item,
   at the centre with a warm aura. *Today* is the next six on a close shell.
-  *Life* is everything else, gathered around project hubs. The Moment / Today /
-  Life buttons are the zoom; there is no wheel or pinch zoom, so the canvas
-  never hijacks page scroll, and vertical swipes still scroll on a phone
-  (`touch-action: pan-y`).
+  *Life* is everything else, gathered around project hubs and a **People**
+  hub. The buttons, the wheel and a pinch step between the three
+  (`onZoomStep`); there is no free zoom. The canvas owns every touch
+  (`touch-action: none`), since the page has nothing to scroll.
+- **The cortex**: a few thousand motes on a stylised brain (hemispheres,
+  fissure, temporal lobes, cerebellum), generated deterministically, lit by a
+  slow activity wave and the odd spark. It fades back in Moment view.
+- **People are lights.** `getCrmPulse` returns `people` (up to 8: follow-ups
+  due, contacts to sort, recently spoken to); the view maps them to `person`
+  items (`personToMindItem`). `scorePerson` ranks a due follow-up like due
+  work. People open their contact; they cannot be completed or archived here.
+- **Overlays set the camera.** The view measures the top and bottom overlays
+  and calls `scene.setInsets`, which offsets the projection so the brain
+  centres in the visible space and fits each scale to it.
+- **Labels never pile up**: items win over hubs, and a label that would
+  overlap one already placed is hidden for that frame. Hub names show in Life
+  view on screens 640px and wider.
 - **The rules rank; nothing guesses.** `scoreMindItem` adds signals (waiting
   for review, overdue, due today, reminder due, priority, freshly captured,
   new since last visit) and the card shows the strongest one as the reason.
   Date-only due dates compare as calendar days in the viewer's zone.
-- **Connections mean something**: item to project hub, items from one run,
-  items sharing a tag (capped at two per item), the moment to today's shell.
-  Only an otherwise unconnected node gets a faint link to its nearest
-  neighbour. Positions are seeded from ids, so the same items draw the same
-  brain.
-- **Data** is two reads of `GET /api/stream`: recent live items, and live
-  tasks/reminders with `sort=due` (soonest first), so an old overdue task is
-  never missed. The query key starts with `"stream"`, so every existing
-  invalidation refreshes the map.
-- **Calm by construction.** Nodes breathe on a ~6s cycle, pathways fire a soft
-  pulse every 7-16s, the brain drifts when idle. `prefers-reduced-motion` stops
-  all of it and renders on demand; the loop also pauses off-screen and in
-  hidden tabs. Light theme uses normal blending, dark uses additive.
-- **Acting**: the card offers Done / Dismiss / Open / Ask about this / Archive
-  through the same endpoints as the list, optimistic with rollback. Finishing
-  the moment lets the next item glide into the centre.
+- **Connections mean something**: item to project hub (person to People),
+  items from one run, items sharing a tag (capped at two per item), the moment
+  to today's shell. Only an otherwise unconnected node gets a faint link to its
+  nearest neighbour. Positions are seeded from ids.
+- **Data** is three reads: recent live items and due-soonest tasks/reminders
+  from `GET /api/stream`, and `GET /api/crm/pulse` (a failure there leaves the
+  rest). The query key starts with `"stream"`, so every invalidation refreshes
+  it; a voice capture finishing refreshes it too.
+- **Calm by construction.** Nodes breathe on a ~6s cycle, pathways fire every
+  7-16s, the brain drifts when idle. `prefers-reduced-motion` stops all of it;
+  the loop pauses off-screen and in hidden tabs.
+- **Acting**: the card (collapsible to one line) offers Done / Dismiss / Open /
+  Ask / Archive through the same endpoints as the list, optimistic with
+  rollback. Finishing the moment lets the next item glide into the centre.
 - **Without the canvas**: arrow keys walk the ranking, Enter opens, Escape
-  returns to the moment; the card is a live region; an ordered list of
-  everything (most important first) is always in the DOM, and is shown
-  instead of the map when WebGL is unavailable or its context is lost.
+  returns to the moment, +/- change scale; the card is a live region; the
+  ranked list is always in the DOM, opens as a sheet, and is the page when
+  WebGL is unavailable.
 - three.js is loaded with a dynamic `import()`, never in the first bundle.
 
 #### Reading the stream: density and time buckets
 
-The feed is a list of short rows at a density the viewer chooses, grouped by
+Operations › Activity (`/operations/activity`). The feed is a list of short rows at a density the viewer chooses, grouped by
 when things happened. One flat chronological list of identical 88px cards showed
 about seven items on a 1080p screen and four on a phone.
 
@@ -268,6 +271,7 @@ A decision-and-execution layer over records Brain Portal already owns. It is
 | People | per contact: what you owe them, what they owe you, stage, last touch |
 | Intake | captures with a rule-based proposal; captured → proposed → confirmed |
 | Automations | queues, heartbeat rules, skills; n8n shown as **not connected** |
+| Activity | the stream as a chronological list with filters (was the home page's List view) |
 
 - **No migration.** Operational facts live in JSON already on every row:
   `tasks.metadata.ops` (`kind` action/decision/waiting/commitment, `owner`,

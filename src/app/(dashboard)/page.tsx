@@ -1,6 +1,5 @@
 import { getCurrentUser } from "@/lib/auth";
 import { getStreamStats } from "@/lib/stream/stats";
-import { getCrmPulse } from "@/lib/crm/pulse";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { StreamPage } from "@/components/stream";
@@ -13,20 +12,10 @@ function getGreeting() {
 }
 
 function StreamSkeleton() {
+  // The brain's own backdrop with a soft glow where the moment will settle.
   return (
-    <div className="space-y-4 p-3 lg:p-6">
-      <div className="h-8 w-48 bg-muted animate-pulse rounded-lg" />
-      <div className="h-24 bg-muted animate-pulse rounded-2xl" />
-      <div className="flex gap-2">
-        <div className="h-10 w-24 bg-muted animate-pulse rounded-xl" />
-        <div className="h-10 w-24 bg-muted animate-pulse rounded-xl" />
-        <div className="h-10 w-24 bg-muted animate-pulse rounded-xl" />
-      </div>
-      <div className="space-y-3">
-        <div className="h-20 bg-muted animate-pulse rounded-xl" />
-        <div className="h-20 bg-muted animate-pulse rounded-xl" />
-        <div className="h-20 bg-muted animate-pulse rounded-xl" />
-      </div>
+    <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(ellipse_at_50%_45%,#ffffff_0%,#f3f5fb_55%,#e6ebf5_100%)] dark:bg-[radial-gradient(ellipse_at_50%_45%,#18203a_0%,#0e1427_55%,#070a14_100%)]">
+      <div className="h-24 w-24 animate-pulse rounded-full bg-amber-200/40 blur-2xl dark:bg-amber-200/20" />
     </div>
   );
 }
@@ -35,14 +24,11 @@ async function StreamContent() {
   const user = await getCurrentUser();
   if (!user) redirect("/auth/login");
 
-  // Both are independent reads and neither throws; a slow CRM must not hold
-  // up the rest of the page.
-  const [stats, crm] = await Promise.all([
-    getStreamStats(user.id),
-    getCrmPulse(user.id),
-  ]);
+  // The brain loads its own items client-side; the server supplies only the
+  // day's one piece of encouragement. The CRM summary moved to Operations.
+  const stats = await getStreamStats(user.id);
 
-  return <StreamPage stats={stats} crm={crm} greeting={getGreeting()} />;
+  return <StreamPage stats={stats} greeting={getGreeting()} />;
 }
 
 export default async function HomePage() {

@@ -1,62 +1,101 @@
 "use client";
 
 /**
- * Mind map: the dashboard's stream, drawn as a quiet neural network.
+ * Mind map: the home screen. The user's stream, drawn full screen as their
+ * brain.
  *
  * The most important thing right now sits at the centre and glows. The next
  * few for today orbit close around it. Everything else is the bigger picture
- * further out, gathered around the projects it belongs to. Ranking and layout
- * are `buildMindGraph` (pure, tested); drawing is `MindScene` (three.js,
- * loaded on demand); this component owns data, selection and actions.
+ * further out, gathered around the projects (and the people) it belongs to,
+ * all inside a softly firing cortex. Ranking and layout are `buildMindGraph`
+ * (pure, tested); drawing is `MindScene` (three.js, loaded on demand); this
+ * component owns data, selection, actions and the overlays:
+ *
+ *   - top: greeting, date, and the Moment / Today / Life scale;
+ *   - bottom: the card for the selected light, and the composer (speak or
+ *     type). The scene is told how much of the screen they cover, so the
+ *     brain centres in the space that is left.
  *
  * Built to be calm and obvious:
- *   - one label at a time (the moment, plus whatever you point at);
- *   - Moment / Today / Life is the zoom, no gestures to learn;
- *   - tap a light to look closer; the card below says what it is, why it is
- *     where it is, and offers the one or two things you might do with it;
+ *   - one label at a time (the moment, plus whatever you point at; project
+ *     and people hubs are named in the Life view on larger screens);
+ *   - Moment / Today / Life is the zoom (also the wheel and a pinch);
+ *   - tap a light to look closer; the card says what it is, why it is where
+ *     it is, and offers the one or two things you might do with it;
  *   - finishing the moment lets the next thing drift into the centre.
  *
- * Accessible without the canvas: the panel takes arrow keys, the card is a
- * live region, and an ordered list of everything (most important first) is
- * always in the DOM. Without WebGL that list is shown instead of the map.
+ * Accessible without the canvas: the map takes arrow keys, the card is a live
+ * region, and an ordered list of everything (most important first) is always
+ * in the DOM and one tap away. Without WebGL that list is the page.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   ExternalLink,
   Archive,
   MessageCircle,
-  List,
+  ListOrdered,
   RefreshCw,
   BellOff,
   Brain,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { useAskAbout } from "@/hooks/use-ask-about";
 import { useLastVisit } from "@/hooks/use-last-visit";
 import { usePrefersReducedMotion } from "@/hooks/use-stream-view";
+import { useVoiceStore } from "@/lib/stores/voice-store";
 import {
   buildMindGraph,
   labelForType,
+  PEOPLE_HUB_KEY,
   type MindNode,
   type MindSourceItem,
 } from "@/lib/stream/mind";
+import type { PulsePerson } from "@/lib/crm/pulse";
+import { BrainComposer } from "../brain-composer";
 import type { MindScene, MindView as MindZoom } from "./mind-scene";
 
 const LIVE_STATUSES = "active,waiting,processing";
 
+/** A contact from the CRM pulse, as a light in the brain. */
+export function personToMindItem(person: PulsePerson): MindSourceItem {
+  const at = person.at ?? "1970-01-01 00:00:00";
+  return {
+    id: person.id,
+    type: "person",
+    status: person.reason === "review" ? "waiting" : "active",
+    title: person.name,
+    content: null,
+    projectName: person.ventureName,
+    dueDate: person.reason === "follow_up" ? person.at : null,
+    // For a recent conversation, "created" is when the user last spoke to them.
+    createdAt: person.reason === "recent" ? at : "1970-01-01 00:00:00",
+    updatedAt: at,
+  };
+}
+
 /**
- * Two reads of the existing stream API, merged: what is recent, and what is
- * due soonest. The second is what keeps a task that went overdue weeks ago
- * on the map even though nobody has touched it since.
+ * Three reads, merged: what is recent, what is due soonest (which keeps a
+ * task that went overdue weeks ago on the map even though nobody has touched
+ * it since), and the people the CRM says are worth a thought. A failed people
+ * read leaves the rest of the brain intact.
  */
 async function fetchMindItems(): Promise<MindSourceItem[]> {
   const recent = new URLSearchParams({ limit: "70", statuses: LIVE_STATUSES });
@@ -66,14 +105,20 @@ async function fetchMindItems(): Promise<MindSourceItem[]> {
     types: "task,reminder",
     sort: "due",
   });
-  const [a, b] = await Promise.all([
+  const [a, b, c] = await Promise.all([
     fetch(`/api/stream?${recent}`),
     fetch(`/api/stream?${due}`),
+    fetch("/api/crm/pulse").catch(() => null),
   ]);
   if (!a.ok) throw new Error("Failed to load your stream");
   const first = ((await a.json()) as { items: MindSourceItem[] }).items ?? [];
   const second = b.ok ? (((await b.json()) as { items: MindSourceItem[] }).items ?? []) : [];
-  return [...first, ...second];
+  let people: MindSourceItem[] = [];
+  if (c?.ok) {
+    const pulse = (await c.json().catch(() => null)) as { people?: PulsePerson[] } | null;
+    people = (pulse?.people ?? []).map(personToMindItem);
+  }
+  return [...first, ...second, ...people];
 }
 
 type MindAction = "complete" | "archive" | "dismiss";
@@ -81,8 +126,9 @@ type MindAction = "complete" | "archive" | "dismiss";
 const ZOOMS: Array<{ id: MindZoom; label: string; hint: string }> = [
   { id: "moment", label: "Moment", hint: "The one thing that matters most right now" },
   { id: "today", label: "Today", hint: "What matters most today" },
-  { id: "life", label: "Life", hint: "Everything, gathered around your projects" },
+  { id: "life", label: "Life", hint: "Everything, gathered around your projects and people" },
 ];
+const ZOOM_ORDER: MindZoom[] = ["moment", "today", "life"];
 
 function plainText(raw: string | null | undefined): string {
   if (!raw) return "";
@@ -95,7 +141,8 @@ function plainText(raw: string | null | undefined): string {
     .trim();
 }
 
-function openHref(node: MindNode): string | null {
+export function openHref(node: MindNode): string | null {
+  if (node.key === PEOPLE_HUB_KEY) return "/crm";
   if (node.kind === "hub") return `/projects/${encodeURIComponent(node.key.slice(4))}`;
   const item = node.item;
   if (!item) return null;
@@ -106,6 +153,8 @@ function openHref(node: MindNode): string | null {
       return "/journal";
     case "task":
       return `/tasks?task=${encodeURIComponent(item.id)}`;
+    case "person":
+      return `/crm/${encodeURIComponent(item.id)}`;
     case "agent_output":
       return item.agentTaskId ? `/review?task=${encodeURIComponent(item.agentTaskId)}` : "/review";
     default:
@@ -113,11 +162,34 @@ function openHref(node: MindNode): string | null {
   }
 }
 
-interface MindViewProps {
-  onShowList?: () => void;
+/* ---- Small media hook: larger screens name the hubs. ------------------- */
+
+const SM_QUERY = "(min-width: 640px)";
+const hasMatchMedia = () => typeof window.matchMedia === "function";
+const subscribeSm = (onChange: () => void) => {
+  if (!hasMatchMedia()) return () => {};
+  const mq = window.matchMedia(SM_QUERY);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+};
+const getSm = () => (hasMatchMedia() ? window.matchMedia(SM_QUERY).matches : true);
+const getServerSm = () => true;
+
+function getClientGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
 }
 
-export function MindView({ onShowList }: MindViewProps) {
+interface MindViewProps {
+  /** The server's greeting; the client replaces it with the viewer's own clock. */
+  greeting: string;
+  /** Tasks completed today, for the one line of encouragement. */
+  completedToday?: number;
+}
+
+export function MindView({ greeting: serverGreeting, completedToday = 0 }: MindViewProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
@@ -125,6 +197,16 @@ export function MindView({ onShowList }: MindViewProps) {
   const lastVisit = useLastVisit();
   const lastVisitMs = lastVisit?.getTime() ?? null;
   const { askAbout, canAskAbout } = useAskAbout();
+  const largeScreen = useSyncExternalStore(subscribeSm, getSm, getServerSm);
+  const isRecording = useVoiceStore((s) => s.isRecording);
+  const voiceBusy = useVoiceStore((s) => s.isProcessing);
+
+  /*
+   * The server renders in *its* timezone and the client in the viewer's, so
+   * these legitimately differ on hydration; `suppressHydrationWarning` on the
+   * nodes is the escape hatch for exactly this and costs no extra render.
+   */
+  const greeting = typeof window === "undefined" ? serverGreeting : getClientGreeting();
 
   const { data, isPending, isError, refetch, dataUpdatedAt } = useQuery({
     // Under "stream" so every existing invalidation (Brain Bar, row actions)
@@ -141,6 +223,8 @@ export function MindView({ onShowList }: MindViewProps) {
   const [zoom, setZoom] = useState<MindZoom>("today");
   const [touched, setTouched] = useState(false);
   const [sceneState, setSceneState] = useState<"loading" | "ready" | "failed">("loading");
+  const [cardOpen, setCardOpen] = useState(true);
+  const [listOpen, setListOpen] = useState(false);
 
   const graph = useMemo(
     () =>
@@ -164,9 +248,19 @@ export function MindView({ onShowList }: MindViewProps) {
 
   /* ---- The scene ------------------------------------------------------- */
 
+  const sectionRef = useRef<HTMLElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   // State, not a ref: labels and effects read it during render.
   const [scene, setScene] = useState<MindScene | null>(null);
+
+  const zoomStep = useCallback((direction: 1 | -1) => {
+    setZoom((z) => {
+      const i = ZOOM_ORDER.indexOf(z) + direction;
+      return ZOOM_ORDER[Math.max(0, Math.min(ZOOM_ORDER.length - 1, i))];
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,11 +277,13 @@ export function MindView({ onShowList }: MindViewProps) {
             onHover: (key) => setHoverKey(key),
             onSelect: (key) => {
               setSelectedKey(key);
+              if (key) setCardOpen(true);
               // Tapping something on the far side brings the view out to it.
               if (key) setZoom((z) => (z === "moment" ? "today" : z));
             },
             onInteract: () => setTouched(true),
             onError: () => setSceneState("failed"),
+            onZoomStep: zoomStep,
           });
           setScene(created);
           setSceneState("ready");
@@ -204,7 +300,7 @@ export function MindView({ onShowList }: MindViewProps) {
       created?.dispose();
       setScene(null);
     };
-  }, []);
+  }, [zoomStep]);
 
   useEffect(() => {
     scene?.setGraph(graph);
@@ -228,12 +324,43 @@ export function MindView({ onShowList }: MindViewProps) {
     scene?.setReducedMotion(reducedMotion);
   }, [scene, reducedMotion]);
 
-  // The Brain Bar announces new content with this event.
+  // The overlays cover the top and bottom of the canvas; the brain centres in
+  // the space between them.
+  useEffect(() => {
+    if (!scene) return;
+    const measure = () => {
+      const section = sectionRef.current?.getBoundingClientRect();
+      const top = topRef.current?.getBoundingClientRect();
+      const bottom = bottomRef.current?.getBoundingClientRect();
+      if (!section) return;
+      scene.setInsets(
+        top ? top.bottom - section.top : 0,
+        bottom && bottom.height > 0 ? section.bottom - bottom.top : 0
+      );
+    };
+    const observer = new ResizeObserver(measure);
+    for (const el of [sectionRef.current, topRef.current, bottomRef.current]) {
+      if (el) observer.observe(el);
+    }
+    measure();
+    return () => observer.disconnect();
+  }, [scene]);
+
+  // The composer and voice capture announce new content; refresh the brain.
   useEffect(() => {
     const refresh = () => queryClient.invalidateQueries({ queryKey: ["stream"] });
     window.addEventListener("stream-refresh", refresh);
     return () => window.removeEventListener("stream-refresh", refresh);
   }, [queryClient]);
+
+  // A voice capture saves itself when it stops; when that finishes, look again.
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (wasBusy.current && !voiceBusy) {
+      void queryClient.invalidateQueries({ queryKey: ["stream"] });
+    }
+    wasBusy.current = voiceBusy;
+  }, [voiceBusy, queryClient]);
 
   /* ---- Actions --------------------------------------------------------- */
 
@@ -277,18 +404,23 @@ export function MindView({ onShowList }: MindViewProps) {
   const ranked = graph.ranked;
   const activeRank = active && active.rank >= 0 ? active.rank : -1;
 
+  const select = useCallback((key: string | null) => {
+    setSelectedKey(key);
+    setCardOpen(true);
+  }, []);
+
   const step = useCallback(
     (delta: number) => {
       if (ranked.length === 0) return;
       const from = activeRank < 0 ? 0 : activeRank;
       const next = (from + delta + ranked.length) % ranked.length;
-      setSelectedKey(next === 0 ? null : ranked[next].key);
+      select(next === 0 ? null : ranked[next].key);
       setTouched(true);
       // Stepping beyond today's shell needs the wider view to see it.
       if (ranked[next].ring === "life") setZoom("life");
       else if (ranked[next].ring === "today") setZoom((z) => (z === "moment" ? "today" : z));
     },
-    [ranked, activeRank]
+    [ranked, activeRank, select]
   );
 
   const open = useCallback(
@@ -310,6 +442,10 @@ export function MindView({ onShowList }: MindViewProps) {
       setSelectedKey(null);
     } else if (event.key === "Enter" && active) {
       open(active);
+    } else if (event.key === "+" || event.key === "=") {
+      zoomStep(-1);
+    } else if (event.key === "-") {
+      zoomStep(1);
     }
   };
 
@@ -320,195 +456,295 @@ export function MindView({ onShowList }: MindViewProps) {
     if (graph.focusKey) keys.push(graph.focusKey);
     if (activeKey && !keys.includes(activeKey)) keys.push(activeKey);
     if (hoverKey && !keys.includes(hoverKey) && nodeByKey.has(hoverKey)) keys.push(hoverKey);
+    // From afar, name the places the life ring gathers around.
+    if (zoom === "life" && largeScreen) {
+      for (const node of graph.nodes) {
+        if (node.kind === "hub" && !keys.includes(node.key)) keys.push(node.key);
+      }
+    }
     return keys;
-  }, [graph.focusKey, activeKey, hoverKey, nodeByKey]);
+  }, [graph, activeKey, hoverKey, nodeByKey, zoom, largeScreen]);
 
   /* ---- Render ---------------------------------------------------------- */
 
   const empty = !isPending && !isError && graph.ranked.length === 0;
   const failed = sceneState === "failed";
+  const dateLine = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(new Date());
+  const todayCount = graph.nodes.filter((n) => n.ring === "moment" || n.ring === "today").length;
 
-  return (
-    <section aria-label="What matters most" className="space-y-3">
-      <div
-        className={cn(
-          "relative overflow-hidden rounded-3xl border",
-          "border-slate-200/70 bg-[radial-gradient(ellipse_at_50%_45%,#ffffff_0%,#f3f5fb_55%,#e9edf6_100%)]",
-          "dark:border-white/5 dark:bg-[radial-gradient(ellipse_at_50%_45%,#18203a_0%,#0e1427_55%,#080b16_100%)]",
-          failed ? "hidden" : "h-[clamp(320px,56dvh,580px)]"
-        )}
-      >
-        {/* The canvas mounts here. Focusable so the keyboard can walk it. */}
-        <div
-          ref={containerRef}
-          tabIndex={0}
-          role="application"
-          aria-roledescription="map"
-          aria-label="Mind map. Use the arrow keys to move from the most important thing outward, Enter to open, Escape to return to the centre."
-          onKeyDown={onKeyDown}
-          className="absolute inset-0 cursor-grab outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-inset rounded-3xl"
-        />
-
-        {/* Labels follow their nodes; the scene moves them every frame. */}
-        <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-          {scene &&
-            labelKeys.map((key) => {
-              const node = nodeByKey.get(key);
-              if (!node) return null;
-              const isFocus = key === graph.focusKey;
-              return (
-                <div
-                  key={key}
-                  ref={(el) => {
-                    if (!el) return;
-                    scene.bindLabel(key, el);
-                    return () => scene.bindLabel(key, null);
-                  }}
-                  style={{ opacity: 0 }}
-                  className={cn(
-                    "absolute left-0 top-0 max-w-[min(240px,70vw)] rounded-full px-3 py-1 text-center transition-opacity duration-300",
-                    "bg-white/75 text-slate-800 shadow-sm ring-1 ring-black/5 backdrop-blur",
-                    "dark:bg-slate-900/60 dark:text-slate-100 dark:ring-white/10"
-                  )}
-                >
-                  {isFocus && (
-                    <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-amber-600 dark:text-amber-300">
-                      Right now
-                    </span>
-                  )}
-                  <span className="block truncate text-xs font-medium">{node.label}</span>
-                </div>
-              );
-            })}
-        </div>
-
-        {/* Zoom: the three scales the user asked about. */}
-        <div className="absolute left-3 top-3 flex items-center gap-2">
-          <div
-            role="group"
-            aria-label="How far to look"
-            className="flex rounded-full bg-white/70 p-0.5 shadow-sm ring-1 ring-black/5 backdrop-blur dark:bg-slate-900/50 dark:ring-white/10"
-          >
-            {ZOOMS.map((z) => (
-              <button
-                key={z.id}
-                type="button"
-                title={z.hint}
-                aria-pressed={zoom === z.id}
-                onClick={() => {
-                  setZoom(z.id);
-                  if (z.id === "moment") setSelectedKey(null);
-                }}
-                className={cn(
-                  "min-h-9 rounded-full px-3 text-xs font-medium transition-colors",
-                  zoom === z.id
-                    ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-                    : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-                )}
-              >
-                {z.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {onShowList && (
+  const rankedList = (
+    <ol className="space-y-1">
+      {ranked.map((node) => (
+        <li key={node.key}>
           <button
             type="button"
-            onClick={onShowList}
-            className="absolute right-3 top-3 flex min-h-9 items-center gap-1.5 rounded-full bg-white/70 px-3 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-black/5 backdrop-blur hover:text-slate-900 dark:bg-slate-900/50 dark:text-slate-300 dark:ring-white/10 dark:hover:text-white"
-            title="Show everything as a list, newest first"
+            onClick={() => {
+              select(node.rank === 0 ? null : node.key);
+              setListOpen(false);
+              if (node.ring === "life") setZoom("life");
+            }}
+            className="flex w-full min-h-12 items-center gap-3 rounded-xl px-2 text-left hover:bg-muted"
           >
-            <List className="h-3.5 w-3.5" />
-            List
+            <span
+              aria-hidden="true"
+              className="h-3 w-3 shrink-0 rounded-full"
+              style={{ background: node.color }}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-base sm:text-sm">{node.label}</span>
+              <span className="block truncate text-sm text-muted-foreground sm:text-xs">
+                {node.reason}
+              </span>
+            </span>
           </button>
-        )}
+        </li>
+      ))}
+    </ol>
+  );
 
-        {/* States drawn over the map. */}
-        {(isPending || sceneState === "loading") && !isError && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="h-16 w-16 animate-pulse rounded-full bg-amber-200/40 blur-xl dark:bg-amber-200/20" />
-          </div>
+  return (
+    <section
+      ref={sectionRef}
+      aria-label="Your brain: what matters most"
+      className={cn(
+        "relative h-full w-full overflow-hidden",
+        "bg-[radial-gradient(ellipse_at_50%_45%,#ffffff_0%,#f3f5fb_55%,#e6ebf5_100%)]",
+        "dark:bg-[radial-gradient(ellipse_at_50%_45%,#18203a_0%,#0e1427_55%,#070a14_100%)]"
+      )}
+    >
+      {/* The canvas mounts here. Focusable so the keyboard can walk it. */}
+      <div
+        ref={containerRef}
+        tabIndex={0}
+        role="application"
+        aria-roledescription="map"
+        aria-label="Your brain. Arrow keys move from the most important thing outward, Enter opens, Escape returns to the centre, plus and minus change the scale."
+        onKeyDown={onKeyDown}
+        className={cn(
+          "absolute inset-0 cursor-grab outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/60",
+          failed && "hidden"
         )}
+      />
 
-        {isError && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
-            <p className="text-sm text-slate-700 dark:text-slate-200">Couldn&apos;t load what&apos;s on your mind.</p>
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-              Try again
-            </Button>
-          </div>
-        )}
-
-        {empty && (
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
-            <Brain className="mb-3 h-7 w-7 text-slate-400 dark:text-slate-500" />
-            <p className="text-base font-medium text-slate-800 dark:text-slate-100">Your mind is clear</p>
-            <p className="mt-1 max-w-xs text-sm text-slate-500 dark:text-slate-400">
-              Type anything into the Brain Bar. The most important thing will settle in the middle.
-            </p>
-          </div>
-        )}
-
-        {!touched && !empty && !isPending && sceneState === "ready" && (
-          <p className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap text-[11px] text-slate-500 dark:text-slate-400">
-            Drag to turn · Tap a light to look closer
-          </p>
-        )}
+      {/* Labels follow their nodes; the scene moves them every frame. */}
+      <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+        {scene &&
+          labelKeys.map((key) => {
+            const node = nodeByKey.get(key);
+            if (!node) return null;
+            const isFocus = key === graph.focusKey;
+            return (
+              <div
+                key={key}
+                ref={(el) => {
+                  if (!el) return;
+                  scene.bindLabel(key, el);
+                  return () => scene.bindLabel(key, null);
+                }}
+                style={{ opacity: 0 }}
+                className={cn(
+                  "absolute left-0 top-0 max-w-[min(260px,72vw)] rounded-full px-3 py-1 text-center transition-opacity duration-300",
+                  "bg-white/80 text-slate-800 shadow-sm ring-1 ring-black/5 backdrop-blur",
+                  "dark:bg-slate-900/65 dark:text-slate-100 dark:ring-white/10",
+                  node.kind === "hub" && "bg-white/60 dark:bg-slate-900/45"
+                )}
+              >
+                {isFocus && (
+                  <span className="block text-xs font-semibold uppercase tracking-[0.12em] text-amber-600 dark:text-amber-300">
+                    Right now
+                  </span>
+                )}
+                <span
+                  className={cn(
+                    "block truncate font-medium",
+                    node.kind === "hub" ? "text-sm sm:text-xs" : "text-sm"
+                  )}
+                >
+                  {node.label}
+                </span>
+              </div>
+            );
+          })}
       </div>
 
-      {/* The card: what this is, why it's here, and what you might do. */}
-      {active && (
-        <MindCard
-          node={active}
-          isFocus={active.key === graph.focusKey}
-          position={activeRank >= 0 ? `${activeRank + 1} of ${ranked.length}` : null}
-          busy={act.isPending}
-          canAsk={!!active.item && canAskAbout(active.item.type)}
-          onPrev={ranked.length > 1 ? () => step(-1) : undefined}
-          onNext={ranked.length > 1 ? () => step(1) : undefined}
-          onBack={active.key !== graph.focusKey && focus ? () => setSelectedKey(null) : undefined}
-          onOpen={openHref(active) ? () => open(active) : undefined}
-          onAsk={() => {
-            const item = active.item;
-            if (item) askAbout({ id: item.id, type: item.type, title: item.title, content: item.content ?? "" });
-          }}
-          onAction={(action) => act.mutate({ node: active, action })}
-        />
+      {/* Top: who, when, and how far to look. Sits below the app header. */}
+      <div
+        ref={topRef}
+        className="pointer-events-none absolute inset-x-0 top-14 px-4 pt-3 sm:px-5 lg:px-6"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+          <div className="pointer-events-auto min-w-0">
+            <h1
+              className="text-xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-2xl"
+              suppressHydrationWarning
+            >
+              {greeting}
+            </h1>
+            <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300" suppressHydrationWarning>
+              {dateLine}
+              {completedToday > 0 && (
+                <span className="text-emerald-700 dark:text-emerald-300"> · {completedToday} done</span>
+              )}
+              {todayCount > 0 && <span> · {todayCount} on your mind</span>}
+            </p>
+            {!touched && !empty && !isPending && sceneState === "ready" && (
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Drag to turn · Tap a light · Pinch or scroll to zoom
+              </p>
+            )}
+          </div>
+
+          <div className="pointer-events-auto flex items-center gap-2">
+            <div
+              role="group"
+              aria-label="How far to look"
+              className="flex rounded-full bg-white/75 p-1 shadow-sm ring-1 ring-black/5 backdrop-blur dark:bg-slate-900/60 dark:ring-white/10"
+            >
+              {ZOOMS.map((z) => (
+                <button
+                  key={z.id}
+                  type="button"
+                  title={z.hint}
+                  aria-pressed={zoom === z.id}
+                  onClick={() => {
+                    setZoom(z.id);
+                    if (z.id === "moment") setSelectedKey(null);
+                  }}
+                  className={cn(
+                    "min-h-10 rounded-full px-3.5 text-sm font-medium transition-colors sm:min-h-9",
+                    zoom === z.id
+                      ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                      : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
+                  )}
+                >
+                  {z.label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setListOpen(true)}
+              aria-label="Everything, most important first"
+              title="Everything, most important first"
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-white/75 text-slate-700 shadow-sm ring-1 ring-black/5 backdrop-blur hover:text-slate-900 dark:bg-slate-900/60 dark:text-slate-200 dark:ring-white/10 dark:hover:text-white sm:h-11 sm:w-11"
+            >
+              <ListOrdered className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* States drawn over the brain. */}
+      {(isPending || sceneState === "loading") && !isError && !failed && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="h-24 w-24 animate-pulse rounded-full bg-amber-200/40 blur-2xl dark:bg-amber-200/20" />
+        </div>
       )}
 
-      {/* Everything, most important first. Read by screen readers always;
-          shown to everyone when the map cannot be drawn. */}
-      <div className={failed ? "rounded-2xl border p-4" : "sr-only"}>
-        {failed && (
-          <p className="mb-3 text-xs text-muted-foreground">
-            This screen can&apos;t draw the map, so here is the same picture as a list.
+      {isError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
+          <p className="text-base text-slate-700 dark:text-slate-200">Couldn&apos;t load what&apos;s on your mind.</p>
+          <Button variant="outline" className="h-11 rounded-full px-5" onClick={() => refetch()}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {empty && (
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
+          <Brain className="mb-3 h-9 w-9 text-slate-400 dark:text-slate-500" />
+          <p className="text-lg font-medium text-slate-800 dark:text-slate-100">Your mind is clear</p>
+          <p className="mt-1 max-w-xs text-base text-slate-500 dark:text-slate-400">
+            Tap the + button to capture a thought, by voice or by typing. The most important thing settles in the middle.
           </p>
-        )}
-        <h2 className={failed ? "mb-2 text-sm font-semibold" : undefined}>
-          Most important first
-        </h2>
-        <ol className="space-y-1">
-          {ranked.map((node) => (
-            <li key={node.key}>
+        </div>
+      )}
+
+      {/* Without WebGL, the list is the page. */}
+      {failed && (
+        <div className="absolute inset-x-0 bottom-0 top-36 overflow-y-auto px-4 pb-[calc(var(--mobile-nav-height)+6rem)] lg:pb-28">
+          <div className="mx-auto max-w-2xl rounded-2xl border bg-card p-4">
+            <p className="mb-3 text-sm text-muted-foreground">
+              This screen can&apos;t draw your brain, so here is the same picture as a list.
+            </p>
+            <h2 className="mb-2 text-base font-semibold">Most important first</h2>
+            {rankedList}
+          </div>
+        </div>
+      )}
+
+      {/* Bottom: the card for the selected light, and the composer. */}
+      <div
+        ref={bottomRef}
+        className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--mobile-nav-height)+0.5rem)] flex flex-col gap-3 px-3 sm:px-4 lg:bottom-5 lg:px-6"
+      >
+        <div className="flex justify-end lg:absolute lg:bottom-0 lg:right-6">
+          <BrainComposer
+            className="pointer-events-auto"
+            onCaptured={() => window.dispatchEvent(new CustomEvent("stream-refresh"))}
+          />
+        </div>
+
+        {active && !isRecording && (
+          <div className="pointer-events-auto mx-auto w-full max-w-xl lg:max-w-2xl lg:pr-20 xl:pr-0">
+            {cardOpen ? (
+              <MindCard
+                node={active}
+                isFocus={active.key === graph.focusKey}
+                position={activeRank >= 0 ? `${activeRank + 1} of ${ranked.length}` : null}
+                busy={act.isPending}
+                canAsk={!!active.item && canAskAbout(active.item.type)}
+                onPrev={ranked.length > 1 ? () => step(-1) : undefined}
+                onNext={ranked.length > 1 ? () => step(1) : undefined}
+                onBack={active.key !== graph.focusKey && focus ? () => setSelectedKey(null) : undefined}
+                onOpen={openHref(active) ? () => open(active) : undefined}
+                onAsk={() => {
+                  const item = active.item;
+                  if (item) askAbout({ id: item.id, type: item.type, title: item.title, content: item.content ?? "" });
+                }}
+                onAction={(action) => act.mutate({ node: active, action })}
+                onCollapse={() => setCardOpen(false)}
+              />
+            ) : (
               <button
                 type="button"
-                onClick={() => setSelectedKey(node.rank === 0 ? null : node.key)}
-                className="flex w-full min-h-11 items-center gap-3 rounded-lg px-2 text-left hover:bg-muted"
+                onClick={() => setCardOpen(true)}
+                className="mx-auto flex min-h-12 max-w-full items-center gap-2 rounded-full border bg-card/90 px-4 text-left shadow-sm backdrop-blur"
               >
-                <span
-                  aria-hidden="true"
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ background: node.color }}
-                />
-                <span className="min-w-0 flex-1 truncate text-sm">{node.label}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{node.reason}</span>
+                <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: active.color }} />
+                <span className="truncate text-base font-medium sm:text-sm">{active.label}</span>
+                <ChevronUp className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <span className="sr-only">Show details</span>
               </button>
-            </li>
-          ))}
-        </ol>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Everything, most important first. Read by screen readers always. */}
+      {!failed && (
+        <div className="sr-only">
+          <h2>Most important first</h2>
+          {rankedList}
+        </div>
+      )}
+
+      <Sheet open={listOpen} onOpenChange={setListOpen}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="text-lg">Most important first</SheetTitle>
+            <SheetDescription className="text-base sm:text-sm">
+              Everything in your brain, ranked by how much it needs you now.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="px-2 pb-6">{rankedList}</div>
+        </SheetContent>
+      </Sheet>
     </section>
   );
 }
@@ -527,6 +763,7 @@ interface MindCardProps {
   onOpen?: () => void;
   onAsk: () => void;
   onAction: (action: MindAction) => void;
+  onCollapse: () => void;
 }
 
 function MindCard({
@@ -541,6 +778,7 @@ function MindCard({
   onOpen,
   onAsk,
   onAction,
+  onCollapse,
 }: MindCardProps) {
   const item = node.item;
   const type = item?.type ?? "project";
@@ -548,63 +786,101 @@ function MindCard({
   const showPreview = preview && preview !== plainText(item?.title);
   const canComplete = type === "task";
   const canDismiss = type === "reminder";
-  const canArchive = !!item && type !== "agent_output";
+  const canArchive = !!item && type !== "agent_output" && type !== "person";
+  const kindLabel = isFocus
+    ? "Right now"
+    : node.key === PEOPLE_HUB_KEY
+      ? "People"
+      : node.kind === "hub"
+        ? "Project"
+        : labelForType(type);
 
   return (
     <div
-      className="rounded-2xl border bg-card px-4 py-3 shadow-sm"
+      className="rounded-2xl border bg-card/95 px-4 py-3 shadow-lg backdrop-blur"
       aria-live="polite"
       aria-atomic="true"
     >
-      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ background: node.color }} />
-        <span className="font-medium uppercase tracking-wider">
-          {isFocus ? "Right now" : node.kind === "hub" ? "Project" : labelForType(type)}
-        </span>
+      <div className="flex min-h-7 items-center gap-2 text-sm text-muted-foreground sm:text-xs">
+        <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: node.color }} />
+        <span className="shrink-0 font-semibold uppercase tracking-wider">{kindLabel}</span>
         <span aria-hidden="true">·</span>
         <span className="truncate">{node.reason}</span>
         {item?.projectName && node.kind !== "hub" && (
-          <>
-            <span aria-hidden="true">·</span>
-            <span className="truncate">{item.projectName}</span>
-          </>
+          <span className="hidden truncate sm:inline">· {item.projectName}</span>
         )}
-        {position && <span className="ml-auto shrink-0 tabular-nums">{position}</span>}
+        <span className="-my-2 ml-auto flex shrink-0 items-center">
+          {position && <span className="mr-1 hidden tabular-nums sm:inline">{position}</span>}
+          {onPrev && (
+            <button
+              type="button"
+              onClick={onPrev}
+              className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted sm:h-9 sm:w-9"
+              aria-label="More important"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+          )}
+          {onNext && (
+            <button
+              type="button"
+              onClick={onNext}
+              className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted sm:h-9 sm:w-9"
+              aria-label="Less important"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="-mr-2 flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted sm:h-9 sm:w-9"
+            aria-label="Hide details"
+          >
+            <ChevronDown className="h-5 w-5" />
+          </button>
+        </span>
       </div>
 
-      <h2 className="mt-1.5 text-base font-semibold leading-snug lg:text-lg">{node.label}</h2>
+      <h2 className="mt-1 text-lg font-semibold leading-snug">{node.label}</h2>
       {showPreview && (
-        <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{preview}</p>
+        <p className="mt-1 line-clamp-1 text-base text-muted-foreground sm:line-clamp-2 sm:text-sm">{preview}</p>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         {canComplete && (
-          <Button size="sm" className="h-11 rounded-full px-4 sm:h-9" disabled={busy} onClick={() => onAction("complete")}>
+          <Button className="h-11 rounded-full px-4 text-base sm:h-9 sm:text-sm" disabled={busy} onClick={() => onAction("complete")}>
             <Check className="mr-1.5 h-4 w-4" />
             Done
           </Button>
         )}
         {canDismiss && (
-          <Button size="sm" className="h-11 rounded-full px-4 sm:h-9" disabled={busy} onClick={() => onAction("dismiss")}>
+          <Button className="h-11 rounded-full px-4 text-base sm:h-9 sm:text-sm" disabled={busy} onClick={() => onAction("dismiss")}>
             <BellOff className="mr-1.5 h-4 w-4" />
             Dismiss
           </Button>
         )}
         {onOpen && (
-          <Button size="sm" variant="outline" className="h-11 rounded-full px-4 sm:h-9" onClick={onOpen}>
+          <Button variant="outline" className="h-11 rounded-full px-4 text-base sm:h-9 sm:text-sm" onClick={onOpen}>
             <ExternalLink className="mr-1.5 h-4 w-4" />
             Open
           </Button>
         )}
         {canAsk && (
-          <Button size="sm" variant="outline" className="h-11 rounded-full px-4 sm:h-9" onClick={onAsk}>
+          <Button
+            variant="outline"
+            aria-label="Ask about this"
+            className="h-11 rounded-full px-4 text-base sm:h-9 sm:text-sm"
+            onClick={onAsk}
+          >
             <MessageCircle className="mr-1.5 h-4 w-4" />
-            Ask about this
+            <span>
+              Ask<span className="hidden sm:inline"> about this</span>
+            </span>
           </Button>
         )}
         {canArchive && (
           <Button
-            size="sm"
             variant="ghost"
             className="h-11 rounded-full px-3 text-muted-foreground sm:h-9"
             disabled={busy}
@@ -616,23 +892,11 @@ function MindCard({
           </Button>
         )}
 
-        <div className="ml-auto flex items-center gap-1">
-          {onBack && (
-            <Button size="sm" variant="ghost" className="h-11 rounded-full px-3 text-xs sm:h-9" onClick={onBack}>
-              Back to now
-            </Button>
-          )}
-          {onPrev && (
-            <Button size="icon" variant="ghost" className="h-11 w-11 rounded-full sm:h-9 sm:w-9" onClick={onPrev} aria-label="More important">
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-          )}
-          {onNext && (
-            <Button size="icon" variant="ghost" className="h-11 w-11 rounded-full sm:h-9 sm:w-9" onClick={onNext} aria-label="Less important">
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
+        {onBack && (
+          <Button variant="ghost" className="ml-auto h-11 rounded-full px-3 text-base sm:h-9 sm:text-sm" onClick={onBack}>
+            Back to now
+          </Button>
+        )}
       </div>
     </div>
   );

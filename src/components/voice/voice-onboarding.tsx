@@ -33,9 +33,10 @@ const TIPS = [
 /**
  * Progressive voice tips, shown after the user has started using voice.
  *
- * The first-visit welcome used to be a full-screen modal here. It is now the
- * dismissible `VoiceIntroCard` on the dashboard, which is what sets
- * `onboardingComplete`, so tips only begin once the user has met the feature.
+ * The first-visit welcome used to be a full-screen modal here, then a card on
+ * the dashboard. Voice is now one of the two choices in the home screen's
+ * composer (`BrainComposer`), whose *Speak* sets `onboardingComplete`, so
+ * tips only begin once the user has met the feature.
  */
 export function VoiceOnboarding() {
   const {
