@@ -4,6 +4,7 @@ import {
   scoreMindItem,
   readDue,
   hashString,
+  PEOPLE_HUB_KEY,
   type MindSourceItem,
 } from "@/lib/stream/mind";
 
@@ -90,6 +91,22 @@ describe("scoreMindItem", () => {
     expect(note.reason).not.toMatch(/Overdue/);
   });
 
+  it("ranks a due follow-up like due work, and explains each person", () => {
+    const followUp = scoreMindItem(item({ type: "person", dueDate: day(-3) }), NOW);
+    const sorting = scoreMindItem(item({ type: "person", status: "waiting" }), NOW);
+    const recent = scoreMindItem(item({ type: "person", createdAt: iso(NOW) }), NOW);
+    const old = scoreMindItem(item({ type: "person" }), NOW);
+    const note = scoreMindItem(item({ type: "note" }), NOW);
+
+    expect(followUp.reason).toBe("Follow-up 3 days late");
+    expect(sorting.reason).toBe("Needs sorting");
+    expect(recent.reason).toBe("Spoke today");
+    expect(followUp.score).toBeGreaterThan(sorting.score);
+    expect(sorting.score).toBeGreaterThan(recent.score);
+    expect(recent.score).toBeGreaterThan(old.score);
+    expect(old.score).toBeGreaterThan(note.score);
+  });
+
   it("explains work an agent is still doing", () => {
     const s = scoreMindItem(item({ type: "agent_output", status: "processing" }), NOW);
     expect(s.reason).toBe("Being worked on");
@@ -147,6 +164,23 @@ describe("buildMindGraph", () => {
     const projectEdges = g.edges.filter((e) => e.kind === "project" && e.to === "hub:p1");
     expect(projectEdges.map((e) => e.from).sort()).toEqual(
       [`note:${a.id}`, `note:${b.id}`].sort()
+    );
+  });
+
+  it("gathers people around their own hub, separate from projects", () => {
+    const dana = item({ type: "person", title: "Dana", dueDate: day(-2) });
+    const maya = item({ type: "person", title: "Maya", createdAt: iso(NOW) });
+    const g = buildMindGraph(
+      [item({ type: "task", dueDate: day(-5), priority: "urgent" }), dana, maya],
+      { now: NOW }
+    );
+
+    const hub = g.nodes.find((n) => n.key === PEOPLE_HUB_KEY);
+    expect(hub?.label).toBe("People");
+    expect(hub?.reason).toBe("2 people on your mind");
+    const linked = g.edges.filter((e) => e.kind === "project" && e.to === PEOPLE_HUB_KEY);
+    expect(linked.map((e) => e.from).sort()).toEqual(
+      [`person:${dana.id}`, `person:${maya.id}`].sort()
     );
   });
 

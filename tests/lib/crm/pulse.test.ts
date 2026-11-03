@@ -154,6 +154,31 @@ describe("getCrmPulse", () => {
     expect(pulse.recentTouches[0].contactName).toBe("Maya");
   });
 
+  it("lists people for the Mind map, follow-ups first, each person once", async () => {
+    await addEntity("due", "Dana", { crm: { next_action_at: "2020-01-01 09:00:00" } });
+    await addEntity("later", "Lee", { crm: { next_action_at: "2999-01-01 09:00:00" } });
+    await addEntity("sort", "Justin", { resolution: "unresolved" });
+    await addEntity("talk", "Maya", {});
+    await addEntity("venture", "Northwind", { is_venture: true }, "org");
+    // Dana was also touched recently; she still appears once, as a follow-up.
+    for (const [i, who] of ["talk", "due"].entries()) {
+      await testDb.execute({
+        sql: `INSERT INTO interactions (id, user_id, entity_id, channel, direction, occurred_at, dedup_key)
+              VALUES (?, ?, ?, 'call', 'out', '2026-10-01', ?)`,
+        args: [`p${i}`, USER, who, `pk${i}`],
+      });
+    }
+
+    const pulse = await getCrmPulse(USER);
+    expect(pulse.people.map((p) => [p.id, p.reason])).toEqual([
+      ["due", "follow_up"],
+      ["sort", "review"],
+      ["talk", "recent"],
+    ]);
+    expect(pulse.people[0].at).toBe("2020-01-01 09:00:00");
+    expect(pulse.people[2].at).toBe("2026-10-01");
+  });
+
   it("scopes every count to the calling user", async () => {
     await testDb.execute(`INSERT INTO users (id, email) VALUES ('u2','b@c.com')`);
     await testDb.execute({
@@ -175,6 +200,7 @@ describe("getCrmPulse without the Phase 0 migration", () => {
     try {
       const pulse = await getCrmPulse(USER);
       expect(pulse.recentTouches).toEqual([]);
+      expect(pulse.people).toEqual([]);
       expect(pulse.contactCount).toBe(0);
     } finally {
       await applyCrmPhase0Migration(testDb);

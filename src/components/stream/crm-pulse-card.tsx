@@ -63,7 +63,7 @@ export function CrmPulseCard({ pulse }: { pulse: CrmPulse }) {
     return (
       <Link
         href="/crm"
-        className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        className="flex min-h-11 items-center gap-2 px-1 py-1 text-sm text-muted-foreground sm:min-h-0 sm:text-xs transition-colors hover:text-foreground"
       >
         <Users className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">
@@ -82,14 +82,14 @@ export function CrmPulseCard({ pulse }: { pulse: CrmPulse }) {
       <div className="flex items-center justify-between gap-2 border-b px-3.5 py-2.5">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-medium">People</h2>
-          <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+          <h2 className="text-base font-medium sm:text-sm">People</h2>
+          <Badge variant="outline" className="h-5 px-1.5 text-xs">
             {pulse.contactCount}
           </Badge>
         </div>
         <Link
           href="/crm/ventures"
-          className="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+          className="flex items-center gap-1 text-sm sm:text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           <Boxes className="h-3.5 w-3.5" />
           Ventures
@@ -121,7 +121,7 @@ export function CrmPulseCard({ pulse }: { pulse: CrmPulse }) {
               return (
                 <li
                   key={touch.id}
-                  className="flex items-baseline gap-2 text-[11px] text-muted-foreground"
+                  className="flex items-baseline gap-2 text-sm sm:text-xs text-muted-foreground"
                 >
                   <span className="truncate font-medium text-foreground">
                     {touch.contactName ?? "Unresolved"}
@@ -156,8 +156,8 @@ function PendingRow({
       className="flex items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-muted/50"
     >
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{title}</p>
-        <p className="truncate text-[11px] text-muted-foreground">{detail}</p>
+        <p className="truncate text-base font-medium sm:text-sm">{title}</p>
+        <p className="truncate text-sm sm:text-xs text-muted-foreground">{detail}</p>
       </div>
       <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
     </Link>

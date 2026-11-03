@@ -124,13 +124,13 @@ export function NeedsYou({ counts }: { counts: NeedsYouCounts }) {
     >
       {pills.map(({ key, count, label, icon: Icon, tone, href, onClick }) => {
         const className = cn(
-          "flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5",
-          "text-xs font-medium whitespace-nowrap transition-colors",
+          "flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3.5 sm:min-h-9 sm:px-3",
+          "text-sm font-medium whitespace-nowrap transition-colors sm:text-xs",
           TONE_CLASSES[tone]
         );
         const body = (
           <>
-            <Icon className="h-3.5 w-3.5" />
+            <Icon className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
             <span className="tabular-nums">{count}</span>
             <span className="font-normal opacity-80">{label}</span>
           </>
