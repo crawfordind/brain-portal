@@ -3,6 +3,7 @@ import * as dotenv from "dotenv";
 import { applyAgentRuntimeMigration } from "../src/lib/agents/runtime/schema";
 import { applyNoteSharingMigration } from "../src/lib/sharing/schema";
 import { applyWhiteboardMigration } from "../src/lib/whiteboards/schema";
+import { applyTemplateMigration } from "../src/lib/templates/schema";
 import { applyUserAiKeysMigration } from "../src/lib/ai/credentials/schema";
 import { applyAiUsageMigration } from "../src/lib/ai/usage/schema";
 
@@ -1262,6 +1263,15 @@ async function migrate() {
   } catch (error: unknown) {
     errorCount++;
     console.error(`✗ Whiteboards migration:`, (error as Error).message?.substring(0, 160));
+  }
+
+  console.log("\nNote templates...");
+  try {
+    await applyTemplateMigration(db, (m) => console.log(m));
+    successCount++;
+  } catch (error: unknown) {
+    errorCount++;
+    console.error(`✗ Note templates migration:`, (error as Error).message?.substring(0, 160));
   }
 
   // Personal AI provider keys (user_ai_keys). Additive; see

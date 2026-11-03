@@ -106,6 +106,7 @@ export const NAV_DESTINATIONS: readonly NavDestination[] = [
     href: "/notes",
     group: "library",
     description: "Everything you have written",
+    alsoMatches: ["/templates"],
   },
   {
     id: "journal",

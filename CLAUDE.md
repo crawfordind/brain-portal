@@ -434,6 +434,42 @@ truth. Design and roadmap: `docs/plans/2026-09-25-note-lenses-design.md`.
   toolbar); it stays mounted and hidden while a lens is shown.
 - A note with nothing structured shows no strip at all. No tables, no migration.
 
+### Note Templates (`/templates`)
+
+Recurring notes (a weekly operations meeting, a client check-in) start from a
+saved structure. Code: `src/lib/templates/` (`types.ts` imports nothing;
+`variables.ts`, `content.ts`, `series.ts`, `ai.ts` are pure and unit-tested),
+`/api/templates/*`, `src/components/templates/`, MCP module `templates`.
+
+- **Ways in**: New note → **Template** (or `/notes/new?template=<id>`), a
+  note's menu → **Save as template** (whole note, or headings only so one
+  week's figures are not copied forward), the Notes and project pages'
+  **Templates** buttons.
+- **Variables are filled in the viewer's zone**, in the browser:
+  `{{date}}`, `{{date_long}}`, `{{date+7}}`/`{{date-1}}`, `{{weekday}}`,
+  `{{time}}`, `{{week}}` (ISO), `{{month}}`, `{{year}}`, `{{project}}`
+  (HTML-escaped into bodies). Unknown `{{tokens}}` are left alone. MCP uses
+  `timezone`, else `notification_preferences.timezone`, else UTC.
+- **The rules find series; the model only drafts.** `findSeries` groups
+  notes whose titles match once dates and counters are stripped
+  (`titleStem`), needs 3 notes (or 2 sharing 3+ headings), and reports
+  cadence, shared headings and its reasons. Projects are kept apart; a series
+  a template already covers ranks last (the page hides it). `GET /api/templates/suggestions`
+  never calls a model.
+- **Drafts are proposals** (`POST /api/templates/draft`, fast slot, user's
+  key): `describe` (a sentence), `notes` (picked note ids, or a series key the
+  server re-resolves so a client cannot name notes it can't read) or
+  `headings` (no AI: the series' shared headings). The model returns sections
+  as JSON; `sectionsToHtml` renders them escaped, so a draft cannot inject
+  markup. Nothing is saved until the editor's **Save**. Failures say why
+  (`diagnoseError`).
+- **Templates belong to the account**; `project_id` only orders the picker
+  and is checked with `getProjectAccess`. Deleting the project keeps the
+  template. Using one bumps `use_count` without touching `updated_at`.
+- **Migration**: `applyTemplateMigration` (`src/lib/templates/schema.ts`),
+  run by `npm run db:migrate`. Additive (`note_templates`); routes answer 503
+  `NOT_MIGRATED` until it has run.
+
 ### Whiteboards (`/projects/<slug>/whiteboard`, `/notes/<slug>/whiteboard`)
 
 Every project has a whiteboard and so does every note. A project's board space
@@ -1954,16 +1990,18 @@ A full-featured MCP server that exposes Brain Portal's capabilities to Claude Co
 - `src/mcp/server.ts` - Main entry point (stdio transport, auth, registration)
 - `src/mcp/auth.ts` - API key authentication (SHA-256 hashed keys, scoped to users)
 - `src/mcp/db.ts` - Standalone Turso client (runs outside Next.js)
-- `src/mcp/tools/` - MCP tool implementations (59 tools; `index.ts` is the single
+- `src/mcp/tools/` - MCP tool implementations (63 tools; `index.ts` is the single
   registration point both transports and the catalog test use)
 - `src/mcp/resources/` - MCP resource providers (7 resources)
 - `src/mcp/prompts/` - MCP prompt templates (4 prompts)
 
-### Tools (59 total)
+### Tools (63 total)
 
 The 9 Operations tools are listed under *Operations Control Center*; the 4
 sharing tools (`share_note`, `unshare_note`, `list_note_shares`,
 `list_shared_notes`) under *Sharing Notes*.
+The 4 template tools (`list_note_templates`, `suggest_note_templates`,
+`create_note_template`, `create_note_from_template`) under *Note Templates*.
 The 7 whiteboard tools (`list_whiteboards`, `get_whiteboard`,
 `add_whiteboard_items`, `update_whiteboard_items`, `delete_whiteboard_items`,
 `organize_whiteboard`, `convert_whiteboard_items`) under *Whiteboards*.

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, FileText, Mic, Plus, RefreshCw, Users } from "lucide-react";
+import { Calendar, FileStack, FileText, Mic, Plus, RefreshCw, Users } from "lucide-react";
 import Link from "next/link";
 import { format } from "date-fns";
 import type { Note } from "@/lib/db/schema";
@@ -108,6 +108,13 @@ export default function NotesPage() {
             <Calendar className="h-3 w-3 lg:h-4 lg:w-4 lg:mr-2" />
             <span className="hidden sm:inline">{isCreatingDaily ? "Opening..." : "Today's Daily"}</span>
             <span className="sm:hidden ml-1">{isCreatingDaily ? "..." : "Daily"}</span>
+          </Button>
+          <Button asChild variant="outline" className="flex-1 sm:flex-initial h-9 lg:h-10 text-xs lg:text-sm">
+            <Link href="/templates">
+              <FileStack className="h-3 w-3 lg:h-4 lg:w-4 lg:mr-2" />
+              <span className="hidden sm:inline">Templates</span>
+              <span className="sm:hidden ml-1">Templates</span>
+            </Link>
           </Button>
           <Button asChild className="flex-1 sm:flex-initial h-9 lg:h-10 text-xs lg:text-sm">
             <Link href="/notes/new">
