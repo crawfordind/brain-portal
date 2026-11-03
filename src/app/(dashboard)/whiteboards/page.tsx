@@ -37,7 +37,7 @@ export default function WhiteboardsPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-xl font-bold md:text-2xl">Whiteboards</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Whiteboards</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Every project has a board, and so does every note. A project&apos;s notes sit as tabs in its board space.
         </p>

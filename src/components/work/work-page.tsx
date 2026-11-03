@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { parseISO, isToday, isPast, startOfDay } from "date-fns";
+import { parseISO, isToday, isPast, startOfDay, addDays, format } from "date-fns";
 import { Plus, Filter, Bot, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -30,6 +30,8 @@ import { useWorkState, type WorkView } from "@/hooks/use-work-state";
 import { useReviewCount } from "@/hooks/use-review-count";
 import { WorkCommandBar } from "./work-command-bar";
 import { WorkTaskList } from "./work-task-list";
+import { TaskFocusDeck } from "./task-focus-deck";
+import { PageHeader } from "@/components/layout/page-header";
 import { MobileFilterSheet } from "./mobile-filter-sheet";
 
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -158,18 +160,62 @@ export function WorkPage() {
 
   // --- Mutations ---
 
-  const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+  /**
+   * Status and due-date changes are optimistic: a swiped row leaves the list
+   * at once, and comes back if the server refuses. Each says what happened on
+   * a toast with an exact Undo, because a swipe is quick to do by accident.
+   */
+  type TaskPatch = { status?: string; dueDate?: string | null };
+  const patchTasksInCache = (id: string, patch: TaskPatch) =>
+    queryClient.setQueriesData<{ tasks?: Task[] }>({ queryKey: ["tasks"] }, (old) => {
+      if (!old?.tasks) return old;
+      return {
+        ...old,
+        tasks: old.tasks.map((t) =>
+          t.id !== id
+            ? t
+            : {
+                ...t,
+                ...(patch.status !== undefined && {
+                  status: patch.status as Task["status"],
+                  completed_at: patch.status === "completed" ? new Date().toISOString() : null,
+                }),
+                ...(patch.dueDate !== undefined && { due_date: patch.dueDate }),
+              }
+        ),
+      };
+    });
+
+  const updateTaskMutation = useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: TaskPatch; undo?: TaskPatch; message?: string }) => {
       const response = await fetch(`/api/tasks/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(patch),
       });
       if (!response.ok) throw new Error("Failed to update");
       return response.json();
     },
-    onSuccess: () => {
+    onMutate: async ({ id, patch }) => {
+      await queryClient.cancelQueries({ queryKey: ["tasks"] });
+      const snapshot = queryClient.getQueriesData({ queryKey: ["tasks"] });
+      patchTasksInCache(id, patch);
+      return { snapshot };
+    },
+    onError: (_error, _vars, context) => {
+      context?.snapshot.forEach(([key, data]) => queryClient.setQueryData(key, data));
+      toast.error("That change didn't save. Try again.");
+    },
+    onSuccess: (_data, { id, undo, message }) => {
+      if (message && undo) {
+        toast.success(message, {
+          action: { label: "Undo", onClick: () => updateTaskMutation.mutate({ id, patch: undo }) },
+        });
+      }
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["stream"] });
     },
   });
 
@@ -210,7 +256,23 @@ export function WorkPage() {
   });
 
   const handleToggleStatus = (id: string, status: string) => {
-    updateStatusMutation.mutate({ id, status });
+    const before = tasks.find((t) => t.id === id)?.status ?? "pending";
+    updateTaskMutation.mutate({
+      id,
+      patch: { status },
+      undo: { status: before },
+      message: status === "completed" ? "Done" : "Reopened",
+    });
+  };
+
+  const handleSnooze = (id: string) => {
+    const before = tasks.find((t) => t.id === id)?.due_date ?? null;
+    updateTaskMutation.mutate({
+      id,
+      patch: { dueDate: format(addDays(new Date(), 1), "yyyy-MM-dd") },
+      undo: { dueDate: before },
+      message: "Moved to tomorrow",
+    });
   };
 
   const handleDelete = (id: string) => {
@@ -298,26 +360,20 @@ export function WorkPage() {
 
   return (
     <div className="p-3 lg:p-5 space-y-2 lg:space-y-3">
-      {/* Header: title + stats + actions — single compact row */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-xl font-bold lg:text-2xl shrink-0">Tasks</h1>
-          <div className="hidden lg:flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="tabular-nums font-medium text-foreground">{openCount}</span>
-            <span>open</span>
+      <PageHeader
+        title="Tasks"
+        summary={
+          <>
+            {overdueCount > 0 && <span className="font-medium text-red-600 dark:text-red-400">{overdueCount} overdue · </span>}
+            {dueTodayCount > 0 && <span className="font-medium text-amber-700 dark:text-amber-300">{dueTodayCount} due today · </span>}
+            <span className="tabular-nums">{openCount} open</span>
             {completedTodayCount > 0 && (
-              <>
-                <span className="text-border">·</span>
-                <span className="tabular-nums font-medium text-green-600 dark:text-green-400">
-                  {completedTodayCount}
-                </span>
-                <span>done today</span>
-              </>
+              <span className="text-emerald-700 dark:text-emerald-300"> · {completedTodayCount} done today</span>
             )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
+          </>
+        }
+        actions={
+        <>
           {/* Links to the Review surface rather than opening a parallel panel,
               so there is exactly one place agent output gets reviewed. */}
           {aiReviewCount > 0 && (
@@ -373,8 +429,9 @@ export function WorkPage() {
             <Plus className="h-3.5 w-3.5 mr-1" />
             <span className="hidden sm:inline">New Task</span>
           </Button>
-        </div>
-      </div>
+        </>
+        }
+      />
 
       {/* Mobile Filter Sheet */}
       <MobileFilterSheet
@@ -426,7 +483,14 @@ export function WorkPage() {
       {/* Main content area — no extra tab chrome, driven by currentView */}
       <Tabs value={state.currentView} onValueChange={(v) => state.setCurrentView(v as WorkView)}>
         {/* List View */}
-        <TabsContent value="list" className="mt-0">
+        <TabsContent value="list" className="mt-0 space-y-4">
+          {state.statusFilter !== "completed" && !state.summaryFilter && !state.selectionMode && (
+            <TaskFocusDeck
+              tasks={tasks}
+              onOpen={handleTaskClick}
+              onComplete={(id) => handleToggleStatus(id, "completed")}
+            />
+          )}
           <WorkTaskList
             tasks={tasks}
             statusFilter={state.statusFilter}
@@ -435,6 +499,7 @@ export function WorkPage() {
             onTaskClick={handleTaskClick}
             onAskAbout={handleAskAbout}
             onDelete={handleDelete}
+            onSnooze={handleSnooze}
             onReview={handleReview}
             onCreateTask={() => state.openTask(null)}
             selectionMode={state.selectionMode}

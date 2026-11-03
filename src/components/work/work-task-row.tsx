@@ -1,12 +1,14 @@
 "use client";
 
 import { format, parseISO, isToday, isYesterday, isPast, formatDistanceToNowStrict } from "date-fns";
-import { Circle, CheckCircle2, Trash2, Bot, FolderOpen, Clock, Sparkles } from "lucide-react";
+import { Circle, CheckCircle2, Trash2, Bot, FolderOpen, Clock, Sparkles, Check, RotateCcw, Sunrise } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { SwipeableRow, type SwipeAction } from "@/components/ui/swipeable-row";
+import { useTouchFirst } from "@/hooks/use-touch-first";
 import type { Task } from "@/types/task";
 
 const PRIORITY_BORDER: Record<string, string> = {
@@ -27,8 +29,12 @@ interface WorkTaskRowProps {
   onClick: (task: Task) => void;
   onAskAbout?: (task: Task) => void;
   onDelete?: (id: string) => void;
+  /** Move the due date to tomorrow (the left swipe). */
+  onSnooze?: (id: string) => void;
   onReview?: (agentTaskId: string) => void;
   selectionMode?: boolean;
+  /** Let this row play the one-time "you can swipe" nudge. */
+  swipeHint?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
 }
@@ -49,21 +55,54 @@ export function WorkTaskRow({
   onClick,
   onAskAbout,
   onDelete,
+  onSnooze,
   onReview,
   selectionMode,
   isSelected,
   onToggleSelect,
+  swipeHint,
 }: WorkTaskRowProps) {
   const confirm = useConfirm();
+  const touchFirst = useTouchFirst();
   const isCompleted = task.status === "completed";
   const isOverdue = task.due_date && !isCompleted && isPast(parseISO(task.due_date)) && !isToday(parseISO(task.due_date));
   const title = task.title || task.content;
   const priorityLabel = PRIORITY_LABEL[task.priority];
 
+  const askDelete = () =>
+    confirm({ title: "Delete task?", description: "This cannot be undone.", destructive: true, confirmLabel: "Delete" }).then(
+      (ok) => {
+        if (ok) onDelete?.(task.id);
+      }
+    );
+
+  // Swipe right: done (or reopen). Swipe left: tomorrow, then delete.
+  const leading: SwipeAction[] = [
+    isCompleted
+      ? { id: "reopen", label: "Reopen", icon: RotateCcw, tone: "neutral", onAction: () => onToggleStatus(task.id, "pending") }
+      : { id: "done", label: "Done", icon: Check, tone: "done", onAction: () => onToggleStatus(task.id, "completed") },
+  ];
+  const trailing: SwipeAction[] = [];
+  if (!isCompleted && onSnooze) {
+    trailing.push({ id: "tomorrow", label: "Tomorrow", icon: Sunrise, tone: "later", onAction: () => onSnooze(task.id) });
+  }
+  if (!isCompleted && onAskAbout) {
+    trailing.push({ id: "ask", label: "Ask", icon: Sparkles, tone: "ask", onAction: () => onAskAbout(task) });
+  }
+  if (onDelete) trailing.push({ id: "delete", label: "Delete", icon: Trash2, tone: "danger", onAction: askDelete });
+
   return (
+    <SwipeableRow
+      leading={leading}
+      trailing={trailing}
+      disabled={selectionMode}
+      hint={swipeHint}
+      className="rounded-r-lg"
+      contentClassName="bg-card"
+    >
     <div
       className={cn(
-        "flex items-center gap-2 border-l-[3px] rounded-r-md bg-card hover:bg-muted/40 transition-colors group min-h-[40px] cursor-pointer",
+        "flex items-center gap-2 border-l-[3px] rounded-r-lg hover:bg-muted/40 transition-colors group min-h-11 sm:min-h-10 cursor-pointer",
         PRIORITY_BORDER[task.priority],
         isCompleted && "opacity-45"
       )}
@@ -84,8 +123,9 @@ export function WorkTaskRow({
       {/* Completion circle */}
       <button
         type="button"
+        aria-label={isCompleted ? `Reopen: ${title}` : `Complete: ${title}`}
         className={cn(
-          "shrink-0 ml-2 p-0.5 rounded-full hover:bg-muted transition-colors",
+          "shrink-0 flex items-center justify-center rounded-full hover:bg-muted transition-colors h-11 w-11 -my-1 sm:h-7 sm:w-7 sm:my-0 sm:ml-1",
           selectionMode && "ml-0"
         )}
         onClick={(e) => {
@@ -94,9 +134,9 @@ export function WorkTaskRow({
         }}
       >
         {isCompleted ? (
-          <CheckCircle2 className="h-[16px] w-[16px] text-green-500" />
+          <CheckCircle2 className="h-5 w-5 sm:h-4 sm:w-4 text-green-500" />
         ) : (
-          <Circle className="h-[16px] w-[16px] text-muted-foreground/30 hover:text-muted-foreground" />
+          <Circle className="h-5 w-5 sm:h-4 sm:w-4 text-muted-foreground/40 hover:text-muted-foreground" />
         )}
       </button>
 
@@ -104,7 +144,7 @@ export function WorkTaskRow({
       <div className="flex-1 min-w-0 py-1.5 pr-1 flex items-center gap-2">
         <p
           className={cn(
-            "text-sm leading-tight truncate",
+            "text-base sm:text-sm leading-tight truncate",
             isCompleted && "line-through text-muted-foreground"
           )}
         >
@@ -151,8 +191,8 @@ export function WorkTaskRow({
           {task.due_date && (
             <span
               className={cn(
-                "text-[10px] tabular-nums",
-                isOverdue ? "text-red-500 font-medium" : "text-muted-foreground/60"
+                "text-xs tabular-nums",
+                isOverdue ? "text-red-500 font-medium" : "text-muted-foreground"
               )}
             >
               {formatRelativeDate(task.due_date, isCompleted)}
@@ -179,8 +219,9 @@ export function WorkTaskRow({
         </Button>
       )}
 
-      {/* Hover actions */}
-      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 pr-1.5">
+      {/* Mouse-only actions. On a touch screen the row's swipe does this. */}
+      {!touchFirst && (
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0 pr-1.5">
         {!isCompleted && onAskAbout && (
           <Button
             variant="ghost"
@@ -202,13 +243,16 @@ export function WorkTaskRow({
             className="h-6 w-6 text-muted-foreground hover:text-destructive"
             onClick={(e) => {
               e.stopPropagation();
-              confirm({ title: "Delete task?", description: "This cannot be undone.", destructive: true, confirmLabel: "Delete" }).then((ok) => { if (ok) onDelete(task.id); });
+              askDelete();
             }}
+            title="Delete"
           >
             <Trash2 className="h-3 w-3" />
           </Button>
         )}
       </div>
+      )}
     </div>
+    </SwipeableRow>
   );
 }

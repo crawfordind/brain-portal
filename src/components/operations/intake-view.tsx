@@ -37,7 +37,7 @@ export function IntakeView() {
   return (
     <div className="space-y-4">
       <header>
-        <h1 className="text-lg font-semibold">Intake</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Intake</h1>
         <p className="text-xs text-muted-foreground">
           Everything captured and not yet sorted. Suggestions come from simple rules and say why;
           nothing becomes a task or a promise until you confirm it.

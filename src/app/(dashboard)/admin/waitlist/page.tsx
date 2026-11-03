@@ -92,7 +92,7 @@ export default function AdminWaitlistPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Users className="h-5 w-5 text-muted-foreground" />
-          <h1 className="text-xl lg:text-2xl font-bold">Waitlist</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Waitlist</h1>
           {!isLoading && (
             <Badge variant="secondary" className="ml-1">
               {counts.pending} pending

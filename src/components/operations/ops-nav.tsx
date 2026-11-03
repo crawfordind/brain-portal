@@ -76,22 +76,22 @@ export function OpsSectionCard({
   id?: string;
 }) {
   return (
-    <section id={id} className="rounded-xl border bg-card">
-      <header className="flex items-start justify-between gap-2 px-3.5 pt-3">
+    <section id={id} className="bp-surface overflow-hidden rounded-2xl">
+      <header className="flex items-start justify-between gap-2 px-4 pt-3">
         <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <h2 className="flex items-center gap-2 text-base font-semibold sm:text-sm">
             {title}
             {count !== undefined && (
-              <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+              <span className="rounded-full bg-muted px-1.5 text-xs font-medium tabular-nums text-muted-foreground">
                 {count}
               </span>
             )}
           </h2>
-          {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+          {hint && <p className="text-sm text-muted-foreground sm:text-xs">{hint}</p>}
         </div>
         {action}
       </header>
-      <div className="px-3.5 pb-1.5">{children}</div>
+      <div className="px-4 pb-1.5">{children}</div>
     </section>
   );
 }

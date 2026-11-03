@@ -221,7 +221,7 @@ function JournalPage() {
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <BookOpen className="h-6 w-6 text-teal-600 dark:text-teal-400" />
-          <h1 className="text-2xl font-bold tracking-tight">Journal</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Journal</h1>
         </div>
 
         <div className="flex items-center gap-2">

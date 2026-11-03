@@ -320,7 +320,7 @@ export default function ProjectsPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           {/* RESPONSIVE: Smaller title on mobile */}
-          <h1 className="text-xl font-bold lg:text-2xl">Projects</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
           <p className="text-xs lg:text-sm text-muted-foreground">
             Health, schedule and workload across every project
           </p>

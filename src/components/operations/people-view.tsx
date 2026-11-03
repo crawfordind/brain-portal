@@ -49,7 +49,7 @@ export function PeopleView() {
     <div className="space-y-4">
       <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-lg font-semibold">People</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">People</h1>
           <p className="text-xs text-muted-foreground">
             Anyone with something open either way, a follow-up due, or a touch in the last 30 days.
           </p>

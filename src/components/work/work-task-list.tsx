@@ -5,6 +5,7 @@ import { parseISO, isToday, isPast, isYesterday, isThisWeek, startOfDay } from "
 import { CheckSquare, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WorkTaskRow } from "./work-task-row";
+import { SectionHeading, type SectionTone } from "@/components/layout/page-header";
 import type { Task } from "@/types/task";
 import type { SummaryFilter } from "@/hooks/use-work-state";
 
@@ -12,7 +13,7 @@ interface DateGroup {
   key: string;
   label: string;
   tasks: Task[];
-  accent?: string;
+  tone?: SectionTone;
 }
 
 interface WorkTaskListProps {
@@ -23,6 +24,7 @@ interface WorkTaskListProps {
   onTaskClick: (task: Task) => void;
   onAskAbout: (task: Task) => void;
   onDelete: (id: string) => void;
+  onSnooze?: (id: string) => void;
   onReview: (agentTaskId: string) => void;
   onCreateTask: () => void;
   selectionMode: boolean;
@@ -56,11 +58,11 @@ function groupOpenTasks(tasks: Task[]): DateGroup[] {
   }
 
   const groups: DateGroup[] = [];
-  if (overdue.length > 0) groups.push({ key: "overdue", label: "OVERDUE", tasks: overdue, accent: "text-red-500" });
-  if (today.length > 0) groups.push({ key: "today", label: "TODAY", tasks: today, accent: "text-amber-600 dark:text-amber-400" });
-  if (thisWeek.length > 0) groups.push({ key: "this-week", label: "THIS WEEK", tasks: thisWeek });
-  if (later.length > 0) groups.push({ key: "later", label: "LATER", tasks: later });
-  if (noDate.length > 0) groups.push({ key: "no-date", label: "NO DATE", tasks: noDate });
+  if (overdue.length > 0) groups.push({ key: "overdue", label: "Overdue", tasks: overdue, tone: "late" });
+  if (today.length > 0) groups.push({ key: "today", label: "Today", tasks: today, tone: "now" });
+  if (thisWeek.length > 0) groups.push({ key: "this-week", label: "This week", tasks: thisWeek, tone: "accent" });
+  if (later.length > 0) groups.push({ key: "later", label: "Later", tasks: later });
+  if (noDate.length > 0) groups.push({ key: "no-date", label: "No date", tasks: noDate });
   return groups;
 }
 
@@ -85,10 +87,10 @@ function groupCompletedTasks(tasks: Task[]): DateGroup[] {
   }
 
   const groups: DateGroup[] = [];
-  if (today.length > 0) groups.push({ key: "today", label: "TODAY", tasks: today });
-  if (yesterday.length > 0) groups.push({ key: "yesterday", label: "YESTERDAY", tasks: yesterday });
-  if (thisWeek.length > 0) groups.push({ key: "this-week", label: "THIS WEEK", tasks: thisWeek });
-  if (earlier.length > 0) groups.push({ key: "earlier", label: "EARLIER", tasks: earlier });
+  if (today.length > 0) groups.push({ key: "today", label: "Today", tasks: today, tone: "done" });
+  if (yesterday.length > 0) groups.push({ key: "yesterday", label: "Yesterday", tasks: yesterday });
+  if (thisWeek.length > 0) groups.push({ key: "this-week", label: "This week", tasks: thisWeek, tone: "accent" });
+  if (earlier.length > 0) groups.push({ key: "earlier", label: "Earlier", tasks: earlier });
   return groups;
 }
 
@@ -114,6 +116,7 @@ export function WorkTaskList({
   onTaskClick,
   onAskAbout,
   onDelete,
+  onSnooze,
   onReview,
   onCreateTask,
   selectionMode,
@@ -134,7 +137,7 @@ export function WorkTaskList({
       return [
         ...groupOpenTasks(openTasks),
         ...(completedTasks.length > 0
-          ? [{ key: "completed", label: "COMPLETED", tasks: completedTasks, accent: "text-green-500" }]
+          ? [{ key: "completed", label: "Completed", tasks: completedTasks, tone: "done" as const }]
           : []),
       ];
     }
@@ -169,17 +172,11 @@ export function WorkTaskList({
 
   return (
     <div className="space-y-3">
-      {groups.map((group) => (
+      {groups.map((group, groupIndex) => (
         <section key={group.key}>
-          <div className="flex items-center gap-2 mb-1">
-            <h3 className={`text-[10px] font-semibold tracking-widest uppercase ${group.accent || "text-muted-foreground/70"}`}>
-              {group.label}
-            </h3>
-            <span className="text-[10px] text-muted-foreground/50 tabular-nums">{group.tasks.length}</span>
-            <div className="flex-1 border-b border-border/30" />
-          </div>
-          <div className="space-y-px">
-            {group.tasks.map((task) => (
+          <SectionHeading as="h3" label={group.label} count={group.tasks.length} tone={group.tone} sticky />
+          <div className="space-y-px overflow-hidden rounded-xl">
+            {group.tasks.map((task, i) => (
               <WorkTaskRow
                 key={task.id}
                 task={task}
@@ -187,6 +184,8 @@ export function WorkTaskList({
                 onClick={onTaskClick}
                 onAskAbout={onAskAbout}
                 onDelete={onDelete}
+                onSnooze={onSnooze}
+                swipeHint={groupIndex === 0 && i === 0}
                 onReview={onReview}
                 selectionMode={selectionMode}
                 isSelected={isSelected(task.id)}

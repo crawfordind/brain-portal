@@ -356,6 +356,56 @@ destination there, then give it an icon in `NAV_ICONS`
 - `GET /api/crm/pulse` exists so those client badges can read the same summary
   the dashboard renders server-side.
 
+### Gestures and surfaces (one language across the app)
+
+Acting on a thing is a swipe, the way Apple Mail, Gmail and Reminders work,
+and every page reuses the stream's look. Code: `src/lib/gestures/swipe.ts`
+(pure thresholds, unit-tested), `src/components/ui/swipeable-row.tsx`,
+`src/components/ui/swipe-deck.tsx`, `src/hooks/use-card-swipe.ts`,
+`src/hooks/use-touch-first.ts`, `src/styles/surfaces.css`,
+`src/components/layout/page-header.tsx`.
+
+| Gesture | Means | Where |
+|---------|-------|-------|
+| Row, swipe right | the leading action: Done (or Reopen / Dismiss) | task rows, stream rows, Operations rows |
+| Row, swipe left | trailing actions: Tomorrow, Archive, Ask, Close, Delete | same |
+| Short swipe | opens the row and shows the actions as buttons | |
+| Long or fast swipe | commits the first action on that side; colour fills, icon grows, a haptic tick | |
+| Deck, swipe sideways | next / previous card (native scroll snap) | Tasks › "Right now" |
+| Mind card, left / right / down / up | next / previous / tuck away / open | home |
+
+- **Every swipe action is reachable another way.** A swipe is invisible, so
+  each one is also a button on a mouse screen or an item in the row's ⋯ menu
+  on a touch screen. Add a swipe action, add its menu item.
+- **Touch and pen only.** `useTouchFirst` (`(pointer: coarse)`) decides; a
+  mouse drag over text is a selection, so desktop rows keep their buttons.
+  Server render and first paint are the desktop markup.
+- **Lists still scroll**: the axis locks after 8px, diagonal counts as
+  vertical, and rows use `touch-action: pan-y`. One row open at a time;
+  scrolling closes it. A drag never also fires the row's tap.
+- **Portal events are ignored.** React bubbles dialog events through the
+  tree, so a drag inside a dialog opened from a row must not swipe the row
+  (the `contains(e.target)` guard).
+- **Swiped writes are undoable.** Tasks: optimistic with rollback and an
+  Undo toast; Operations: its existing Undo. A row's first left action must
+  be safe (Tomorrow, Archive); Delete asks first.
+- **Drag never re-renders a list**: the row moves through refs and data
+  attributes (`data-side`, `data-armed`, `--swipe-progress`).
+- **One-time hint**: the first row of a list may pass `hint`; one row per
+  device ever nudges itself (`localStorage` `bp:swipe-hint-seen`).
+- **Surfaces**: `Card` is `.bp-surface` (hairline rim, top highlight, soft
+  lift). `.bp-focus` is the Mind map's warm aura for the one item that matters
+  most on a page. Both are in `@layer components`, so a utility class on a
+  `Card` still overrides them.
+- **Headers**: page titles are `text-2xl font-semibold tracking-tight`, with
+  one line under them saying what matters now ("2 overdue · 3 due today"),
+  not what the page is (`PageHeader`). Groups inside a page use
+  `SectionHeading` (dot, eyebrow, count, pathway divider).
+- **"Right now" on Tasks** (`TaskFocusDeck`, ranked by `rankFocusTasks` in
+  `src/lib/tasks/focus.ts`): overdue, due today, urgent, started; each card
+  states its reason. Nothing pressing means no deck. Delegated work is left
+  to Review.
+
 ### Editor
 - **Centered Cursor**: Keeps cursor visible while typing (like VS Code)
 - **Markdown Support**: TipTap editor with markdown shortcuts

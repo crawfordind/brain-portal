@@ -80,7 +80,7 @@ export function PortfolioView() {
   return (
     <div className="space-y-4">
       <header>
-        <h1 className="text-lg font-semibold">Portfolio</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Portfolio</h1>
         <p className="text-xs text-muted-foreground">
           Every project, by venture. States marked &ldquo;from status&rdquo; were read from the project&apos;s
           status, not chosen — tap ⋯ to set one.
