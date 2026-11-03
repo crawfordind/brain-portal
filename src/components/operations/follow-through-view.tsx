@@ -70,7 +70,7 @@ export function FollowThroughView() {
   return (
     <div className="space-y-4">
       <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-lg font-semibold">Follow-through</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Follow-through</h1>
         <QuickAdd />
       </header>
 

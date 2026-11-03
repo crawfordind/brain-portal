@@ -55,6 +55,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AGENT_ROLES } from "@/lib/agents/constants";
+import { SwipeableRow, type SwipeAction } from "@/components/ui/swipeable-row";
+import { useTouchFirst } from "@/hooks/use-touch-first";
 import { formatDistanceToNow } from "date-fns";
 import type { StreamItemType, AgentType } from "@/lib/stream/types";
 
@@ -183,6 +185,8 @@ interface StreamItemCardProps {
   onAskAbout?: (id: string) => void;
   onArchive?: (id: string) => void;
   onDismiss?: (id: string) => void;
+  /** Let this row play the one-time "you can swipe" nudge. */
+  swipeHint?: boolean;
 }
 
 export function StreamItemCard({
@@ -194,7 +198,9 @@ export function StreamItemCard({
   onAskAbout,
   onArchive,
   onDismiss,
+  swipeHint = false,
 }: StreamItemCardProps) {
+  const touchFirst = useTouchFirst();
   const config = TYPE_CONFIG[item.type] || TYPE_CONFIG.capture;
   const Icon = config.icon;
   const priorityStyle = PRIORITY_STYLES[item.priority as keyof typeof PRIORITY_STYLES] || PRIORITY_STYLES.low;
@@ -222,6 +228,16 @@ export function StreamItemCard({
   const needsReview = item.agentStatus === "awaiting_review";
   const isCompleted = item.status === "completed";
   const isRow = density !== "comfortable";
+  const canComplete = isTask && !isCompleted && !!onComplete;
+  const canDismiss = isReminder && item.status !== "archived" && !!onDismiss;
+
+  // Swipe right finishes it; swipe left archives it (or asks about it).
+  const leading: SwipeAction[] = [];
+  if (canComplete) leading.push({ id: "done", label: "Done", icon: Check, tone: "done", onAction: () => onComplete?.(item.id) });
+  else if (canDismiss) leading.push({ id: "dismiss", label: "Dismiss", icon: BellOff, tone: "done", onAction: () => onDismiss?.(item.id) });
+  const trailing: SwipeAction[] = [];
+  if (canArchive) trailing.push({ id: "archive", label: "Archive", icon: Archive, tone: "archive", onAction: () => onArchive?.(item.id) });
+  if (canAskAbout && onAskAbout) trailing.push({ id: "ask", label: "Ask", icon: Sparkles, tone: "ask", onAction: () => onAskAbout(item.id) });
 
   const openItem = () => onSelect?.(item.id);
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -243,7 +259,7 @@ export function StreamItemCard({
 
   const actions = (
     <div className="flex shrink-0 items-center gap-0.5">
-      {isTask && !isCompleted && (
+      {!touchFirst && isTask && !isCompleted && (
         <Button
           size="icon"
           variant="ghost"
@@ -258,7 +274,7 @@ export function StreamItemCard({
         </Button>
       )}
 
-      {isReminder && item.status !== "archived" && onDismiss && (
+      {!touchFirst && isReminder && item.status !== "archived" && onDismiss && (
         <Button
           size="icon"
           variant="ghost"
@@ -273,7 +289,7 @@ export function StreamItemCard({
         </Button>
       )}
 
-      {canAskAbout && (
+      {!touchFirst && canAskAbout && (
         <Button
           size="icon"
           variant="ghost"
@@ -301,6 +317,18 @@ export function StreamItemCard({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {touchFirst && canComplete && (
+            <DropdownMenuItem onClick={() => onComplete?.(item.id)}>
+              <Check className="h-3.5 w-3.5 mr-2" />
+              Done
+            </DropdownMenuItem>
+          )}
+          {touchFirst && canDismiss && (
+            <DropdownMenuItem onClick={() => onDismiss?.(item.id)}>
+              <BellOff className="h-3.5 w-3.5 mr-2" />
+              Dismiss
+            </DropdownMenuItem>
+          )}
           {item.type === "note" && (
             <DropdownMenuItem onClick={openItem}>
               <ExternalLink className="h-3.5 w-3.5 mr-2" />
@@ -351,6 +379,7 @@ export function StreamItemCard({
   // ─── compact / cozy ────────────────────────────────────────────────────────
   if (isRow) {
     return (
+      <SwipeableRow leading={leading} trailing={trailing} hint={swipeHint} className="rounded-md">
       <div
         className={cn(
           "group relative flex items-center gap-2.5 rounded-md border-l-2 pl-2 pr-1",
@@ -366,7 +395,7 @@ export function StreamItemCard({
             reading. */}
         {isNew && (
           <span
-            className="absolute -left-2 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-primary"
+            className="absolute left-0.5 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-primary"
             aria-label="New since your last visit"
           />
         )}
@@ -436,14 +465,16 @@ export function StreamItemCard({
 
         {actions}
       </div>
+      </SwipeableRow>
     );
   }
 
   // ─── comfortable ───────────────────────────────────────────────────────────
   return (
+    <SwipeableRow leading={leading} trailing={trailing} hint={swipeHint} className="rounded-2xl" contentClassName="bg-transparent">
     <div
       className={cn(
-        "group relative rounded-xl border border-l-4 bg-background transition-all duration-200",
+        "group relative rounded-2xl border border-l-4 bg-card transition-all duration-200",
         priorityStyle,
         "hover:shadow-md hover:border-l-primary/60",
         "focus-within:ring-2 focus-within:ring-primary/40",
@@ -453,7 +484,7 @@ export function StreamItemCard({
     >
       {isNew && (
         <span
-          className="absolute -left-2 top-4 h-1.5 w-1.5 rounded-full bg-primary"
+          className="absolute left-1 top-4 h-1.5 w-1.5 rounded-full bg-primary"
           aria-label="New since your last visit"
         />
       )}
@@ -579,5 +610,6 @@ export function StreamItemCard({
         </div>
       )}
     </div>
+    </SwipeableRow>
   );
 }

@@ -98,7 +98,7 @@ export default function NotesPage() {
     <div className="p-3 lg:p-6 space-y-3 lg:space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 lg:gap-4">
         <div>
-          <h1 className="text-xl lg:text-2xl font-bold mb-1">Notes</h1>
+          <h1 className="text-2xl font-semibold tracking-tight mb-1">Notes</h1>
           <p className="text-xs lg:text-sm text-muted-foreground">
             All your notes in one place
           </p>

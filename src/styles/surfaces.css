@@ -1,0 +1,80 @@
+/*
+ * Content surfaces: cards, section headings and the "right now" focus card.
+ *
+ * The stream's Mind map set the look (a soft card floating over the page, a
+ * warm aura on the one thing that matters most, small uppercase eyebrows with
+ * a coloured dot); this file carries it to every other page so the app reads
+ * as one thing. Tokens come from `nav.css` and the theme, so light and dark
+ * both work without a second palette.
+ */
+
+/* In the components layer, so a utility class on a Card still overrides it. */
+@layer components {
+  /* A card: hairline rim, a top highlight, a shadow that lifts rather than boxes. */
+  .bp-surface {
+    background: var(--card);
+    color: var(--card-foreground);
+    border: 1px solid var(--nav-edge);
+    box-shadow:
+      inset 0 1px 0 var(--nav-highlight),
+      0 1px 2px color-mix(in oklch, black 6%, transparent),
+      0 10px 28px -18px color-mix(in oklch, var(--primary) 35%, transparent);
+  }
+
+  /* The one item that matters most on a page: the Mind map's warm aura. */
+  .bp-focus {
+    position: relative;
+    background:
+      radial-gradient(120% 90% at 0% 0%, color-mix(in oklch, var(--nav-aura) 26%, transparent), transparent 60%),
+      var(--card);
+    border: 1px solid color-mix(in oklch, var(--nav-aura) 55%, var(--nav-edge));
+    box-shadow:
+      inset 0 1px 0 var(--nav-highlight),
+      0 14px 34px -18px color-mix(in oklch, var(--nav-aura) 80%, transparent),
+      0 2px 6px -2px color-mix(in oklch, black 10%, transparent);
+  }
+
+  .dark .bp-focus {
+    background:
+      radial-gradient(120% 90% at 0% 0%, color-mix(in oklch, var(--nav-aura) 14%, transparent), transparent 60%),
+      var(--card);
+    border-color: color-mix(in oklch, var(--nav-aura) 30%, var(--nav-edge));
+  }
+
+  /* Small uppercase label above a title or a list: "RIGHT NOW · Overdue 2 days". */
+  .bp-eyebrow {
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  /* A carousel's track: native scroll snapping, no scrollbar. */
+  .bp-deck {
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .bp-deck::-webkit-scrollbar {
+    display: none;
+  }
+  .bp-deck > * {
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .bp-deck {
+      scroll-behavior: smooth;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .bp-surface,
+    .bp-focus {
+      border: 1px solid CanvasText;
+    }
+  }
+}

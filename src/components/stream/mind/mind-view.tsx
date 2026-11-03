@@ -59,6 +59,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { useTouchFirst } from "@/hooks/use-touch-first";
+import { useCardSwipe } from "@/hooks/use-card-swipe";
 import { useAskAbout } from "@/hooks/use-ask-about";
 import { useLastVisit } from "@/hooks/use-last-visit";
 import { usePrefersReducedMotion } from "@/hooks/use-stream-view";
@@ -809,6 +811,15 @@ function MindCard({
   const canComplete = type === "task";
   const canDismiss = type === "reminder";
   const canArchive = !!item && type !== "agent_output" && type !== "person";
+  const touchFirst = useTouchFirst();
+  // Swipe like flipping through stories: left for the next item, right for
+  // the previous one, down to tuck the card away, up to open the item.
+  const [swipeRef, swipeHandlers] = useCardSwipe({
+    left: onNext,
+    right: onPrev,
+    down: onCollapse,
+    up: onOpen,
+  });
   const kindLabel = isFocus
     ? "Right now"
     : node.key === PEOPLE_HUB_KEY
@@ -819,10 +830,22 @@ function MindCard({
 
   return (
     <div
-      className="rounded-2xl border bg-card/95 px-4 py-3 shadow-lg backdrop-blur"
+      ref={swipeRef}
+      {...swipeHandlers}
+      className={cn(
+        "rounded-2xl px-4 py-3 shadow-lg backdrop-blur",
+        isFocus ? "bp-focus" : "bp-surface bg-card/95",
+        touchFirst && "touch-none select-none"
+      )}
       aria-live="polite"
       aria-atomic="true"
     >
+      {touchFirst && (
+        // A grab handle, the platform's own sign for "this moves".
+        <div aria-hidden="true" className="-mt-1 mb-1.5 flex justify-center">
+          <span className="h-1 w-9 rounded-full bg-muted-foreground/30" />
+        </div>
+      )}
       <div className="flex min-h-7 items-center gap-2 text-sm text-muted-foreground sm:text-xs">
         <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: node.color }} />
         <span className="shrink-0 font-semibold uppercase tracking-wider">{kindLabel}</span>
@@ -832,12 +855,14 @@ function MindCard({
           <span className="hidden truncate sm:inline">· {item.projectName}</span>
         )}
         <span className="-my-2 ml-auto flex shrink-0 items-center">
-          {position && <span className="mr-1 hidden tabular-nums sm:inline">{position}</span>}
+          {position && (
+            <span className={cn("mr-1 tabular-nums", touchFirst ? "inline" : "hidden sm:inline")}>{position}</span>
+          )}
           {onPrev && (
             <button
               type="button"
               onClick={onPrev}
-              className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted sm:h-9 sm:w-9"
+              className={cn("flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted sm:h-9 sm:w-9", touchFirst && "sr-only")}
               aria-label="More important"
             >
               <ChevronLeft className="h-5 w-5" />
@@ -847,7 +872,7 @@ function MindCard({
             <button
               type="button"
               onClick={onNext}
-              className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted sm:h-9 sm:w-9"
+              className={cn("flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted sm:h-9 sm:w-9", touchFirst && "sr-only")}
               aria-label="Less important"
             >
               <ChevronRight className="h-5 w-5" />
@@ -856,7 +881,7 @@ function MindCard({
           <button
             type="button"
             onClick={onCollapse}
-            className="-mr-2 flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted sm:h-9 sm:w-9"
+            className={cn("-mr-2 flex h-11 w-11 items-center justify-center rounded-full hover:bg-muted sm:h-9 sm:w-9", touchFirst && "sr-only")}
             aria-label="Hide details"
           >
             <ChevronDown className="h-5 w-5" />

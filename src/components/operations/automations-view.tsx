@@ -81,7 +81,7 @@ export function AutomationsView() {
   return (
     <div className="space-y-4">
       <header>
-        <h1 className="text-lg font-semibold">Automations</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Automations</h1>
         <p className="text-xs text-muted-foreground">
           Judged from what each job leaves behind. Checked {timeAgo(data.checkedAt) ?? "just now"}.
         </p>

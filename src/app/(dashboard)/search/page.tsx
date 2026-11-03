@@ -149,7 +149,7 @@ function SearchContent() {
       {/* Search Header */}
       <div>
         {/* RESPONSIVE: Smaller title on mobile */}
-        <h1 className="text-xl font-bold mb-3 md:text-2xl md:mb-4">Search</h1>
+        <h1 className="text-2xl font-semibold tracking-tight mb-3 md:mb-4">Search</h1>
         {/* MOBILE: Stack search and filter on small screens */}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
           <div className="relative flex-1">

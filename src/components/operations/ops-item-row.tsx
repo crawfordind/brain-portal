@@ -11,7 +11,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, ExternalLink, MoreHorizontal, Pencil, Unlock } from "lucide-react";
+import { Check, ExternalLink, MoreHorizontal, Pencil, Sunrise, Unlock, X } from "lucide-react";
+import { SwipeableRow, type SwipeAction } from "@/components/ui/swipeable-row";
+import { useTouchFirst } from "@/hooks/use-touch-first";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -58,9 +60,25 @@ export function OpsItemRow({
       ? dateLabel(item.ops.expected_at, today)
       : null;
   const who = ownershipLine(item);
+  const touchFirst = useTouchFirst();
+
+  const markDone = () => update.mutate({ id: item.id, body: { status: "completed" }, message: "Marked done" });
+  const tomorrow = () => {
+    const d = new Date(Date.parse(`${today}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    update.mutate({ id: item.id, body: { dueDate: d }, message: "Moved to tomorrow" });
+  };
+  const closeItem = () => update.mutate({ id: item.id, body: { status: "cancelled" }, message: "Closed" });
+
+  // Swipe right: done. Swipe left: tomorrow, or close without doing.
+  const leading: SwipeAction[] = [{ id: "done", label: "Done", icon: Check, tone: "done", onAction: markDone }];
+  const trailing: SwipeAction[] = [
+    { id: "tomorrow", label: "Tomorrow", icon: Sunrise, tone: "later", onAction: tomorrow },
+    { id: "close", label: "Close", icon: X, tone: "neutral", onAction: closeItem },
+  ];
 
   return (
-    <li className="group flex items-start gap-2 py-2.5">
+    <SwipeableRow as="li" leading={leading} trailing={trailing} disabled={update.isPending} contentClassName="bg-card">
+    <div className="group flex items-start gap-2 py-2.5">
       <div className="min-w-0 flex-1">
         <Link
           href={item.href}
@@ -103,31 +121,38 @@ export function OpsItemRow({
         )}
       </div>
 
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-11 w-11 shrink-0 -my-1.5 text-muted-foreground hover:text-emerald-600"
-        aria-label={`Mark "${item.title}" done`}
-        disabled={update.isPending}
-        onClick={() =>
-          update.mutate({ id: item.id, body: { status: "completed" }, message: "Marked done" })
-        }
-      >
-        <Check className="h-4 w-4" />
-      </Button>
+      {!touchFirst && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-11 w-11 shrink-0 -my-1.5 text-muted-foreground hover:text-emerald-600"
+          aria-label={`Mark "${item.title}" done`}
+          disabled={update.isPending}
+          onClick={markDone}
+        >
+          <Check className="h-4 w-4" />
+        </Button>
+      )}
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="icon"
-            className="h-11 w-11 shrink-0 -my-1.5 -ml-2 text-muted-foreground"
+            className={cn("h-11 w-11 shrink-0 -my-1.5 text-muted-foreground", !touchFirst && "-ml-2")}
             aria-label="More actions"
           >
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem onSelect={markDone}>
+            <Check className="mr-2 h-4 w-4" /> Mark done
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={tomorrow}>
+            <Sunrise className="mr-2 h-4 w-4" /> Tomorrow
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => setEditing(true)}>
             <Pencil className="mr-2 h-4 w-4" /> Change what this is…
           </DropdownMenuItem>
@@ -160,9 +185,7 @@ export function OpsItemRow({
           <DropdownMenuSeparator />
           <DropdownMenuItem
             className="text-muted-foreground"
-            onSelect={() =>
-              update.mutate({ id: item.id, body: { status: "cancelled" }, message: "Closed" })
-            }
+            onSelect={closeItem}
           >
             Close without doing
           </DropdownMenuItem>
@@ -185,7 +208,8 @@ export function OpsItemRow({
           )
         }
       />
-    </li>
+    </div>
+    </SwipeableRow>
   );
 }
 

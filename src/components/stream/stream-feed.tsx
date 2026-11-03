@@ -34,6 +34,7 @@ import {
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useStreamStore } from "@/lib/stores/stream-store";
+import { SectionHeading } from "@/components/layout/page-header";
 import { StreamItemCard } from "./stream-item-card";
 import { StreamRunCard } from "./stream-run-card";
 import { useAskAbout } from "@/hooks/use-ask-about";
@@ -517,16 +518,19 @@ export function StreamFeed() {
             isRefreshing && "opacity-60 pointer-events-none"
           )}
         >
-          {grouped.groups.map((group) => (
+          {grouped.groups.map((group, groupIndex) => (
             <section key={group.key} aria-label={group.label}>
               {/* Sticky inside the scroll container, so the heading answers
                   "when is this?" for whatever row is currently under it. */}
-              <h2 className="sticky top-0 z-10 -mx-1 bg-background/95 px-1 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur">
-                {group.label}
-              </h2>
+              <SectionHeading
+                label={group.label}
+                count={group.entries.length}
+                tone={group.key === "now" ? "accent" : "calm"}
+                sticky
+              />
 
               <div className={isCardDensity ? "space-y-2 py-1" : "divide-y"}>
-                {group.entries.map(({ item: entry, isNew }) => (
+                {group.entries.map(({ item: entry, isNew }, entryIndex) => (
                   <Fragment key={entry.id}>
                     {entry.id === dividerBeforeId && (
                       <div
@@ -562,6 +566,7 @@ export function StreamFeed() {
                         onAskAbout={handleAskAbout}
                         onArchive={(id) => archiveMutation.mutate(id)}
                         onDismiss={(id) => dismissMutation.mutate(id)}
+                        swipeHint={groupIndex === 0 && entryIndex === 0}
                       />
                     )}
                   </Fragment>

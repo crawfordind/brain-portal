@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "../styles/safe-area.css";
 @import "../styles/nav.css";
+@import "../styles/surfaces.css";
 
 @custom-variant dark (&:is(.dark *));
 

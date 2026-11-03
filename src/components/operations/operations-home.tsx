@@ -24,6 +24,7 @@ import { OpsSectionCard } from "./ops-nav";
 import { OpsEditDialog } from "./ops-edit-dialog";
 import { AutomationRow } from "./automations-view";
 import { useOpsActions } from "./use-ops-actions";
+import { PageHeader } from "@/components/layout/page-header";
 
 const LONG_DATE = new Intl.DateTimeFormat("en-US", {
   weekday: "long",
@@ -110,16 +111,20 @@ export function OperationsHome() {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h1 className="text-lg font-semibold">Operations</h1>
-          <p className="text-xs text-muted-foreground">
+      <PageHeader
+        title="Today"
+        summary={
+          <>
             {LONG_DATE.format(Date.parse(`${today}T12:00:00Z`))}
-            {summary.length > 0 && <> · {summary.join(" · ")}</>}
-          </p>
-        </div>
-        <QuickAdd />
-      </header>
+            {summary.length > 0 ? (
+              <span className="font-medium text-foreground"> · {summary.join(" · ")}</span>
+            ) : (
+              <span className="text-emerald-700 dark:text-emerald-300"> · nothing waiting on you</span>
+            )}
+          </>
+        }
+        actions={<QuickAdd />}
+      />
 
       {data.automationAlerts.length > 0 && (
         <OpsSectionCard

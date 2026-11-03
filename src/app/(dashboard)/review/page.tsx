@@ -43,7 +43,7 @@ function ReviewPageContent() {
     <div className="space-y-2 p-3 lg:space-y-3 lg:p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="shrink-0 text-xl font-bold lg:text-2xl">Review</h1>
+          <h1 className="shrink-0 text-2xl font-semibold tracking-tight">Review</h1>
           <p className="hidden truncate text-xs text-muted-foreground lg:block">
             {reviewCount > 0
               ? `${reviewCount} item${reviewCount === 1 ? "" : "s"} waiting on you`

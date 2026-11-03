@@ -481,7 +481,7 @@ export default function ProjectDetailPage() {
             <div className="min-w-0">
               {/* RESPONSIVE: Wrap badge on mobile */}
               <div className="flex flex-wrap items-center gap-2 md:gap-3 mb-2">
-                <h1 className="text-xl md:text-2xl font-bold truncate">{project.name}</h1>
+                <h1 className="text-2xl font-semibold tracking-tight truncate">{project.name}</h1>
                 <Badge variant="outline" className={STATUS_COLORS[project.status]}>
                   {project.status}
                 </Badge>

@@ -287,7 +287,7 @@ export function SettingsShell({ account }: { account: SettingsAccount }) {
         )}
       >
         <div className="px-1 md:px-2.5">
-          <h1 className="text-xl font-bold md:text-lg">Settings</h1>
+          <h1 className="text-2xl font-semibold tracking-tight md:text-xl">Settings</h1>
           <p className="text-sm text-muted-foreground md:hidden">
             Your account, preferences and AI, in one place.
           </p>
