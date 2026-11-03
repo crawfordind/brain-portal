@@ -268,8 +268,24 @@ export function UnifiedSearch({ variant = "desktop" }: UnifiedSearchProps) {
       }
     };
 
+    // The phone menu's "Search or create…" row asks for search by event, so
+    // it opens the same overlay as Cmd+K rather than a second search UI.
+    const handleOpenRequest = () => {
+      const wide = window.matchMedia('(min-width: 1024px)').matches;
+      if (variant === 'desktop' && wide) {
+        inputRef.current?.focus();
+        setIsOpen(true);
+      } else if (variant === 'mobile' && !wide) {
+        setIsMobileOverlayOpen(true);
+      }
+    };
+
     document.addEventListener('keydown', handleGlobalShortcuts);
-    return () => document.removeEventListener('keydown', handleGlobalShortcuts);
+    window.addEventListener('brain:open-search', handleOpenRequest);
+    return () => {
+      document.removeEventListener('keydown', handleGlobalShortcuts);
+      window.removeEventListener('brain:open-search', handleOpenRequest);
+    };
   }, [commands, variant]);
 
   // Reset selected index when results change
