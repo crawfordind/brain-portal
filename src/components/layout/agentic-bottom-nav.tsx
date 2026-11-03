@@ -6,7 +6,9 @@
  *   Tasks | Ops | ( Stream ) | Notes | Menu
  *
  * Stream is the glowing orb in the centre, the same "one thing at the centre"
- * idea as the Mind map. The active destination gets a pill that glides between
+ * idea as the Mind map. On the stream itself the orb turns into the + that
+ * captures a thought (speak or type, `BrainComposer`), and into Stop while
+ * voice is recording. The active destination gets a pill that glides between
  * buttons. On a tablet the dock stays a centred pill instead of stretching
  * edge to edge.
  *
@@ -46,6 +48,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { NAV_ICONS, NavCount, openSearch, signOut, useNavBadges } from "./nav-shared";
+import { BrainComposer } from "@/components/stream/brain-composer";
 
 const MENU_GROUPS: NavGroup[] = ["today", "library"];
 
@@ -63,6 +66,12 @@ export function AgenticBottomNav() {
     const Icon = NAV_ICONS[destination.id];
     const isActive = destination.id === activeId;
     const count = badgeFor(destination);
+
+    // On the stream itself the orb is the + (speak or type); anywhere else it
+    // is the way back to the stream.
+    if (destination.id === "stream" && pathname === "/") {
+      return <BrainComposer key="capture" variant="orb" />;
+    }
 
     if (destination.id === "stream") {
       return (

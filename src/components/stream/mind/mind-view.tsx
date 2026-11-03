@@ -44,6 +44,8 @@ import {
   Archive,
   MessageCircle,
   ListOrdered,
+  Maximize2,
+  Minimize2,
   RefreshCw,
   BellOff,
   Brain,
@@ -61,6 +63,7 @@ import { useAskAbout } from "@/hooks/use-ask-about";
 import { useLastVisit } from "@/hooks/use-last-visit";
 import { usePrefersReducedMotion } from "@/hooks/use-stream-view";
 import { useVoiceStore } from "@/lib/stores/voice-store";
+import { useImmersive } from "@/hooks/use-immersive";
 import {
   buildMindGraph,
   labelForType,
@@ -200,6 +203,7 @@ export function MindView({ greeting: serverGreeting, completedToday = 0 }: MindV
   const largeScreen = useSyncExternalStore(subscribeSm, getSm, getServerSm);
   const isRecording = useVoiceStore((s) => s.isRecording);
   const voiceBusy = useVoiceStore((s) => s.isProcessing);
+  const [immersive, setImmersive] = useImmersive();
 
   /*
    * The server renders in *its* timezone and the client in the viewer's, so
@@ -342,9 +346,15 @@ export function MindView({ greeting: serverGreeting, completedToday = 0 }: MindV
     for (const el of [sectionRef.current, topRef.current, bottomRef.current]) {
       if (el) observer.observe(el);
     }
+    // Entering or leaving immersive moves the top overlay without resizing it.
+    const top = topRef.current;
+    top?.addEventListener("transitionend", measure);
     measure();
-    return () => observer.disconnect();
-  }, [scene]);
+    return () => {
+      observer.disconnect();
+      top?.removeEventListener("transitionend", measure);
+    };
+  }, [scene, immersive]);
 
   // The composer and voice capture announce new content; refresh the brain.
   useEffect(() => {
@@ -574,7 +584,11 @@ export function MindView({ greeting: serverGreeting, completedToday = 0 }: MindV
       {/* Top: who, when, and how far to look. Sits below the app header. */}
       <div
         ref={topRef}
-        className="pointer-events-none absolute inset-x-0 top-14 px-4 pt-3 sm:px-5 lg:px-6"
+        className={cn(
+          "pointer-events-none absolute inset-x-0 px-4 pt-3 transition-[top] duration-300 ease-out motion-reduce:transition-none sm:px-5 lg:px-6",
+          // Immersive: the header has slid away, so the overlay takes its place.
+          immersive ? "top-[env(safe-area-inset-top)]" : "top-14"
+        )}
       >
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
           <div className="pointer-events-auto min-w-0">
@@ -627,6 +641,16 @@ export function MindView({ greeting: serverGreeting, completedToday = 0 }: MindV
             </div>
             <button
               type="button"
+              onClick={() => setImmersive(!immersive)}
+              aria-pressed={immersive}
+              aria-label={immersive ? "Show the top bar" : "Immersive: hide the top bar"}
+              title={immersive ? "Show the top bar" : "Immersive: hide the top bar"}
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-white/75 text-slate-700 shadow-sm ring-1 ring-black/5 backdrop-blur hover:text-slate-900 dark:bg-slate-900/60 dark:text-slate-200 dark:ring-white/10 dark:hover:text-white sm:h-11 sm:w-11"
+            >
+              {immersive ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+            </button>
+            <button
+              type="button"
               onClick={() => setListOpen(true)}
               aria-label="Everything, most important first"
               title="Everything, most important first"
@@ -660,7 +684,7 @@ export function MindView({ greeting: serverGreeting, completedToday = 0 }: MindV
           <Brain className="mb-3 h-9 w-9 text-slate-400 dark:text-slate-500" />
           <p className="text-lg font-medium text-slate-800 dark:text-slate-100">Your mind is clear</p>
           <p className="mt-1 max-w-xs text-base text-slate-500 dark:text-slate-400">
-            Tap the + button to capture a thought, by voice or by typing. The most important thing settles in the middle.
+            Tap + to capture a thought, by voice or by typing. The most important thing settles in the middle.
           </p>
         </div>
       )}
@@ -683,11 +707,9 @@ export function MindView({ greeting: serverGreeting, completedToday = 0 }: MindV
         ref={bottomRef}
         className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--mobile-nav-height)+0.5rem)] flex flex-col gap-3 px-3 sm:px-4 lg:bottom-5 lg:px-6"
       >
-        <div className="flex justify-end lg:absolute lg:bottom-0 lg:right-6">
-          <BrainComposer
-            className="pointer-events-auto"
-            onCaptured={() => window.dispatchEvent(new CustomEvent("stream-refresh"))}
-          />
+        {/* Desktop only: on phones and tablets the dock's centre orb is the +. */}
+        <div className="hidden lg:absolute lg:bottom-0 lg:right-6 lg:flex">
+          <BrainComposer className="pointer-events-auto" />
         </div>
 
         {active && !isRecording && (
