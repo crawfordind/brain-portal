@@ -142,4 +142,13 @@ describe("MindView", () => {
     fireEvent.click(screen.getByRole("button", { name: /show details/i }));
     expect(screen.getByRole("heading", { level: 2, name: "Renew passport" })).toBeInTheDocument();
   });
+
+  it("toggles immersive mode and remembers it", async () => {
+    window.localStorage.clear();
+    renderWithProviders(<MindView greeting="Good morning" />);
+    await screen.findByRole("heading", { level: 2, name: "Renew passport" });
+    fireEvent.click(screen.getByRole("button", { name: /show the top bar/i }));
+    expect(window.localStorage.getItem("bp.home.immersive")).toBe("off");
+    expect(screen.getByRole("button", { name: /immersive: hide the top bar/i })).toBeInTheDocument();
+  });
 });

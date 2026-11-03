@@ -78,7 +78,7 @@ else that used to stack above it lives where it fits:
 
 | Was on the home page | Now |
 |------|-----|
-| Brain Bar (full width) | `BrainComposer`: a floating + button that pops over with **Speak** or **Type** |
+| Brain Bar (full width) | `BrainComposer`: a + that pops over with **Speak** or **Type**. On phones and tablets it *is* the dock's centre orb while you are on `/` (elsewhere the orb is Stream); on desktop it floats bottom right |
 | Voice intro card | the composer's *Speak* (also sets voice `onboardingComplete`) |
 | Needs you pills, People card | Operations › Today (`NeedsYou`, `CrmPulseCard`, server data in the page) |
 | Overdue / due / review / people | lights in the brain, ranked with everything else |
@@ -88,6 +88,10 @@ else that used to stack above it lives where it fits:
   with the Moment / Today / Life control and the ranked-list button.
 - **The page server component reads only `getStreamStats`** (for "N done");
   the brain loads its own items client-side.
+- **Immersive mode** (`useImmersive`, on by default, `localStorage` per
+  device): the header slides up out of view on `/` and the greeting overlay
+  takes its place. A toggle beside Moment / Today / Life turns it off. Focus
+  inside the header (keyboard) or a pointer at the top edge brings it back.
 - **The floating mic (`VoiceFAB`) stays mounted on `/` but is not drawn**, so
   recognition and shortcuts still work through the composer.
 - **Mobile text is 14px or larger** on this screen (card meta, labels,
@@ -326,7 +330,8 @@ destination there, then give it an icon in `NAV_ICONS`
   from `data-mode`, so the first paint is already right.
 - **Phone and tablet, below 1024px** (`agentic-bottom-nav.tsx`): a floating
   glass dock, Tasks | Ops | (Stream) | Notes | Menu, with Stream as a glowing
-  orb in the centre. It stays a centred pill on a tablet. **Menu** is a Radix
+  orb in the centre. On the stream itself the orb is the + (`BrainComposer`,
+  speak or type), and Stop while voice records. It stays a centred pill on a tablet. **Menu** is a Radix
   sheet (focus trap, Escape, focus return) with search, the destinations the
   dock lacks as tiles, Settings, Light/Dark, Sign out. The Menu button pulses
   a dot when a queue behind it has work. The header names the current section

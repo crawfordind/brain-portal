@@ -13,6 +13,12 @@
  * It replaces three things the dashboard used to stack above the stream: the
  * full-width Brain Bar, the first-visit voice card and, on this page, the
  * floating mic.
+ *
+ * Two forms, one behaviour:
+ *   - `orb`: the phone and tablet dock's centre button while you are on the
+ *     stream (everywhere else that button is the way back to the stream);
+ *   - `floating`: a round button at the bottom right, for desktop, which has
+ *     a sidebar instead of a dock.
  */
 
 import { useState, useSyncExternalStore } from "react";
@@ -28,13 +34,25 @@ const getSpeechSupported = () =>
   "SpeechRecognition" in window || "webkitSpeechRecognition" in window;
 const getServerSpeechSupported = () => false;
 
+/** The dock slot: same shape as the Stream orb it replaces. */
+const orbButton =
+  "group flex min-h-11 flex-col items-center justify-end gap-1 rounded-2xl pb-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 interface BrainComposerProps {
-  /** Something was saved by typing. */
+  /** Something was saved by typing. Defaults to asking the stream to refresh. */
   onCaptured?: () => void;
+  variant?: "floating" | "orb";
   className?: string;
 }
 
-export function BrainComposer({ onCaptured, className }: BrainComposerProps) {
+const refreshStream = () => window.dispatchEvent(new CustomEvent("stream-refresh"));
+
+export function BrainComposer({
+  onCaptured = refreshStream,
+  variant = "floating",
+  className,
+}: BrainComposerProps) {
+  const orb = variant === "orb";
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"choose" | "type">("choose");
   const isRecording = useVoiceStore((s) => s.isRecording);
@@ -57,6 +75,23 @@ export function BrainComposer({ onCaptured, className }: BrainComposerProps) {
   );
 
   if (isRecording || isProcessing) {
+    if (orb) {
+      return (
+        <button
+          type="button"
+          onClick={() => !isProcessing && requestVoiceToggle()}
+          aria-label={isProcessing ? "Saving what you said" : "Stop and save what you said"}
+          className={cn(orbButton, className)}
+        >
+          <span className="-mt-6 flex h-[3.25rem] w-[3.25rem] items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-lg shadow-destructive/40 ring-[3px] ring-background">
+            {isProcessing ? <Loader2 className="h-6 w-6 animate-spin" /> : <Square className="h-5 w-5 animate-pulse" />}
+          </span>
+          <span className="text-xs font-medium leading-none text-destructive">
+            {isProcessing ? "Saving" : "Stop"}
+          </span>
+        </button>
+      );
+    }
     return (
       <button
         type="button"
@@ -78,23 +113,39 @@ export function BrainComposer({ onCaptured, className }: BrainComposerProps) {
   return (
     <Popover open={open} onOpenChange={setOpenAndReset}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label="Capture a thought, by voice or by typing"
-          className={cn(
-            buttonBase,
-            "bg-primary text-primary-foreground shadow-primary/30 ring-4 ring-primary/15",
-            className
-          )}
-        >
-          <Plus className={cn("h-6 w-6 transition-transform", open && "rotate-45")} />
-          <span className="sr-only text-base font-medium xl:not-sr-only">Capture</span>
-        </button>
+        {orb ? (
+          <button
+            type="button"
+            aria-label="Capture a thought, by voice or by typing"
+            className={cn(orbButton, className)}
+          >
+            <span
+              data-active="true"
+              className="nav-orb -mt-6 flex h-[3.25rem] w-[3.25rem] items-center justify-center rounded-full transition-transform group-active:scale-95"
+            >
+              <Plus className={cn("h-7 w-7 transition-transform", open && "rotate-45")} aria-hidden="true" />
+            </span>
+            <span className="text-xs font-medium leading-none text-primary">Capture</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            aria-label="Capture a thought, by voice or by typing"
+            className={cn(
+              buttonBase,
+              "bg-primary text-primary-foreground shadow-primary/30 ring-4 ring-primary/15",
+              className
+            )}
+          >
+            <Plus className={cn("h-6 w-6 transition-transform", open && "rotate-45")} />
+            <span className="sr-only text-base font-medium xl:not-sr-only">Capture</span>
+          </button>
+        )}
       </PopoverTrigger>
       <PopoverContent
         side="top"
-        align="end"
-        sideOffset={12}
+        align={orb ? "center" : "end"}
+        sideOffset={orb ? 32 : 12}
         collisionPadding={12}
         className={cn(
           "rounded-2xl p-2 shadow-xl",

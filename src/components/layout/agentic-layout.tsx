@@ -22,6 +22,8 @@ import { SystemHealthIndicator } from "@/components/system/system-health-indicat
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useState } from "react";
+import { useImmersive } from "@/hooks/use-immersive";
 import { appBranding, contentWidthClass } from "@/lib/navigation";
 import { sectionTitle } from "@/lib/nav-destinations";
 import { NeuralMark } from "./nav-shared";
@@ -39,6 +41,12 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
   // Home is the brain, full screen: no content column, no padding, and the
   // header floats over it as glass so the brain runs to the top edge.
   const isHome = pathname === "/";
+  // Immersive (home only): the header slides up out of view. Keyboard focus
+  // inside it, or a pointer at the top edge, brings it back for as long as
+  // it is needed.
+  const [immersive] = useImmersive();
+  const [peek, setPeek] = useState(false);
+  const hideHeader = isHome && immersive && !peek;
 
   return (
     <div className="flex h-dvh">
@@ -58,10 +66,20 @@ export function AgenticLayout({ children }: AgenticLayoutProps) {
       <div className="relative flex flex-1 flex-col min-h-0 min-w-0">
         <OfflineBanner />
 
+        {isHome && immersive && (
+          <div
+            aria-hidden="true"
+            className="absolute inset-x-0 top-0 z-40 h-3"
+            onMouseEnter={() => setPeek(true)}
+          />
+        )}
         <header
+          data-hidden={hideHeader || undefined}
+          onMouseLeave={() => setPeek(false)}
           className={cn(
             "nav-glass top-0 z-40 border-b border-[var(--nav-edge)]",
-            isHome ? "absolute inset-x-0" : "sticky"
+            isHome ? "absolute inset-x-0 transition-transform duration-300 ease-out motion-reduce:transition-none" : "sticky",
+            hideHeader && "-translate-y-full focus-within:translate-y-0"
           )}
         >
           <div className="flex h-14 items-center gap-3 px-3 sm:px-4">
