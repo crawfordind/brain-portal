@@ -26,6 +26,7 @@ import { registerCrmTools } from "./crm";
 import { registerOperationsTools } from "./operations";
 import { registerSharingTools } from "./sharing";
 import { registerWhiteboardTools } from "./whiteboards";
+import { registerTemplateTools } from "./templates";
 
 export const TOOL_MODULES = [
   { name: "notes", register: registerNoteTools },
@@ -38,6 +39,7 @@ export const TOOL_MODULES = [
   { name: "operations", register: registerOperationsTools },
   { name: "sharing", register: registerSharingTools },
   { name: "whiteboards", register: registerWhiteboardTools },
+  { name: "templates", register: registerTemplateTools },
 ] as const;
 
 export function registerAllTools(server: McpServer, ctx: ToolContext): void {

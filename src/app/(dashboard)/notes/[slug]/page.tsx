@@ -14,6 +14,7 @@ import { NoteAttachments } from '@/components/attachments/note-attachments';
 import { ShareDialog } from "@/components/notes/share-dialog";
 import { CleanupModal } from "@/components/notes/cleanup-modal";
 import { AnalysisModal } from "@/components/notes/analysis-modal";
+import { SaveAsTemplateDialog } from "@/components/templates/save-as-template-dialog";
 import type { Attachment } from '@/lib/db/schema';
 import { attachmentToHtml } from '@/lib/attachments/embed';
 import {
@@ -49,6 +50,7 @@ import {
   Users,
   X,
   LayoutDashboard,
+  FileStack,
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -102,6 +104,7 @@ export default function NoteDetailPage() {
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
   const { askAbout } = useAskAbout();
   const { sendToAgent } = useSendToAgent();
   const [reviewingTaskId, setReviewingTaskId] = useState<string | null>(null);
@@ -555,6 +558,10 @@ export default function NoteDetailPage() {
                         <SendToAgentLabel />
                       </DropdownMenuItem>
                     )}
+                    <DropdownMenuItem onClick={() => setShowSaveTemplate(true)}>
+                      <FileStack className="h-4 w-4 mr-2" />
+                      Save as template
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => togglePinMutation.mutate()}>
                       <Pin className="h-4 w-4 mr-2" />
@@ -784,6 +791,14 @@ export default function NoteDetailPage() {
       />
 
       {/* Deep Analysis Modal */}
+      <SaveAsTemplateDialog
+        open={showSaveTemplate}
+        onOpenChange={setShowSaveTemplate}
+        noteId={note.id}
+        noteTitle={note.title}
+        content={content || note.content}
+      />
+
       <AnalysisModal
         open={showAnalysisModal}
         onOpenChange={setShowAnalysisModal}

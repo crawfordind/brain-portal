@@ -43,6 +43,12 @@ import {
   organizeWhiteboardShape,
   updateWhiteboardItemsShape,
 } from "@/lib/whiteboards/tool-schemas";
+import {
+  createNoteFromTemplateShape,
+  createNoteTemplateShape,
+  listNoteTemplatesShape,
+  suggestNoteTemplatesShape,
+} from "@/lib/templates/tool-schemas";
 
 // ─── Tools ────────────────────────────────────────────────────────────
 
@@ -906,6 +912,45 @@ export const TOOLS: ToolSpec[] = [
     category: "whiteboards",
     inputSchema: z.object(convertWhiteboardItemsShape),
     example: { board_id: "b_abc123", to: "tasks", item_ids: ["wi_1"] },
+  },
+
+  // ─── Note templates ────────────────────────────────────
+  {
+    name: "list_note_templates",
+    description: "The user's note templates (e.g. a weekly operations meeting), the given project's first.",
+    scope: "notes:read",
+    category: "notes",
+    inputSchema: z.object(listNoteTemplatesShape),
+    example: { project_id: "p_abc123" },
+  },
+  {
+    name: "suggest_note_templates",
+    description:
+      "Recurring notes (same title, different dates; shared headings) that would make a good template, with reasons. Rule-based.",
+    scope: "notes:read",
+    category: "notes",
+    inputSchema: z.object(suggestNoteTemplatesShape),
+    example: { project_id: "p_abc123" },
+  },
+  {
+    name: "create_note_template",
+    description: "Save a note template. Body and title may use {{date}}, {{weekday}}, {{project}} and other variables.",
+    scope: "notes:write",
+    category: "notes",
+    inputSchema: z.object(createNoteTemplateShape),
+    example: {
+      name: "Weekly operations meeting",
+      title_pattern: "Operations meeting {{date}}",
+      content: "## Attendees\n\n## Metrics\n\n## Action items\n- [ ] ",
+    },
+  },
+  {
+    name: "create_note_from_template",
+    description: "Create a note from a template, variables filled in the user's zone.",
+    scope: "notes:write",
+    category: "notes",
+    inputSchema: z.object(createNoteFromTemplateShape),
+    example: { template_id: "t_abc123" },
   },
 ];
 

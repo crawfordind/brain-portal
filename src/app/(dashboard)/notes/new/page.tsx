@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { MarkdownEditor } from "@/components/editor/markdown-editor";
@@ -14,13 +14,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Save, Mic } from "lucide-react";
+import { ArrowLeft, Save, FileStack } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 import { VoiceInput } from "@/components/ui/voice-input";
 import { SaveStatus } from "@/components/ui/save-status";
 import { addToQueue } from "@/lib/offline/simple-queue";
 import { useAutoSave } from "@/hooks/use-auto-save";
+import { TemplatePicker } from "@/components/templates/template-picker";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { renderTemplate } from "@/lib/templates/variables";
+import type { NoteTemplate } from "@/lib/templates/types";
 
 interface Project {
   id: string;
@@ -32,6 +36,8 @@ function NewNoteContent() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const initialProjectId = searchParams.get("projectId") || "";
+  const initialTemplateId = searchParams.get("template");
+  const confirm = useConfirm();
 
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -130,6 +136,53 @@ function NewNoteContent() {
 
   const projects = (projectsData as Project[]) || [];
 
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  /**
+   * Fill the title and body from a template, with its variables filled in the
+   * viewer's own zone (the server runs in UTC). Once the note exists it has
+   * been saved, so a template can only replace text before that.
+   */
+  const applyTemplate = async (template: NoteTemplate) => {
+    setPickerOpen(false);
+    if (createdNoteId) {
+      toast.error("This note is already saved. Start a new note to use a template.");
+      return;
+    }
+    if (content.trim() || title.trim()) {
+      const ok = await confirm({
+        title: `Use “${template.name}”?`,
+        description: "It replaces the title and text you have typed so far.",
+        confirmLabel: "Use template",
+      });
+      if (!ok) return;
+    }
+    const targetProject = projectId || template.project_id || "";
+    const projectName = projects.find((p) => p.id === targetProject)?.name ?? template.project_name ?? "";
+    const ctx = {
+      now: new Date(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      projectName,
+    };
+    setTitle(renderTemplate(template.title_pattern || template.name, ctx));
+    setContent(renderTemplate(template.content, ctx, { html: true }));
+    if (!projectId && template.project_id) setProjectId(template.project_id);
+    fetch(`/api/templates/${template.id}/use`, { method: "POST" }).catch(() => {});
+  };
+
+  // `/notes/new?template=<id>`: apply it once, after projects have loaded so
+  // {{project}} can be filled.
+  const appliedFromUrl = useRef(false);
+  useEffect(() => {
+    if (!initialTemplateId || appliedFromUrl.current || projectsData === undefined) return;
+    appliedFromUrl.current = true;
+    fetch(`/api/templates/${encodeURIComponent(initialTemplateId)}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("Template not found"))))
+      .then((data: { template: NoteTemplate }) => applyTemplate(data.template))
+      .catch(() => toast.error("That template couldn't be loaded"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTemplateId, projectsData]);
+
   const handleSave = async () => {
     if (!title.trim()) {
       toast.error("Please enter a title");
@@ -227,6 +280,18 @@ function NewNoteContent() {
             </SelectContent>
           </Select>
 
+          <Button
+            variant="outline"
+            onClick={() => setPickerOpen(true)}
+            disabled={!!createdNoteId}
+            className="min-h-11 md:min-h-9 shrink-0"
+            title={createdNoteId ? "Templates can only fill a note before it is saved" : undefined}
+          >
+            <FileStack className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Template</span>
+            <span className="sr-only sm:hidden">Start from a template</span>
+          </Button>
+
           <VoiceInput
             onTranscript={(text) => {
               setContent((prev) => prev ? `${prev}\n\n${text}` : text);
@@ -254,6 +319,13 @@ function NewNoteContent() {
         placeholder="Start writing..."
         projectId={projectId || null}
         noteId={createdNoteId}
+      />
+
+      <TemplatePicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        projectId={projectId || null}
+        onPick={applyTemplate}
       />
     </div>
   );

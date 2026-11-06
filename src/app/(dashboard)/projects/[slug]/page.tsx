@@ -36,6 +36,7 @@ import {
   Star,
   Trash2,
   FileText,
+  FileStack,
   CheckSquare,
   Plus,
   Edit2,
@@ -653,7 +654,13 @@ export default function ProjectDetailPage() {
             sectionKey="notes"
           >
             {projectRole !== "viewer" && (
-              <div className="flex justify-end mb-3">
+              <div className="flex justify-end gap-2 mb-3">
+                <Button size="sm" variant="outline" asChild className="min-h-9">
+                  <Link href={`/templates?projectId=${project.id}`} title="Templates for this project, and ones suggested from its notes">
+                    <FileStack className="h-4 w-4 mr-1" />
+                    Templates
+                  </Link>
+                </Button>
                 <Button size="sm" asChild className="min-h-9">
                   <Link href={`/notes/new?projectId=${project.id}`}>
                     <Plus className="h-4 w-4 mr-1" />
