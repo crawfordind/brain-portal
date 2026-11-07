@@ -36,56 +36,60 @@ export async function GET(request: NextRequest) {
       WHERE pc.project_id = n.project_id AND pc.user_id = ? AND pc.status = 'accepted'
     )`;
 
-  // Build base query — own notes + notes in shared projects.
-  // COUNT(*) OVER () computes the total alongside each row so we return
-  // both the page and the total in one round-trip instead of running
-  // the full filtered query twice.
-  let sql = `
-    SELECT n.*, p.name as project_name, p.slug as project_slug, p.color as project_color,
-           COUNT(*) OVER () as _total_count
+  // Three light queries instead of one heavy one.
+  //
+  // This used to be a single `SELECT n.*, …, COUNT(*) OVER ()`. The window
+  // function makes SQLite materialise *every* matching row, full note body
+  // included, before LIMIT applies, and ORDER BY then sorts those full rows.
+  // With a few hundred long notes that exhausted the database's memory
+  // (SQLITE_NOMEM), which took down every other query too, sign-in included,
+  // and left this route hanging until the 300s function timeout.
+  //
+  // Now: (1) pick the page as ids, sorting only the sort keys; (2) count with
+  // a plain COUNT(*); (3) load full rows for just those ids.
+  const isSearch = Boolean(search && search.trim());
+  let from = `
     FROM notes n
-    LEFT JOIN projects p ON n.project_id = p.id
     WHERE (n.user_id = ? OR (n.project_id IS NOT NULL AND ${sharedAccess}))
   `;
   const args: InValue[] = [user.id, user.id];
+  let ftsTerm: string | null = null;
 
   // Full-text search using FTS5
-  if (search && search.trim()) {
-    const searchTerm = search.trim().replace(/"/g, '""'); // Escape quotes
-    sql = `
-      SELECT n.*, p.name as project_name, p.slug as project_slug, p.color as project_color,
-             highlight(notes_fts, 0, '<mark>', '</mark>') as title_highlight,
-             snippet(notes_fts, 1, '<mark>', '</mark>', '...', 64) as content_snippet,
-             COUNT(*) OVER () as _total_count
+  if (isSearch) {
+    const searchTerm = search!.trim().replace(/"/g, '""'); // Escape quotes
+    ftsTerm = `"${searchTerm}"*`;
+    from = `
       FROM notes n
-      LEFT JOIN projects p ON n.project_id = p.id
       INNER JOIN notes_fts ON notes_fts.rowid = n.rowid
       WHERE (n.user_id = ? OR (n.project_id IS NOT NULL AND ${sharedAccess}))
         AND notes_fts MATCH ?
     `;
-    args.push(`"${searchTerm}"*`);
+    args.push(ftsTerm);
   }
+
+  let where = "";
 
   // Filter by archived status (default: show non-archived)
   if (archived === "true") {
-    sql += " AND n.is_archived = TRUE";
+    where += " AND n.is_archived = TRUE";
   } else if (archived === "only") {
-    sql += " AND n.is_archived = TRUE";
+    where += " AND n.is_archived = TRUE";
   } else {
-    sql += " AND n.is_archived = FALSE";
+    where += " AND n.is_archived = FALSE";
   }
 
   // Filter by pinned
   if (pinned === "true") {
-    sql += " AND n.is_pinned = TRUE";
+    where += " AND n.is_pinned = TRUE";
   }
 
   // Filter by project
   if (projectId) {
     if (projectId === "none") {
-      sql += " AND n.project_id IS NULL";
+      where += " AND n.project_id IS NULL";
     } else {
-      sql += " AND n.project_id = ?";
+      where += " AND n.project_id = ?";
       args.push(projectId);
     }
   }
@@ -94,11 +98,11 @@ export async function GET(request: NextRequest) {
   if (type) {
     const types = type.split(",").filter(Boolean);
     if (types.length === 1) {
-      sql += " AND n.note_type = ?";
+      where += " AND n.note_type = ?";
       args.push(types[0]);
     } else if (types.length > 1) {
       const placeholders = types.map(() => "?").join(",");
-      sql += ` AND n.note_type IN (${placeholders})`;
+      where += ` AND n.note_type IN (${placeholders})`;
       args.push(...types);
     }
   }
@@ -106,7 +110,7 @@ export async function GET(request: NextRequest) {
   // Filter by metadata source (e.g., source=voice for voice notes)
   const source = searchParams.get("source");
   if (source) {
-    sql += ` AND json_extract(n.metadata, '$.source') = ?`;
+    where += ` AND json_extract(n.metadata, '$.source') = ?`;
     args.push(source);
   }
 
@@ -120,32 +124,66 @@ export async function GET(request: NextRequest) {
   const sortField = validSortFields[sortBy] || "n.updated_at";
   const order = sortOrder.toLowerCase() === "asc" ? "ASC" : "DESC";
 
-  // For search results, optionally sort by relevance first
-  if (search && search.trim()) {
-    sql += ` ORDER BY bm25(notes_fts) ${order}, ${sortField} ${order}`;
-  } else {
-    // Always show pinned first, then sort by specified field
-    sql += ` ORDER BY n.is_pinned DESC, ${sortField} ${order}`;
-  }
+  // For search results, sort by relevance first; otherwise pinned first.
+  const orderBy = isSearch
+    ? ` ORDER BY bm25(notes_fts) ${order}, ${sortField} ${order}`
+    : ` ORDER BY n.is_pinned DESC, ${sortField} ${order}`;
 
-  sql += " LIMIT ? OFFSET ?";
-  args.push(limit, offset);
+  const [pageRows, countRows] = await Promise.all([
+    query<{ id: string }>(
+      `SELECT n.id ${from} ${where} ${orderBy} LIMIT ? OFFSET ?`,
+      [...args, limit, offset],
+    ),
+    query<{ total: number }>(`SELECT COUNT(*) as total ${from} ${where}`, args),
+  ]);
+  const ids = pageRows.map((r) => r.id);
+  const total = Number(countRows[0]?.total ?? 0);
 
-  const rows = await query<Note & {
+  type NoteRow = Note & {
     project_name: string | null;
     project_slug: string | null;
     project_color: string | null;
     title_highlight?: string;
     content_snippet?: string;
-    _total_count?: number;
-  }>(sql, args);
+  };
 
-  // Total comes from COUNT(*) OVER () on each row. Empty page → 0.
-  const total = rows[0]?._total_count ?? 0;
+  let rows: NoteRow[] = [];
+  if (ids.length > 0) {
+    const placeholders = ids.map(() => "?").join(",");
+    const [full, marks] = await Promise.all([
+      query<NoteRow>(
+        `SELECT n.*, p.name as project_name, p.slug as project_slug, p.color as project_color
+         FROM notes n
+         LEFT JOIN projects p ON n.project_id = p.id
+         WHERE n.id IN (${placeholders})`,
+        ids,
+      ),
+      isSearch
+        ? query<{ id: string; title_highlight: string; content_snippet: string }>(
+            `SELECT n.id,
+                    highlight(notes_fts, 0, '<mark>', '</mark>') as title_highlight,
+                    snippet(notes_fts, 1, '<mark>', '</mark>', '...', 64) as content_snippet
+             FROM notes_fts
+             INNER JOIN notes n ON notes_fts.rowid = n.rowid
+             WHERE notes_fts MATCH ? AND n.id IN (${placeholders})`,
+            [ftsTerm!, ...ids],
+          )
+        : Promise.resolve([]),
+    ]);
+    const byId = new Map(full.map((r) => [r.id, r]));
+    const markById = new Map(marks.map((m) => [m.id, m]));
+    rows = ids.flatMap((id) => {
+      const row = byId.get(id);
+      if (!row) return [];
+      const m = markById.get(id);
+      return [m ? { ...row, title_highlight: m.title_highlight, content_snippet: m.content_snippet } : row];
+    });
+  }
+
   // Notes in a shared project belong to someone else. Say which are the
   // viewer's own (only those can be shared onward), and never hand a
   // collaborator the owner's public-link token.
-  const notes = rows.map(({ _total_count, ...rest }) => {
+  const notes = rows.map((rest) => {
     const isOwner = rest.user_id === user.id;
     return isOwner ? { ...rest, is_owner: true } : { ...rest, share_token: null, is_owner: false };
   });
